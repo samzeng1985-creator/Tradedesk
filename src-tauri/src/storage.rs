@@ -122,6 +122,9 @@ impl EncryptedDatabase {
             "trade_cases" => "SELECT COUNT(*) FROM trade_cases",
             _ => return Err(rusqlite::Error::InvalidQuery),
         };
-        self.connection.query_row(query, [], |row| row.get(0))
+        let count = self
+            .connection
+            .query_row(query, [], |row| row.get::<_, i64>(0))?;
+        Ok(count as u64)
     }
 }
