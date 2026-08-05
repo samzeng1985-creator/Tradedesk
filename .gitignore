@@ -10,3 +10,8 @@ work/
 .env
 .DS_Store
 Thumbs.db
+src-tauri/icons/android/
+src-tauri/icons/ios/
+src-tauri/icons/StoreLogo.png
+src-tauri/icons/Square*Logo.png
+src-tauri/icons/64x64.png
