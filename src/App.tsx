@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
-import { initialCase, initialDocuments, initialMilestones } from "./demo";
-import { businessCaseApi, masterApi, workspaceApi } from "./api";
+import { initialDocuments } from "./demo";
+import { businessCaseApi, fulfillmentApi, masterApi, workspaceApi } from "./api";
 import { BusinessCaseCenter } from "./BusinessCaseCenter";
+import { FulfillmentCenter } from "./FulfillmentCenter";
 import { MasterEditor } from "./MasterEditor";
 import type { MasterInput, MasterRecord, MasterTab } from "./MasterEditor";
 import { UnlockScreen } from "./UnlockScreen";
@@ -11,7 +12,10 @@ import type {
   Customer,
   PipelineStage,
   Product,
-  ProductionMilestone,
+  ProductionMilestoneInput,
+  PurchaseOrder,
+  PurchaseOrderInput,
+  PurchaseStatus,
   RecordStatus,
   Supplier,
   TradeDocument,
@@ -49,7 +53,14 @@ function money(value: number, currency: string) {
     style: "currency",
     currency,
     maximumFractionDigits: 0,
-  }).format(value);
+  }).format(value / 100);
+}
+
+function milestoneRecordStatus(status: "pending" | "in_progress" | "completed" | "blocked"): RecordStatus {
+  if (status === "completed") return "ready";
+  if (status === "in_progress") return "working";
+  if (status === "blocked") return "blocked";
+  return "draft";
 }
 
 function Status({ status }: { status: RecordStatus }) {
@@ -83,8 +94,7 @@ export default function App() {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [businessCases, setBusinessCases] = useState<BusinessCase[]>([]);
-  const [tradeCase, setTradeCase] = useState(initialCase);
-  const [milestones, setMilestones] = useState(initialMilestones);
+  const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
   const [documents, setDocuments] = useState(initialDocuments);
   const [masterQuery, setMasterQuery] = useState("");
   const [editorOpen, setEditorOpen] = useState(false);
@@ -98,17 +108,19 @@ export default function App() {
   }, []);
 
   async function loadMasterData() {
-    const [nextProducts, nextCustomers, nextSuppliers, nextCases, summary] = await Promise.all([
+    const [nextProducts, nextCustomers, nextSuppliers, nextCases, nextOrders, summary] = await Promise.all([
       masterApi.listProducts(),
       masterApi.listCustomers(),
       masterApi.listSuppliers(),
       businessCaseApi.list(),
+      fulfillmentApi.list(),
       workspaceApi.summary(),
     ]);
     setProducts(nextProducts);
     setCustomers(nextCustomers);
     setSuppliers(nextSuppliers);
     setBusinessCases(nextCases);
+    setPurchaseOrders(nextOrders);
     setWorkspace(summary);
   }
 
@@ -158,10 +170,37 @@ export default function App() {
     await loadMasterData();
   }
 
-  const margin = useMemo(
-    () => Math.round(((tradeCase.salesAmount - tradeCase.purchaseAmount) / tradeCase.salesAmount) * 100),
-    [tradeCase],
-  );
+  async function createPurchaseOrder(input: PurchaseOrderInput) {
+    await fulfillmentApi.create(input);
+    await loadMasterData();
+  }
+
+  async function updatePurchaseStatus(id: string, status: PurchaseStatus) {
+    await fulfillmentApi.updateStatus(id, status);
+    await loadMasterData();
+  }
+
+  async function updateProductionMilestone(input: ProductionMilestoneInput) {
+    await fulfillmentApi.updateMilestone(input);
+    await loadMasterData();
+  }
+
+  const currentCase = businessCases[0] ?? null;
+  const currentOrders = currentCase
+    ? purchaseOrders.filter((order) => order.businessCaseId === currentCase.id && order.status !== "cancelled")
+    : [];
+  const currentMilestones = currentOrders.flatMap((order) => order.lines.flatMap((line) =>
+    line.milestones.map((milestone) => ({ ...milestone, supplierName: order.supplierName, sku: line.sku })),
+  ));
+  const purchaseTotalMinor = currentOrders.reduce((sum, order) => sum + order.totalAmountMinor, 0);
+  const productionProgress = currentMilestones.length
+    ? Math.round(currentMilestones.reduce((sum, milestone) => sum + milestone.progress, 0) / currentMilestones.length)
+    : 0;
+
+  const margin = useMemo(() => {
+    if (!currentCase?.totalAmountMinor) return 0;
+    return Math.round(((currentCase.totalAmountMinor - purchaseTotalMinor) / currentCase.totalAmountMinor) * 100);
+  }, [currentCase, purchaseTotalMinor]);
 
   const normalizedQuery = masterQuery.trim().toLocaleLowerCase();
   const filteredProducts = products.filter((item) =>
@@ -180,20 +219,6 @@ export default function App() {
     ),
   );
 
-  function advanceStage() {
-    const index = pipeline.findIndex((item) => item.key === tradeCase.stage);
-    const next = pipeline[Math.min(index + 1, pipeline.length - 1)];
-    setTradeCase((current) => ({ ...current, stage: next.key }));
-  }
-
-  function completeMilestone(id: string) {
-    setMilestones((current) =>
-      current.map((item) =>
-        item.id === id ? { ...item, progress: 100, status: "ready" as const } : item,
-      ),
-    );
-  }
-
   function prepareDocuments() {
     setDocuments((current) =>
       current.map((item) =>
@@ -202,7 +227,6 @@ export default function App() {
           : item,
       ),
     );
-    setTradeCase((current) => ({ ...current, stage: "documents" }));
     setView("documents");
   }
 
@@ -266,39 +290,39 @@ export default function App() {
         {view === "overview" && (
           <div className="page-stack">
             <section className="case-hero">
-              <div className="case-heading">
-                <div>
-                  <span className="eyebrow">当前业务单</span>
-                  <h2>{tradeCase.number}</h2>
-                  <p>{tradeCase.customer.legalName} · 计划发货 {tradeCase.shipmentDate}</p>
+              {currentCase ? <>
+                <div className="case-heading">
+                  <div>
+                    <span className="eyebrow">最近业务单</span>
+                    <h2>{currentCase.number}</h2>
+                    <p>{currentCase.customerName} · 计划发货 {currentCase.shipmentDate || "未设置"}</p>
+                  </div>
+                  <button className="button button-primary" onClick={() => setView("cases")}>打开业务单</button>
                 </div>
-                <button className="button button-primary" onClick={advanceStage}>
-                  推进下一节点
-                </button>
-              </div>
-              <Pipeline stage={tradeCase.stage} />
+                <Pipeline stage={currentCase.stage} />
+              </> : <div className="empty-overview"><span className="eyebrow">开始第一笔业务</span><h2>建立业务单后即可跟踪采购与生产</h2><button className="button button-primary" onClick={() => setView("cases")}>前往业务单</button></div>}
             </section>
 
             <section className="metric-grid" aria-label="业务指标">
               <article>
                 <span>销售金额</span>
-                <strong>{money(tradeCase.salesAmount, tradeCase.currency)}</strong>
-                <small>合同已确认</small>
+                <strong>{money(currentCase?.totalAmountMinor ?? 0, currentCase?.currency ?? "USD")}</strong>
+                <small>{currentCase ? currentCase.number : "暂无业务单"}</small>
               </article>
               <article>
                 <span>采购成本</span>
-                <strong>{money(tradeCase.purchaseAmount, tradeCase.currency)}</strong>
-                <small>预计毛利率 {margin}%</small>
+                <strong>{money(purchaseTotalMinor, currentCase?.currency ?? "USD")}</strong>
+                <small>{currentOrders.length ? `预计毛利率 ${margin}%` : "尚未下推采购"}</small>
               </article>
               <article>
                 <span>生产进度</span>
-                <strong>{tradeCase.productionProgress}%</strong>
-                <small>2 个供应商</small>
+                <strong>{productionProgress}%</strong>
+                <small>{new Set(currentOrders.map((order) => order.supplierId)).size} 个供应商</small>
               </article>
               <article>
-                <span>单证状态</span>
-                <strong>{documents.filter((item) => item.status === "ready").length}/{documents.length}</strong>
-                <small>2 份待完善</small>
+                <span>生产风险</span>
+                <strong>{workspace.productionRisks}</strong>
+                <small>{workspace.productionRisks ? "存在阻断节点" : "暂无异常节点"}</small>
               </article>
             </section>
 
@@ -314,24 +338,25 @@ export default function App() {
                   </button>
                 </div>
                 <div className="milestone-list">
-                  {milestones.map((item) => (
+                  {currentMilestones.slice(0, 5).map((item) => (
                     <div className="milestone" key={item.id}>
                       <div className="milestone-row">
                         <div>
-                          <strong>{item.label}</strong>
-                          <span>{item.owner}</span>
+                          <strong>{item.sku} · {item.label}</strong>
+                          <span>{item.supplierName}</span>
                         </div>
-                        <Status status={item.status} />
+                        <Status status={milestoneRecordStatus(item.status)} />
                       </div>
                       <div className="progress-track" aria-label={`${item.label} ${item.progress}%`}>
                         <span style={{ width: `${item.progress}%` }} />
                       </div>
                       <div className="milestone-meta">
                         <span>{item.progress}%</span>
-                        <span>计划 {item.plannedDate}</span>
+                        <span>计划 {item.plannedDate || "未设置"}</span>
                       </div>
                     </div>
                   ))}
+                  {!currentMilestones.length && <div className="empty-table">创建采购单后自动生成生产里程碑</div>}
                 </div>
               </section>
 
@@ -343,15 +368,11 @@ export default function App() {
                   </div>
                 </div>
                 <div className="issue-list">
-                  <article className="issue issue-warning">
-                    <span>交付风险</span>
-                    <strong>密封圈生产低于计划 8%</strong>
-                    <p>建议今天向供应商确认可恢复日期。</p>
-                  </article>
+                  {currentMilestones.filter((item) => item.status === "blocked").slice(0, 2).map((item) => <article className="issue issue-warning" key={item.id}><span>生产异常</span><strong>{item.sku} · {item.label}</strong><p>{item.issue || "请向供应商确认恢复日期。"}</p></article>)}
                   <article className="issue">
-                    <span>单证资料</span>
-                    <strong>详细装箱单等待箱规</strong>
-                    <p>生产包装完成后可从产品和批次自动生成。</p>
+                    <span>采购覆盖</span>
+                    <strong>{currentOrders.length ? `${currentOrders.length} 张采购单正在执行` : "业务单尚未下推采购"}</strong>
+                    <p>{currentOrders.length ? `当前可发货数量 ${currentOrders.reduce((sum, order) => sum + order.readyQuantity, 0)}` : "按供应商拆分产品行后即可开始生产跟踪。"}</p>
                   </article>
                   <button className="button button-primary button-wide" onClick={prepareDocuments}>
                     生成待制单证
@@ -440,36 +461,14 @@ export default function App() {
         )}
 
         {view === "fulfillment" && (
-          <div className="page-stack">
-            <section className="panel">
-              <div className="panel-heading">
-                <div>
-                  <span className="eyebrow">采购单 PO-2026-0001</span>
-                  <h2>生产执行</h2>
-                  <p>业务单 {tradeCase.number} · 可发货前必须完成质检与包装</p>
-                </div>
-                <Status status="working" />
-              </div>
-              <div className="milestone-list fulfillment-list">
-                {milestones.map((item: ProductionMilestone) => (
-                  <div className="milestone" key={item.id}>
-                    <div className="milestone-row">
-                      <div>
-                        <strong>{item.label}</strong>
-                        <span>{item.owner} · 计划 {item.plannedDate}</span>
-                      </div>
-                      {item.progress < 100 ? (
-                        <button className="button button-secondary" onClick={() => completeMilestone(item.id)}>
-                          标记完成
-                        </button>
-                      ) : <Status status="ready" />}
-                    </div>
-                    <div className="progress-track"><span style={{ width: `${item.progress}%` }} /></div>
-                  </div>
-                ))}
-              </div>
-            </section>
-          </div>
+          <FulfillmentCenter
+            orders={purchaseOrders}
+            cases={businessCases}
+            suppliers={suppliers}
+            onCreate={createPurchaseOrder}
+            onStatus={updatePurchaseStatus}
+            onMilestone={updateProductionMilestone}
+          />
         )}
 
         {view === "documents" && (
@@ -477,7 +476,7 @@ export default function App() {
             <div className="panel-heading">
               <div>
                 <h2>业务单证包</h2>
-                <p>{tradeCase.number} · 同一份业务快照生成，减少重复录入</p>
+                <p>{currentCase?.number ?? "尚未选择业务单"} · 同一份业务快照生成，减少重复录入</p>
               </div>
               <button className="button button-primary">新建单证</button>
             </div>

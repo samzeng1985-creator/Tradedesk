@@ -5,8 +5,9 @@ mod storage;
 use std::{path::PathBuf, sync::Mutex};
 
 use domain::{
-    BusinessCase, BusinessCaseInput, Customer, CustomerInput, Product, ProductInput, Supplier,
-    SupplierInput, WorkspaceSummary,
+    BusinessCase, BusinessCaseInput, Customer, CustomerInput, Product, ProductInput,
+    ProductionMilestone, ProductionMilestoneInput, PurchaseOrder, PurchaseOrderInput,
+    PurchaseStatus, Supplier, SupplierInput, WorkspaceSummary,
 };
 use storage::EncryptedDatabase;
 use tauri::{Manager, State};
@@ -22,7 +23,11 @@ fn database_error(error: rusqlite::Error) -> String {
         rusqlite::Error::SqliteFailure(details, _)
             if details.code == rusqlite::ErrorCode::ConstraintViolation =>
         {
-            "编号已经存在，请使用其他编号。".to_owned()
+            if details.extended_code == 787 {
+                "记录已被采购资料引用，不能删除或替换；可以保留原行并调整未分配数量。".to_owned()
+            } else {
+                "编号已经存在，请使用其他编号。".to_owned()
+            }
         }
         rusqlite::Error::SqliteFailure(details, _)
             if matches!(
@@ -149,6 +154,40 @@ fn archive_business_case(id: String, state: State<'_, AppState>) -> Result<(), S
     with_database(state, |database| database.archive_business_case(&id))
 }
 
+#[tauri::command]
+fn list_purchase_orders(state: State<'_, AppState>) -> Result<Vec<PurchaseOrder>, String> {
+    with_database(state, EncryptedDatabase::list_purchase_orders)
+}
+
+#[tauri::command]
+fn create_purchase_order(
+    input: PurchaseOrderInput,
+    state: State<'_, AppState>,
+) -> Result<PurchaseOrder, String> {
+    with_database(state, |database| database.create_purchase_order(input))
+}
+
+#[tauri::command]
+fn update_purchase_order_status(
+    id: String,
+    status: PurchaseStatus,
+    state: State<'_, AppState>,
+) -> Result<PurchaseOrder, String> {
+    with_database(state, |database| {
+        database.update_purchase_order_status(&id, status)
+    })
+}
+
+#[tauri::command]
+fn update_production_milestone(
+    input: ProductionMilestoneInput,
+    state: State<'_, AppState>,
+) -> Result<ProductionMilestone, String> {
+    with_database(state, |database| {
+        database.update_production_milestone(input)
+    })
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -175,6 +214,10 @@ pub fn run() {
             list_business_cases,
             save_business_case,
             archive_business_case,
+            list_purchase_orders,
+            create_purchase_order,
+            update_purchase_order_status,
+            update_production_milestone,
         ])
         .run(tauri::generate_context!())
         .expect("failed to run TradeDesk Local");

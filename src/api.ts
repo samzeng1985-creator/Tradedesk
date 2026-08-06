@@ -6,6 +6,11 @@ import type {
   CustomerInput,
   Product,
   ProductInput,
+  ProductionMilestone,
+  ProductionMilestoneInput,
+  PurchaseOrder,
+  PurchaseOrderInput,
+  PurchaseStatus,
   Supplier,
   SupplierInput,
   WorkspaceSummary,
@@ -35,4 +40,14 @@ export const businessCaseApi = {
   save: (input: BusinessCaseInput) =>
     invoke<BusinessCase>("save_business_case", { input }),
   archive: (id: string) => invoke<void>("archive_business_case", { id }),
+};
+
+export const fulfillmentApi = {
+  list: () => invoke<PurchaseOrder[]>("list_purchase_orders"),
+  create: (input: PurchaseOrderInput) =>
+    invoke<PurchaseOrder>("create_purchase_order", { input }),
+  updateStatus: (id: string, status: PurchaseStatus) =>
+    invoke<PurchaseOrder>("update_purchase_order_status", { id, status }),
+  updateMilestone: (input: ProductionMilestoneInput) =>
+    invoke<ProductionMilestone>("update_production_milestone", { input }),
 };

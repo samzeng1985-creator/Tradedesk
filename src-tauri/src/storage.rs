@@ -5,11 +5,22 @@ use uuid::Uuid;
 use zeroize::Zeroizing;
 
 use crate::domain::{
-    BusinessCase, BusinessCaseInput, BusinessCaseLine, BusinessCaseLineInput, Customer,
-    CustomerInput, PipelineStage, Product, ProductInput, Supplier, SupplierInput, WorkspaceSummary,
+    BusinessCase, BusinessCaseInput, BusinessCaseLine, Customer, CustomerInput, MilestoneStatus,
+    PipelineStage, Product, ProductInput, ProductionMilestone, ProductionMilestoneInput,
+    PurchaseOrder, PurchaseOrderInput, PurchaseOrderLine, PurchaseStatus, Supplier, SupplierInput,
+    WorkspaceSummary,
 };
 
-const SCHEMA_VERSION: i64 = 3;
+const SCHEMA_VERSION: i64 = 4;
+
+const MILESTONE_STAGES: [(&str, &str); 6] = [
+    ("raw_material", "原料准备"),
+    ("started", "开工"),
+    ("production", "生产完成"),
+    ("quality", "质检"),
+    ("packing", "包装"),
+    ("ready_to_ship", "可发货"),
+];
 
 pub struct EncryptedDatabase {
     connection: Connection,
@@ -169,7 +180,59 @@ impl EncryptedDatabase {
                 amount_minor INTEGER NOT NULL
              );
              CREATE INDEX IF NOT EXISTS idx_trade_case_lines_case
-                ON trade_case_lines(trade_case_id, sort_order);",
+                ON trade_case_lines(trade_case_id, sort_order);
+
+             CREATE TABLE IF NOT EXISTS purchase_orders (
+                id TEXT PRIMARY KEY,
+                number TEXT NOT NULL UNIQUE,
+                trade_case_id TEXT NOT NULL REFERENCES trade_cases(id),
+                trade_case_number_snapshot TEXT NOT NULL,
+                supplier_id TEXT NOT NULL REFERENCES suppliers(id),
+                supplier_name_snapshot TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'draft',
+                currency TEXT NOT NULL,
+                expected_date TEXT NOT NULL DEFAULT '',
+                notes TEXT NOT NULL DEFAULT '',
+                total_amount_minor INTEGER NOT NULL DEFAULT 0,
+                active INTEGER NOT NULL DEFAULT 1
+             );
+             CREATE INDEX IF NOT EXISTS idx_purchase_orders_case
+                ON purchase_orders(trade_case_id, active);
+
+             CREATE TABLE IF NOT EXISTS purchase_order_lines (
+                id TEXT PRIMARY KEY,
+                purchase_order_id TEXT NOT NULL REFERENCES purchase_orders(id) ON DELETE CASCADE,
+                source_case_line_id TEXT NOT NULL REFERENCES trade_case_lines(id),
+                product_id TEXT NOT NULL,
+                sku_snapshot TEXT NOT NULL,
+                name_zh_snapshot TEXT NOT NULL,
+                name_en_snapshot TEXT NOT NULL,
+                quantity REAL NOT NULL,
+                unit_snapshot TEXT NOT NULL,
+                unit_cost_minor INTEGER NOT NULL,
+                amount_minor INTEGER NOT NULL
+             );
+             CREATE INDEX IF NOT EXISTS idx_purchase_order_lines_order
+                ON purchase_order_lines(purchase_order_id);
+             CREATE INDEX IF NOT EXISTS idx_purchase_order_lines_source
+                ON purchase_order_lines(source_case_line_id);
+
+             CREATE TABLE IF NOT EXISTS production_milestones (
+                id TEXT PRIMARY KEY,
+                purchase_order_line_id TEXT NOT NULL REFERENCES purchase_order_lines(id) ON DELETE CASCADE,
+                stage TEXT NOT NULL,
+                sort_order INTEGER NOT NULL,
+                label TEXT NOT NULL,
+                planned_date TEXT NOT NULL DEFAULT '',
+                actual_date TEXT NOT NULL DEFAULT '',
+                progress INTEGER NOT NULL DEFAULT 0,
+                completed_quantity REAL NOT NULL DEFAULT 0,
+                status TEXT NOT NULL DEFAULT 'pending',
+                issue TEXT NOT NULL DEFAULT '',
+                UNIQUE(purchase_order_line_id, stage)
+             );
+             CREATE INDEX IF NOT EXISTS idx_production_milestones_line
+                ON production_milestones(purchase_order_line_id, sort_order);",
         )?;
 
         transaction.execute(
@@ -210,6 +273,8 @@ impl EncryptedDatabase {
             customers: self.count("customers")?,
             suppliers: self.count("suppliers")?,
             active_cases: self.count("trade_cases")?,
+            purchase_orders: self.count("purchase_orders")?,
+            production_risks: self.count("production_risks")?,
         })
     }
 
@@ -483,11 +548,42 @@ impl EncryptedDatabase {
                     ))
                 },
             )?;
+            if let Some(existing_line_id) = &line.id {
+                let existing_product_id = transaction
+                    .query_row(
+                        "SELECT product_id FROM trade_case_lines
+                         WHERE id = ?1 AND trade_case_id = ?2",
+                        params![existing_line_id, id],
+                        |row| row.get::<_, String>(0),
+                    )
+                    .optional()?;
+                if let Some(existing_product_id) = existing_product_id {
+                    let allocated = transaction.query_row(
+                        "SELECT COALESCE(SUM(pol.quantity), 0)
+                         FROM purchase_order_lines pol
+                         JOIN purchase_orders po ON po.id = pol.purchase_order_id
+                         WHERE pol.source_case_line_id = ?1
+                           AND po.active = 1 AND po.status <> 'cancelled'",
+                        params![existing_line_id],
+                        |row| row.get::<_, f64>(0),
+                    )?;
+                    if allocated > 0.0
+                        && (existing_product_id != line.product_id
+                            || line.quantity + 0.000_001 < allocated)
+                    {
+                        return Err(rusqlite::Error::InvalidQuery);
+                    }
+                }
+            }
             let amount_minor = (line.quantity * line.unit_price_minor as f64).round() as i64;
             total_amount_minor = total_amount_minor
                 .checked_add(amount_minor)
                 .ok_or(rusqlite::Error::InvalidQuery)?;
-            prepared_lines.push((line, product, amount_minor));
+            let line_id = line
+                .id
+                .clone()
+                .unwrap_or_else(|| Uuid::new_v4().to_string());
+            prepared_lines.push((line, line_id, product, amount_minor));
         }
 
         transaction.execute(
@@ -517,19 +613,43 @@ impl EncryptedDatabase {
                 total_amount_minor,
             ],
         )?;
-        transaction.execute(
-            "DELETE FROM trade_case_lines WHERE trade_case_id = ?1",
-            params![id],
-        )?;
-        for (index, (line, product, amount_minor)) in prepared_lines.iter().enumerate() {
+        let existing_line_ids = {
+            let mut statement =
+                transaction.prepare("SELECT id FROM trade_case_lines WHERE trade_case_id = ?1")?;
+            statement
+                .query_map(params![id], |row| row.get::<_, String>(0))?
+                .collect::<rusqlite::Result<Vec<_>>>()?
+        };
+        for existing_id in existing_line_ids {
+            if !prepared_lines
+                .iter()
+                .any(|(_, line_id, _, _)| line_id == &existing_id)
+            {
+                transaction.execute(
+                    "DELETE FROM trade_case_lines WHERE id = ?1 AND trade_case_id = ?2",
+                    params![existing_id, id],
+                )?;
+            }
+        }
+        for (index, (line, line_id, product, amount_minor)) in prepared_lines.iter().enumerate() {
             transaction.execute(
                 "INSERT INTO trade_case_lines(
                     id, trade_case_id, sort_order, product_id, sku_snapshot,
                     name_zh_snapshot, name_en_snapshot, quantity, unit_snapshot,
                     unit_price_minor, amount_minor
-                 ) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                 ) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+                 ON CONFLICT(id) DO UPDATE SET
+                    sort_order = excluded.sort_order,
+                    product_id = excluded.product_id,
+                    sku_snapshot = excluded.sku_snapshot,
+                    name_zh_snapshot = excluded.name_zh_snapshot,
+                    name_en_snapshot = excluded.name_en_snapshot,
+                    quantity = excluded.quantity,
+                    unit_snapshot = excluded.unit_snapshot,
+                    unit_price_minor = excluded.unit_price_minor,
+                    amount_minor = excluded.amount_minor",
                 params![
-                    Uuid::new_v4().to_string(),
+                    line_id,
                     id,
                     index as i64,
                     line.product_id,
@@ -563,6 +683,396 @@ impl EncryptedDatabase {
         self.audit("business_case", id, "archive")
     }
 
+    pub fn list_purchase_orders(&self) -> rusqlite::Result<Vec<PurchaseOrder>> {
+        let ids = {
+            let mut statement = self.connection.prepare(
+                "SELECT id FROM purchase_orders WHERE active = 1
+                 ORDER BY number COLLATE NOCASE DESC",
+            )?;
+            statement
+                .query_map([], |row| row.get::<_, String>(0))?
+                .collect::<rusqlite::Result<Vec<_>>>()?
+        };
+        ids.iter().map(|id| self.get_purchase_order(id)).collect()
+    }
+
+    pub fn get_purchase_order(&self, id: &str) -> rusqlite::Result<PurchaseOrder> {
+        let mut purchase_order = self.connection.query_row(
+            "SELECT id, number, trade_case_id, trade_case_number_snapshot, supplier_id,
+                    supplier_name_snapshot, status, currency, expected_date, notes,
+                    total_amount_minor
+             FROM purchase_orders WHERE id = ?1 AND active = 1",
+            params![id],
+            |row| {
+                let status_value: String = row.get(6)?;
+                let status =
+                    PurchaseStatus::from_db(&status_value).ok_or(rusqlite::Error::InvalidQuery)?;
+                Ok(PurchaseOrder {
+                    id: row.get(0)?,
+                    number: row.get(1)?,
+                    business_case_id: row.get(2)?,
+                    business_case_number: row.get(3)?,
+                    supplier_id: row.get(4)?,
+                    supplier_name: row.get(5)?,
+                    status,
+                    currency: row.get(7)?,
+                    expected_date: row.get(8)?,
+                    notes: row.get(9)?,
+                    total_amount_minor: row.get(10)?,
+                    completed_quantity: 0.0,
+                    ready_quantity: 0.0,
+                    lines: Vec::new(),
+                })
+            },
+        )?;
+
+        let line_ids = {
+            let mut statement = self.connection.prepare(
+                "SELECT id FROM purchase_order_lines WHERE purchase_order_id = ?1 ORDER BY rowid",
+            )?;
+            statement
+                .query_map(params![id], |row| row.get::<_, String>(0))?
+                .collect::<rusqlite::Result<Vec<_>>>()?
+        };
+        for line_id in line_ids {
+            let mut line = self.connection.query_row(
+                "SELECT id, source_case_line_id, product_id, sku_snapshot, name_zh_snapshot,
+                        name_en_snapshot, quantity, unit_snapshot, unit_cost_minor, amount_minor
+                 FROM purchase_order_lines WHERE id = ?1",
+                params![line_id],
+                |row| {
+                    Ok(PurchaseOrderLine {
+                        id: row.get(0)?,
+                        source_case_line_id: row.get(1)?,
+                        product_id: row.get(2)?,
+                        sku: row.get(3)?,
+                        name_zh: row.get(4)?,
+                        name_en: row.get(5)?,
+                        quantity: row.get(6)?,
+                        unit: row.get(7)?,
+                        unit_cost_minor: row.get(8)?,
+                        amount_minor: row.get(9)?,
+                        milestones: Vec::new(),
+                    })
+                },
+            )?;
+            let mut milestone_statement = self.connection.prepare(
+                "SELECT id, purchase_order_line_id, stage, label, planned_date, actual_date,
+                        progress, completed_quantity, status, issue
+                 FROM production_milestones
+                 WHERE purchase_order_line_id = ?1 ORDER BY sort_order",
+            )?;
+            line.milestones = milestone_statement
+                .query_map(params![line.id], map_milestone)?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            purchase_order.completed_quantity += line
+                .milestones
+                .iter()
+                .find(|milestone| milestone.stage == "production")
+                .map(|milestone| milestone.completed_quantity)
+                .unwrap_or(0.0);
+            purchase_order.ready_quantity += line
+                .milestones
+                .iter()
+                .find(|milestone| milestone.stage == "ready_to_ship")
+                .map(|milestone| milestone.completed_quantity)
+                .unwrap_or(0.0);
+            purchase_order.lines.push(line);
+        }
+        Ok(purchase_order)
+    }
+
+    pub fn create_purchase_order(
+        &self,
+        input: PurchaseOrderInput,
+    ) -> rusqlite::Result<PurchaseOrder> {
+        require_text(&input.number)?;
+        require_text(&input.business_case_id)?;
+        require_text(&input.supplier_id)?;
+        require_text(&input.currency)?;
+        if input.lines.is_empty()
+            || input.lines.iter().any(|line| {
+                line.source_case_line_id.trim().is_empty()
+                    || !line.quantity.is_finite()
+                    || line.quantity <= 0.0
+                    || line.unit_cost_minor < 0
+            })
+        {
+            return Err(rusqlite::Error::InvalidQuery);
+        }
+
+        let transaction = self.connection.unchecked_transaction()?;
+        let case_number = transaction.query_row(
+            "SELECT number FROM trade_cases WHERE id = ?1 AND active = 1",
+            params![input.business_case_id],
+            |row| row.get::<_, String>(0),
+        )?;
+        let supplier_name = transaction.query_row(
+            "SELECT legal_name FROM suppliers WHERE id = ?1 AND active = 1",
+            params![input.supplier_id],
+            |row| row.get::<_, String>(0),
+        )?;
+        let mut prepared_lines = Vec::with_capacity(input.lines.len());
+        let mut total_amount_minor = 0_i64;
+        for line in &input.lines {
+            let snapshot = transaction.query_row(
+                "SELECT product_id, sku_snapshot, name_zh_snapshot, name_en_snapshot,
+                        quantity, unit_snapshot
+                 FROM trade_case_lines WHERE id = ?1 AND trade_case_id = ?2",
+                params![line.source_case_line_id, input.business_case_id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, f64>(4)?,
+                        row.get::<_, String>(5)?,
+                    ))
+                },
+            )?;
+            let allocated = transaction.query_row(
+                "SELECT COALESCE(SUM(pol.quantity), 0)
+                 FROM purchase_order_lines pol
+                 JOIN purchase_orders po ON po.id = pol.purchase_order_id
+                 WHERE pol.source_case_line_id = ?1 AND po.active = 1 AND po.status <> 'cancelled'",
+                params![line.source_case_line_id],
+                |row| row.get::<_, f64>(0),
+            )?;
+            if allocated + line.quantity > snapshot.4 + 0.000_001 {
+                return Err(rusqlite::Error::InvalidQuery);
+            }
+            let amount_minor = (line.quantity * line.unit_cost_minor as f64).round() as i64;
+            total_amount_minor = total_amount_minor
+                .checked_add(amount_minor)
+                .ok_or(rusqlite::Error::InvalidQuery)?;
+            prepared_lines.push((line, snapshot, amount_minor));
+        }
+
+        let id = Uuid::new_v4().to_string();
+        transaction.execute(
+            "INSERT INTO purchase_orders(
+                id, number, trade_case_id, trade_case_number_snapshot, supplier_id,
+                supplier_name_snapshot, status, currency, expected_date, notes,
+                total_amount_minor, active
+             ) VALUES(?1, ?2, ?3, ?4, ?5, ?6, 'draft', ?7, ?8, ?9, ?10, 1)",
+            params![
+                id,
+                input.number.trim(),
+                input.business_case_id,
+                case_number,
+                input.supplier_id,
+                supplier_name,
+                input.currency.trim().to_uppercase(),
+                input.expected_date.trim(),
+                input.notes.trim(),
+                total_amount_minor,
+            ],
+        )?;
+        for (line, snapshot, amount_minor) in prepared_lines {
+            let line_id = Uuid::new_v4().to_string();
+            transaction.execute(
+                "INSERT INTO purchase_order_lines(
+                    id, purchase_order_id, source_case_line_id, product_id, sku_snapshot,
+                    name_zh_snapshot, name_en_snapshot, quantity, unit_snapshot,
+                    unit_cost_minor, amount_minor
+                 ) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                params![
+                    line_id,
+                    id,
+                    line.source_case_line_id,
+                    snapshot.0,
+                    snapshot.1,
+                    snapshot.2,
+                    snapshot.3,
+                    line.quantity,
+                    snapshot.5,
+                    line.unit_cost_minor,
+                    amount_minor,
+                ],
+            )?;
+            for (sort_order, (stage, label)) in MILESTONE_STAGES.iter().enumerate() {
+                transaction.execute(
+                    "INSERT INTO production_milestones(
+                        id, purchase_order_line_id, stage, sort_order, label,
+                        planned_date, actual_date, progress, completed_quantity, status, issue
+                     ) VALUES(?1, ?2, ?3, ?4, ?5, ?6, '', 0, 0, 'pending', '')",
+                    params![
+                        Uuid::new_v4().to_string(),
+                        line_id,
+                        stage,
+                        sort_order as i64,
+                        label,
+                        input.expected_date.trim(),
+                    ],
+                )?;
+            }
+        }
+        transaction.execute(
+            "UPDATE trade_cases SET stage = 'purchase'
+             WHERE id = ?1 AND stage IN ('quotation', 'order')",
+            params![input.business_case_id],
+        )?;
+        update_case_purchase_amount(&transaction, &input.business_case_id)?;
+        transaction.execute(
+            "INSERT INTO audit_events(entity_type, entity_id, action, payload_json)
+             VALUES('purchase_order', ?1, 'create', '{}')",
+            params![id],
+        )?;
+        transaction.commit()?;
+        self.get_purchase_order(&id)
+    }
+
+    pub fn update_purchase_order_status(
+        &self,
+        id: &str,
+        status: PurchaseStatus,
+    ) -> rusqlite::Result<PurchaseOrder> {
+        let transaction = self.connection.unchecked_transaction()?;
+        let case_id = transaction.query_row(
+            "SELECT trade_case_id FROM purchase_orders WHERE id = ?1 AND active = 1",
+            params![id],
+            |row| row.get::<_, String>(0),
+        )?;
+        if status != PurchaseStatus::Cancelled {
+            let lines = {
+                let mut statement = transaction.prepare(
+                    "SELECT source_case_line_id, quantity
+                     FROM purchase_order_lines WHERE purchase_order_id = ?1",
+                )?;
+                statement
+                    .query_map(params![id], |row| {
+                        Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?))
+                    })?
+                    .collect::<rusqlite::Result<Vec<_>>>()?
+            };
+            for (source_line_id, quantity) in lines {
+                let sales_quantity = transaction.query_row(
+                    "SELECT quantity FROM trade_case_lines WHERE id = ?1",
+                    params![source_line_id],
+                    |row| row.get::<_, f64>(0),
+                )?;
+                let allocated_elsewhere = transaction.query_row(
+                    "SELECT COALESCE(SUM(pol.quantity), 0)
+                     FROM purchase_order_lines pol
+                     JOIN purchase_orders po ON po.id = pol.purchase_order_id
+                     WHERE pol.source_case_line_id = ?1 AND po.id <> ?2
+                       AND po.active = 1 AND po.status <> 'cancelled'",
+                    params![source_line_id, id],
+                    |row| row.get::<_, f64>(0),
+                )?;
+                if allocated_elsewhere + quantity > sales_quantity + 0.000_001 {
+                    return Err(rusqlite::Error::InvalidQuery);
+                }
+            }
+        }
+        transaction.execute(
+            "UPDATE purchase_orders SET status = ?1 WHERE id = ?2",
+            params![status.as_str(), id],
+        )?;
+        update_case_purchase_amount(&transaction, &case_id)?;
+        transaction.execute(
+            "INSERT INTO audit_events(entity_type, entity_id, action, payload_json)
+             VALUES('purchase_order', ?1, 'status', '{}')",
+            params![id],
+        )?;
+        transaction.commit()?;
+        self.get_purchase_order(id)
+    }
+
+    pub fn update_production_milestone(
+        &self,
+        input: ProductionMilestoneInput,
+    ) -> rusqlite::Result<ProductionMilestone> {
+        if !(0..=100).contains(&input.progress)
+            || !input.completed_quantity.is_finite()
+            || input.completed_quantity < 0.0
+        {
+            return Err(rusqlite::Error::InvalidQuery);
+        }
+        let transaction = self.connection.unchecked_transaction()?;
+        let (line_quantity, purchase_order_id, case_id, stage) = transaction.query_row(
+            "SELECT pol.quantity, po.id, po.trade_case_id, pm.stage
+             FROM production_milestones pm
+             JOIN purchase_order_lines pol ON pol.id = pm.purchase_order_line_id
+             JOIN purchase_orders po ON po.id = pol.purchase_order_id
+             WHERE pm.id = ?1 AND po.active = 1",
+            params![input.id],
+            |row| {
+                Ok((
+                    row.get::<_, f64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            },
+        )?;
+        if input.completed_quantity > line_quantity + 0.000_001 {
+            return Err(rusqlite::Error::InvalidQuery);
+        }
+        let progress = if input.status == MilestoneStatus::Completed {
+            100
+        } else {
+            input.progress
+        };
+        transaction.execute(
+            "UPDATE production_milestones SET
+                planned_date = ?1, actual_date = ?2, progress = ?3,
+                completed_quantity = ?4, status = ?5, issue = ?6
+             WHERE id = ?7",
+            params![
+                input.planned_date.trim(),
+                input.actual_date.trim(),
+                progress,
+                input.completed_quantity,
+                input.status.as_str(),
+                input.issue.trim(),
+                input.id,
+            ],
+        )?;
+        if stage == "ready_to_ship" && input.status == MilestoneStatus::Completed {
+            let remaining = transaction.query_row(
+                "SELECT COUNT(*) FROM production_milestones pm
+                 JOIN purchase_order_lines pol ON pol.id = pm.purchase_order_line_id
+                 WHERE pol.purchase_order_id = ?1 AND pm.stage = 'ready_to_ship'
+                   AND pm.status <> 'completed'",
+                params![purchase_order_id],
+                |row| row.get::<_, i64>(0),
+            )?;
+            if remaining == 0 {
+                transaction.execute(
+                    "UPDATE purchase_orders SET status = 'ready_to_ship'
+                     WHERE id = ?1 AND status NOT IN ('completed', 'cancelled')",
+                    params![purchase_order_id],
+                )?;
+            }
+        } else if progress > 0 {
+            transaction.execute(
+                "UPDATE purchase_orders SET status = 'in_production'
+                 WHERE id = ?1 AND status NOT IN ('ready_to_ship', 'completed', 'cancelled')",
+                params![purchase_order_id],
+            )?;
+        }
+        transaction.execute(
+            "UPDATE trade_cases SET stage = 'production'
+             WHERE id = ?1 AND stage IN ('quotation', 'order', 'purchase')",
+            params![case_id],
+        )?;
+        transaction.execute(
+            "INSERT INTO audit_events(entity_type, entity_id, action, payload_json)
+             VALUES('production_milestone', ?1, 'update', '{}')",
+            params![input.id],
+        )?;
+        transaction.commit()?;
+        self.connection.query_row(
+            "SELECT id, purchase_order_line_id, stage, label, planned_date, actual_date,
+                    progress, completed_quantity, status, issue
+             FROM production_milestones WHERE id = ?1",
+            params![input.id],
+            map_milestone,
+        )
+    }
+
     fn audit(&self, entity: &str, id: &str, action: &str) -> rusqlite::Result<()> {
         self.connection.execute(
             "INSERT INTO audit_events(entity_type, entity_id, action, payload_json)
@@ -578,6 +1088,15 @@ impl EncryptedDatabase {
             "customers" => "SELECT COUNT(*) FROM customers WHERE active = 1",
             "suppliers" => "SELECT COUNT(*) FROM suppliers WHERE active = 1",
             "trade_cases" => "SELECT COUNT(*) FROM trade_cases WHERE active = 1",
+            "purchase_orders" => {
+                "SELECT COUNT(*) FROM purchase_orders WHERE active = 1 AND status <> 'cancelled'"
+            }
+            "production_risks" => {
+                "SELECT COUNT(*) FROM production_milestones pm
+                JOIN purchase_order_lines pol ON pol.id = pm.purchase_order_line_id
+                JOIN purchase_orders po ON po.id = pol.purchase_order_id
+                WHERE po.active = 1 AND po.status <> 'cancelled' AND pm.status = 'blocked'"
+            }
             _ => return Err(rusqlite::Error::InvalidQuery),
         };
         let count = self
@@ -585,6 +1104,38 @@ impl EncryptedDatabase {
             .query_row(query, [], |row| row.get::<_, i64>(0))?;
         Ok(count as u64)
     }
+}
+
+fn map_milestone(row: &rusqlite::Row<'_>) -> rusqlite::Result<ProductionMilestone> {
+    let status_value: String = row.get(8)?;
+    let status = MilestoneStatus::from_db(&status_value).ok_or(rusqlite::Error::InvalidQuery)?;
+    Ok(ProductionMilestone {
+        id: row.get(0)?,
+        purchase_order_line_id: row.get(1)?,
+        stage: row.get(2)?,
+        label: row.get(3)?,
+        planned_date: row.get(4)?,
+        actual_date: row.get(5)?,
+        progress: row.get(6)?,
+        completed_quantity: row.get(7)?,
+        status,
+        issue: row.get(9)?,
+    })
+}
+
+fn update_case_purchase_amount(
+    transaction: &Transaction<'_>,
+    case_id: &str,
+) -> rusqlite::Result<()> {
+    transaction.execute(
+        "UPDATE trade_cases SET purchase_amount_minor = (
+            SELECT COALESCE(SUM(total_amount_minor), 0)
+            FROM purchase_orders
+            WHERE trade_case_id = ?1 AND active = 1 AND status <> 'cancelled'
+         ) WHERE id = ?1",
+        params![case_id],
+    )?;
+    Ok(())
 }
 
 fn ensure_column(
@@ -619,6 +1170,7 @@ fn require_text(value: &str) -> rusqlite::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::BusinessCaseLineInput;
 
     #[test]
     fn encrypted_database_persists_business_workflow() {
@@ -648,6 +1200,15 @@ mod tests {
                     payment_terms: "30% deposit".into(),
                 })
                 .unwrap();
+            let supplier = database
+                .save_supplier(SupplierInput {
+                    id: None,
+                    code: "SUP-1".into(),
+                    legal_name: "Example Factory".into(),
+                    lead_time_days: 20,
+                    on_time_rate: 95,
+                })
+                .unwrap();
             let business_case = database
                 .save_business_case(BusinessCaseInput {
                     id: None,
@@ -660,6 +1221,7 @@ mod tests {
                     shipment_date: "2026-09-18".into(),
                     notes: "test order".into(),
                     lines: vec![BusinessCaseLineInput {
+                        id: None,
                         product_id: product.id,
                         quantity: 12.5,
                         unit_price_minor: 240,
@@ -667,8 +1229,80 @@ mod tests {
                 })
                 .unwrap();
             assert_eq!(business_case.total_amount_minor, 3_000);
+            let purchase_order = database
+                .create_purchase_order(PurchaseOrderInput {
+                    number: "PO-2026-0001".into(),
+                    business_case_id: business_case.id.clone(),
+                    supplier_id: supplier.id,
+                    currency: "USD".into(),
+                    expected_date: "2026-09-01".into(),
+                    notes: "first purchase".into(),
+                    lines: vec![crate::domain::PurchaseOrderLineInput {
+                        source_case_line_id: business_case.lines[0].id.clone(),
+                        quantity: 12.5,
+                        unit_cost_minor: 160,
+                    }],
+                })
+                .unwrap();
+            assert_eq!(purchase_order.total_amount_minor, 2_000);
+            assert_eq!(purchase_order.lines[0].milestones.len(), 6);
+            assert!(
+                database
+                    .save_business_case(BusinessCaseInput {
+                        id: Some(business_case.id.clone()),
+                        number: business_case.number.clone(),
+                        customer_id: business_case.customer_id.clone(),
+                        stage: business_case.stage.clone(),
+                        currency: business_case.currency.clone(),
+                        incoterm: business_case.incoterm.clone(),
+                        payment_terms: business_case.payment_terms.clone(),
+                        shipment_date: business_case.shipment_date.clone(),
+                        notes: business_case.notes.clone(),
+                        lines: vec![BusinessCaseLineInput {
+                            id: Some(business_case.lines[0].id.clone()),
+                            product_id: business_case.lines[0].product_id.clone(),
+                            quantity: 10.0,
+                            unit_price_minor: business_case.lines[0].unit_price_minor,
+                        }],
+                    })
+                    .is_err()
+            );
+            let ready = purchase_order.lines[0]
+                .milestones
+                .iter()
+                .find(|milestone| milestone.stage == "ready_to_ship")
+                .unwrap();
+            database
+                .update_production_milestone(ProductionMilestoneInput {
+                    id: ready.id.clone(),
+                    planned_date: "2026-09-01".into(),
+                    actual_date: "2026-08-31".into(),
+                    progress: 100,
+                    completed_quantity: 12.5,
+                    status: MilestoneStatus::Completed,
+                    issue: String::new(),
+                })
+                .unwrap();
+            assert!(
+                database
+                    .create_purchase_order(PurchaseOrderInput {
+                        number: "PO-2026-0002".into(),
+                        business_case_id: business_case.id.clone(),
+                        supplier_id: purchase_order.supplier_id.clone(),
+                        currency: "USD".into(),
+                        expected_date: "2026-09-02".into(),
+                        notes: String::new(),
+                        lines: vec![crate::domain::PurchaseOrderLineInput {
+                            source_case_line_id: business_case.lines[0].id.clone(),
+                            quantity: 1.0,
+                            unit_cost_minor: 160,
+                        }],
+                    })
+                    .is_err()
+            );
             assert_eq!(database.summary().unwrap().products, 1);
             assert_eq!(database.summary().unwrap().active_cases, 1);
+            assert_eq!(database.summary().unwrap().purchase_orders, 1);
         }
         let reopened =
             EncryptedDatabase::open(&path, Zeroizing::new("test-password".to_owned())).unwrap();
@@ -676,6 +1310,9 @@ mod tests {
         let business_cases = reopened.list_business_cases().unwrap();
         assert_eq!(business_cases[0].number, "TD-2026-0001");
         assert_eq!(business_cases[0].lines[0].name_en, "Test product");
+        let purchase_orders = reopened.list_purchase_orders().unwrap();
+        assert_eq!(purchase_orders[0].number, "PO-2026-0001");
+        assert_eq!(purchase_orders[0].ready_quantity, 12.5);
         drop(reopened);
 
         let header = std::fs::read(&path).unwrap();

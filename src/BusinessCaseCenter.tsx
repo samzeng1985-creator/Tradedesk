@@ -17,6 +17,7 @@ interface BusinessCaseCenterProps {
 }
 
 interface DraftLine {
+  id?: string;
   productId: string;
   quantity: string;
   unitPrice: string;
@@ -72,6 +73,7 @@ function CaseEditor({
   const [notes, setNotes] = useState(record?.notes ?? "");
   const [lines, setLines] = useState<DraftLine[]>(
     record?.lines.map((line) => ({
+      id: line.id,
       productId: line.productId,
       quantity: String(line.quantity),
       unitPrice: (line.unitPriceMinor / 100).toFixed(2),
@@ -123,6 +125,7 @@ function CaseEditor({
         shipmentDate,
         notes,
         lines: lines.map((line) => ({
+          id: line.id,
           productId: line.productId,
           quantity: Number(line.quantity),
           unitPriceMinor: Math.round(Number(line.unitPrice) * 100),
@@ -159,7 +162,7 @@ function CaseEditor({
             {lines.map((line, index) => {
               const product = products.find((item) => item.id === line.productId);
               const amount = Math.round(Number(line.quantity) * Math.round(Number(line.unitPrice) * 100));
-              return <div className="line-row" key={`${index}-${record?.id ?? "new"}`}>
+              return <div className="line-row" key={line.id ?? `${index}-${record?.id ?? "new"}`}>
                 <label>产品<select required value={line.productId} onChange={(event) => updateLine(index, { productId: event.target.value })}><option value="">请选择产品</option>{products.map((item) => <option value={item.id} key={item.id}>{item.sku} · {item.nameEn}</option>)}</select></label>
                 <label>数量<input required type="number" min="0.001" step="0.001" value={line.quantity} onChange={(event) => updateLine(index, { quantity: event.target.value })} /></label>
                 <label>单位<input value={product?.unit ?? "—"} readOnly /></label>
