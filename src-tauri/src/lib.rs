@@ -5,9 +5,10 @@ mod storage;
 use std::{path::PathBuf, sync::Mutex};
 
 use domain::{
-    BusinessCase, BusinessCaseInput, Customer, CustomerInput, Product, ProductInput,
-    ProductionMilestone, ProductionMilestoneInput, PurchaseOrder, PurchaseOrderInput,
-    PurchaseStatus, Supplier, SupplierInput, WorkspaceSummary,
+    BusinessCase, BusinessCaseInput, CreateDocumentInput, Customer, CustomerInput,
+    DocumentExportResult, Product, ProductInput, ProductionMilestone, ProductionMilestoneInput,
+    PurchaseOrder, PurchaseOrderInput, PurchaseStatus, SaveDocumentInput, Supplier, SupplierInput,
+    TradeDocument, WorkspaceSummary,
 };
 use storage::EncryptedDatabase;
 use tauri::{Manager, State};
@@ -15,6 +16,9 @@ use zeroize::Zeroizing;
 
 struct AppState {
     database_path: PathBuf,
+    export_dir: PathBuf,
+    render_cache_dir: PathBuf,
+    typst_path: Option<PathBuf>,
     database: Mutex<Option<EncryptedDatabase>>,
 }
 
@@ -188,13 +192,120 @@ fn update_production_milestone(
     })
 }
 
+#[tauri::command]
+fn list_documents(state: State<'_, AppState>) -> Result<Vec<TradeDocument>, String> {
+    with_database(state, EncryptedDatabase::list_documents)
+}
+
+#[tauri::command]
+fn create_document(
+    input: CreateDocumentInput,
+    state: State<'_, AppState>,
+) -> Result<TradeDocument, String> {
+    with_database(state, |database| database.create_document(input))
+}
+
+#[tauri::command]
+fn save_document(
+    input: SaveDocumentInput,
+    state: State<'_, AppState>,
+) -> Result<TradeDocument, String> {
+    with_database(state, |database| database.save_document(input))
+}
+
+#[tauri::command]
+fn issue_document(id: String, state: State<'_, AppState>) -> Result<TradeDocument, String> {
+    with_database(state, |database| database.issue_document(&id))
+}
+
+#[tauri::command]
+fn void_document(
+    id: String,
+    reason: String,
+    state: State<'_, AppState>,
+) -> Result<TradeDocument, String> {
+    with_database(state, |database| database.void_document(&id, &reason))
+}
+
+#[tauri::command]
+fn create_document_version(
+    id: String,
+    state: State<'_, AppState>,
+) -> Result<TradeDocument, String> {
+    with_database(state, |database| database.create_document_version(&id))
+}
+
+fn export_pdf(id: &str, state: &State<'_, AppState>) -> Result<DocumentExportResult, String> {
+    let document = with_database(state.clone(), |database| database.get_document(id))?;
+    let typst_path = state
+        .typst_path
+        .as_ref()
+        .ok_or("未找到 Typst PDF 渲染器，请重新运行开发环境安装脚本。")?;
+    let mut result = document::export_pdf(
+        &document,
+        typst_path,
+        &state.render_cache_dir.join(id),
+        &state.export_dir,
+    )?;
+    let updated = with_database(state.clone(), |database| {
+        database.update_document_export(id, &result.path, &result.sha256)
+    })?;
+    result.exported_at = updated.exported_at;
+    Ok(result)
+}
+
+#[tauri::command]
+fn export_document_pdf(
+    id: String,
+    state: State<'_, AppState>,
+) -> Result<DocumentExportResult, String> {
+    export_pdf(&id, &state)
+}
+
+#[tauri::command]
+fn export_document_csv(id: String, state: State<'_, AppState>) -> Result<String, String> {
+    let document = with_database(state.clone(), |database| database.get_document(&id))?;
+    document::export_csv(&document, &state.export_dir)
+        .map(|path| path.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
+fn print_document(id: String, state: State<'_, AppState>) -> Result<DocumentExportResult, String> {
+    let result = export_pdf(&id, &state)?;
+    document::open_file(std::path::Path::new(&result.path))?;
+    Ok(result)
+}
+
+#[tauri::command]
+fn open_document_pdf(id: String, state: State<'_, AppState>) -> Result<(), String> {
+    let document = with_database(state, |database| database.get_document(&id))?;
+    if document.pdf_path.trim().is_empty() {
+        return Err("该版本尚未导出 PDF。".to_owned());
+    }
+    document::open_file(std::path::Path::new(&document.pdf_path))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
-            let database_path = app.path().app_data_dir()?.join("workspace.tdesk");
+            let app_data_dir = app.path().app_data_dir()?;
+            let database_path = app_data_dir.join("workspace.tdesk");
+            let export_dir = app
+                .path()
+                .document_dir()
+                .unwrap_or_else(|_| app_data_dir.clone())
+                .join("TradeDesk Exports");
+            let render_cache_dir = app.path().app_cache_dir()?.join("document-render");
+            let executable_dir = std::env::current_exe()?
+                .parent()
+                .map(PathBuf::from)
+                .unwrap_or_else(|| app_data_dir.clone());
             app.manage(AppState {
                 database_path,
+                export_dir,
+                render_cache_dir,
+                typst_path: document::find_typst(&executable_dir),
                 database: Mutex::new(None),
             });
             Ok(())
@@ -218,6 +329,16 @@ pub fn run() {
             create_purchase_order,
             update_purchase_order_status,
             update_production_milestone,
+            list_documents,
+            create_document,
+            save_document,
+            issue_document,
+            void_document,
+            create_document_version,
+            export_document_pdf,
+            export_document_csv,
+            print_document,
+            open_document_pdf,
         ])
         .run(tauri::generate_context!())
         .expect("failed to run TradeDesk Local");

@@ -20,5 +20,9 @@ tools/installers/*.exe
 tools/installers/*.msi
 tools/installers/*.zip
 /TradeDesk-*.exe
+/TradeDesk-*/
+/TradeDesk-*.zip
 tools/installers/_rustup_parts/
 tools/nasm/
+tools/typst/
+tmp/

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
-import { initialDocuments } from "./demo";
-import { businessCaseApi, fulfillmentApi, masterApi, workspaceApi } from "./api";
+import { businessCaseApi, documentApi, fulfillmentApi, masterApi, workspaceApi } from "./api";
 import { BusinessCaseCenter } from "./BusinessCaseCenter";
+import { DocumentCenter } from "./DocumentCenter";
 import { FulfillmentCenter } from "./FulfillmentCenter";
 import { MasterEditor } from "./MasterEditor";
 import type { MasterInput, MasterRecord, MasterTab } from "./MasterEditor";
@@ -9,6 +9,7 @@ import { UnlockScreen } from "./UnlockScreen";
 import type {
   BusinessCase,
   BusinessCaseInput,
+  CreateDocumentInput,
   Customer,
   PipelineStage,
   Product,
@@ -17,6 +18,7 @@ import type {
   PurchaseOrderInput,
   PurchaseStatus,
   RecordStatus,
+  SaveDocumentInput,
   Supplier,
   TradeDocument,
   WorkspaceSummary,
@@ -95,7 +97,7 @@ export default function App() {
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [businessCases, setBusinessCases] = useState<BusinessCase[]>([]);
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
-  const [documents, setDocuments] = useState(initialDocuments);
+  const [documents, setDocuments] = useState<TradeDocument[]>([]);
   const [masterQuery, setMasterQuery] = useState("");
   const [editorOpen, setEditorOpen] = useState(false);
   const [editingRecord, setEditingRecord] = useState<MasterRecord | null>(null);
@@ -108,12 +110,13 @@ export default function App() {
   }, []);
 
   async function loadMasterData() {
-    const [nextProducts, nextCustomers, nextSuppliers, nextCases, nextOrders, summary] = await Promise.all([
+    const [nextProducts, nextCustomers, nextSuppliers, nextCases, nextOrders, nextDocuments, summary] = await Promise.all([
       masterApi.listProducts(),
       masterApi.listCustomers(),
       masterApi.listSuppliers(),
       businessCaseApi.list(),
       fulfillmentApi.list(),
+      documentApi.list(),
       workspaceApi.summary(),
     ]);
     setProducts(nextProducts);
@@ -121,6 +124,7 @@ export default function App() {
     setSuppliers(nextSuppliers);
     setBusinessCases(nextCases);
     setPurchaseOrders(nextOrders);
+    setDocuments(nextDocuments);
     setWorkspace(summary);
   }
 
@@ -185,6 +189,52 @@ export default function App() {
     await loadMasterData();
   }
 
+  async function createDocument(input: CreateDocumentInput) {
+    const document = await documentApi.create(input);
+    await loadMasterData();
+    return document;
+  }
+
+  async function saveDocument(input: SaveDocumentInput) {
+    const document = await documentApi.save(input);
+    await loadMasterData();
+    return document;
+  }
+
+  async function issueDocument(id: string) {
+    const document = await documentApi.issue(id);
+    await loadMasterData();
+    return document;
+  }
+
+  async function voidDocument(id: string, reason: string) {
+    const document = await documentApi.void(id, reason);
+    await loadMasterData();
+    return document;
+  }
+
+  async function createDocumentVersion(id: string) {
+    const document = await documentApi.newVersion(id);
+    await loadMasterData();
+    return document;
+  }
+
+  async function exportDocumentPdf(id: string) {
+    const result = await documentApi.exportPdf(id);
+    await loadMasterData();
+    return result.path;
+  }
+
+  async function exportDocumentCsv(id: string) {
+    return documentApi.exportCsv(id);
+  }
+
+  async function printDocument(id: string) {
+    const result = await documentApi.print(id);
+    await loadMasterData();
+    return result.path;
+  }
+
   const currentCase = businessCases[0] ?? null;
   const currentOrders = currentCase
     ? purchaseOrders.filter((order) => order.businessCaseId === currentCase.id && order.status !== "cancelled")
@@ -220,13 +270,6 @@ export default function App() {
   );
 
   function prepareDocuments() {
-    setDocuments((current) =>
-      current.map((item) =>
-        item.status === "blocked"
-          ? { ...item, status: "draft" as const, updatedAt: "刚刚生成" }
-          : item,
-      ),
-    );
     setView("documents");
   }
 
@@ -241,7 +284,7 @@ export default function App() {
           <span className="brand-mark">TD</span>
           <span>
             <strong>TradeDesk</strong>
-            <small>Local</small>
+            <small>Local · 0.5.0</small>
           </span>
         </div>
 
@@ -472,25 +515,19 @@ export default function App() {
         )}
 
         {view === "documents" && (
-          <section className="panel">
-            <div className="panel-heading">
-              <div>
-                <h2>业务单证包</h2>
-                <p>{currentCase?.number ?? "尚未选择业务单"} · 同一份业务快照生成，减少重复录入</p>
-              </div>
-              <button className="button button-primary">新建单证</button>
-            </div>
-            <div className="document-grid">
-              {documents.map((item: TradeDocument) => (
-                <article key={item.id}>
-                  <div className="document-topline"><span>{item.type}</span><Status status={item.status} /></div>
-                  <strong>{item.number}</strong>
-                  <small>{item.updatedAt}</small>
-                  <button className="button button-secondary">打开</button>
-                </article>
-              ))}
-            </div>
-          </section>
+          <DocumentCenter
+            documents={documents}
+            cases={businessCases}
+            onCreate={createDocument}
+            onSave={saveDocument}
+            onIssue={issueDocument}
+            onVoid={voidDocument}
+            onNewVersion={createDocumentVersion}
+            onExportPdf={exportDocumentPdf}
+            onExportCsv={exportDocumentCsv}
+            onPrint={printDocument}
+            onOpenPdf={documentApi.openPdf}
+          />
         )}
       </main>
       {editorOpen && <MasterEditor tab={masterTab} record={editingRecord} saving={saving} onClose={() => setEditorOpen(false)} onSave={saveMaster} />}

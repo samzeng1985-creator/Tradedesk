@@ -54,6 +54,7 @@ export interface WorkspaceSummary {
   activeCases: number;
   purchaseOrders: number;
   productionRisks: number;
+  documents: number;
 }
 
 export interface BusinessCaseLine {
@@ -184,22 +185,94 @@ export interface BusinessCaseInput {
   lines: BusinessCaseLineInput[];
 }
 
+export type DocumentType = "commercial_invoice" | "packing_list" | "trade_contract";
+export type DocumentStatus = "draft" | "issued" | "voided";
+export type ValidationSeverity = "error" | "warning";
+
+export interface DocumentValidationIssue {
+  severity: ValidationSeverity;
+  code: string;
+  message: string;
+}
+
+export interface DocumentLineSnapshot {
+  productId: string;
+  sku: string;
+  description: string;
+  model: string;
+  hsCode: string;
+  quantity: number;
+  unit: string;
+  unitPriceMinor: number;
+  amountMinor: number;
+  packages: number;
+  packageType: string;
+  netWeightKg: number;
+  grossWeightKg: number;
+  cbm: number;
+}
+
+export interface DocumentPayload {
+  seller: string;
+  sellerAddress: string;
+  buyer: string;
+  buyerAddress: string;
+  originCountry: string;
+  destinationCountry: string;
+  portOfLoading: string;
+  portOfDischarge: string;
+  incoterm: string;
+  paymentTerms: string;
+  shipmentDate: string;
+  poReference: string;
+  bankDetails: string;
+  notes: string;
+  declaration: string;
+  contractTerms: string;
+  lines: DocumentLineSnapshot[];
+}
+
 export interface TradeDocument {
   id: string;
-  type: string;
+  documentType: DocumentType;
   number: string;
-  status: RecordStatus;
+  businessCaseId: string;
+  businessCaseNumber: string;
+  customerName: string;
+  version: number;
+  status: DocumentStatus;
+  language: string;
+  issueDate: string;
+  currency: string;
+  templateVersion: string;
+  payload: DocumentPayload;
+  validationIssues: DocumentValidationIssue[];
+  voidReason: string;
+  pdfPath: string;
+  pdfSha256: string;
+  exportedAt: string;
+  createdAt: string;
   updatedAt: string;
 }
 
-export interface TradeCase {
+export interface CreateDocumentInput {
+  businessCaseId: string;
+  documentType: DocumentType;
+  number: string;
+  language: string;
+  issueDate: string;
+}
+
+export interface SaveDocumentInput {
   id: string;
   number: string;
-  customer: Customer;
-  stage: PipelineStage;
-  salesAmount: number;
-  purchaseAmount: number;
-  currency: string;
-  shipmentDate: string;
-  productionProgress: number;
+  language: string;
+  issueDate: string;
+  payload: DocumentPayload;
+}
+
+export interface DocumentExportResult {
+  path: string;
+  sha256: string;
+  exportedAt: string;
 }

@@ -3,6 +3,7 @@ param()
 
 $ErrorActionPreference = "Stop"
 $missing = [System.Collections.Generic.List[string]]::new()
+$projectRoot = Split-Path $PSScriptRoot -Parent
 
 foreach ($command in @("git", "node", "pnpm.cmd", "rustup", "rustc", "cargo", "perl")) {
     if (-not (Get-Command $command -ErrorAction SilentlyContinue)) {
@@ -44,6 +45,11 @@ if (-not ($webViewRoots | Where-Object { Test-Path $_ })) {
     $missing.Add("Microsoft Edge WebView2 Runtime")
 }
 
+$typst = Get-ChildItem -Path (Join-Path $projectRoot "tools\typst") -Recurse -Filter "typst.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+if (-not $typst) {
+    $missing.Add("Typst 0.15.1 PDF renderer")
+}
+
 if ($missing.Count -gt 0) {
     Write-Error ("Missing prerequisites: " + ($missing -join ", "))
 }
@@ -55,3 +61,4 @@ node --version
 pnpm.cmd --version
 perl --version
 if ($nasm) { & $nasm -v }
+if ($typst) { & $typst.FullName --version }

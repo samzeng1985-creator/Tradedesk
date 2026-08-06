@@ -9,11 +9,11 @@
 - 业务单中心已完成：客户、订单产品、商业条款、金额与业务快照。
 - 采购与生产中心已接入真实加密数据：业务单拆分采购、供应商分配、采购状态和六个生产里程碑。
 - 工作台已显示真实销售金额、采购成本、生产进度、可发货数量和异常节点。
-- 单证中心当前仍为下一阶段文档引擎纵向切片入口。
+- 单证中心已完成真实纵向切片：商业发票、详细装箱单、外贸合同的创建、编辑、预览、签发、作废和新版本。
 - 已建立 Tauri 2 + Rust 桌面壳。
 - 已建立 SQLCipher 默认加密数据库、增量迁移和基础审计事件。
-- 已建立 Typst 商业发票模板入口。
-- 前端生产构建约 235 KB JavaScript，gzip 约 72 KB；未引入 UI 框架、Redux 或 ORM。
+- 已使用 Typst 0.15.1 建立三套专业 A4 模板，支持 PDF、CSV 和从最终 PDF 打印。
+- 前端生产构建约 252 KB JavaScript，gzip 约 76 KB；未引入 UI 框架、Redux 或 ORM。
 
 ## 目录
 
@@ -55,6 +55,7 @@ Windows 还需要：
 - WebView2 Runtime
 - Strawberry Perl（仅用于编译静态 OpenSSL/SQLCipher）
 - NASM（仅用于加速 Windows 下的 OpenSSL 构建）
+- Typst 0.15.1（安装脚本下载到项目 `tools/typst`，发布时与主程序一起分发）
 
 可使用 WinGet 安装两个构建工具：
 
@@ -74,6 +75,7 @@ Set-ExecutionPolicy -Scope Process Bypass
 macOS 还需要：
 
 - Xcode Command Line Tools
+- 执行 `bash scripts/setup-macos-dev.sh` 下载对应 Apple Silicon/Intel 的 Typst 0.15.1 渲染器
 
 环境就绪后运行：
 
@@ -88,6 +90,13 @@ pnpm tauri build
 ```
 
 本机已验证 WebView2、Rust、Microsoft C++ Build Tools、SQLCipher 与 Tauri 生产构建。
+
+## 单证导出
+
+- PDF 与 CSV 默认保存到用户“文档/TradeDesk Exports”。
+- 每次 PDF 导出会保存 SHA-256、导出时间和对应的加密业务快照。
+- “打印”先生成与预览一致的 PDF，再调用系统默认 PDF 阅读器进行打印。
+- Typst 是独立渲染器，不需要最终用户安装 Node.js、Python 或办公软件。
 
 ## 版本仓库
 

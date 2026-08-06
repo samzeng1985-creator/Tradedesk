@@ -1,32 +1,95 @@
-#let invoice(data) = {
-  set page(paper: "a4", margin: 14mm)
-  set text(font: ("Noto Sans", "Noto Sans CJK SC"), size: 8.5pt)
-
-  align(center)[
-    #text(size: 16pt, weight: "bold")[COMMERCIAL INVOICE]
-  ]
-
-  v(6pt)
-  table(
-    columns: (1fr, 1fr),
-    inset: 5pt,
-    stroke: .5pt,
-    [*SHIPPER / EXPORTER*\ #data.shipper],
-    [*CONSIGNEE*\ #data.consignee],
-  )
-
-  v(6pt)
-  table(
-    columns: (auto, 1fr, 1fr, 1fr, 1fr),
-    inset: 4pt,
-    stroke: .5pt,
-    table.header([*#*], [*DESCRIPTION*], [*QTY*], [*UNIT PRICE*], [*TOTAL*]),
-    ..data.items.enumerate().map(((index, item)) => (
-      [#index + 1],
-      [#item.description],
-      [#item.quantity],
-      [#item.unit_price],
-      [#item.total],
-    )).flatten(),
-  )
+#let data = json("document.json")
+#let payload = data.payload
+#let money(value) = {
+  let whole = calc.floor(value / 100)
+  let cents = calc.abs(value - whole * 100)
+  str(whole) + "." + (if cents < 10 { "0" } else { "" }) + str(cents)
 }
+#let total = payload.lines.fold(0, (sum, line) => sum + line.amountMinor)
+
+#set document(title: "Commercial Invoice " + data.number, author: payload.seller)
+#set page(
+  paper: "a4",
+  margin: (x: 14mm, y: 13mm),
+  footer: context align(center, text(size: 7pt, fill: luma(90))[
+    TradeDesk - #data.number - V#data.version - Page #counter(page).display("1 / 1")
+  ]),
+)
+#set text(font: ("Arial", "Microsoft YaHei"), size: 8.5pt)
+#set par(leading: 0.55em)
+
+#align(center)[
+  #text(size: 18pt, weight: "bold")[COMMERCIAL INVOICE]
+  #linebreak()
+  #text(size: 8pt, fill: luma(90))[商业发票 / Commercial Invoice]
+]
+#if data.status == "draft" [
+  #align(right, text(size: 9pt, weight: "bold", fill: rgb("b42318"))[DRAFT / 草稿])
+]
+
+#v(5pt)
+#table(
+  columns: (1fr, 1fr),
+  inset: 5pt,
+  stroke: .55pt + luma(145),
+  [*SELLER / EXPORTER*\ #payload.seller\ #text(fill: luma(70))[#payload.sellerAddress]],
+  [*BUYER / CONSIGNEE*\ #payload.buyer\ #text(fill: luma(70))[#payload.buyerAddress]],
+)
+#v(5pt)
+#table(
+  columns: (22mm, 1fr, 22mm, 1fr),
+  inset: 4pt,
+  stroke: .45pt + luma(160),
+  fill: (column, _) => if calc.even(column) { luma(245) },
+  [*Invoice No.*], [#data.number], [*Issue Date*], [#data.issueDate],
+  [*Order No.*], [#data.businessCaseNumber], [*PO Reference*], [#payload.poReference],
+  [*Currency*], [#data.currency], [*Incoterm*], [#payload.incoterm],
+  [*Payment*], [#payload.paymentTerms], [*Shipment Date*], [#payload.shipmentDate],
+  [*Origin*], [#payload.originCountry], [*Destination*], [#payload.destinationCountry],
+  [*Port of Loading*], [#payload.portOfLoading], [*Port of Discharge*], [#payload.portOfDischarge],
+)
+#v(6pt)
+#table(
+  columns: (8mm, 25mm, 1fr, 20mm, 14mm, 25mm, 27mm),
+  inset: (x: 3pt, y: 4pt),
+  align: (center, left, left, right, center, right, right),
+  stroke: .45pt + luma(155),
+  fill: (_, row) => if row == 0 { luma(235) },
+  table.header(
+    [*NO.*], [*SKU*], [*DESCRIPTION / HS CODE*], [*QTY*], [*UNIT*], [*UNIT PRICE*], [*AMOUNT*],
+  ),
+  ..payload.lines.enumerate().map(((index, line)) => (
+    [#(index + 1)],
+    [#line.sku],
+    [#line.description #if line.model != "" [\ Model: #line.model] #if line.hsCode != "" [\ HS: #line.hsCode]],
+    [#line.quantity],
+    [#line.unit],
+    [#money(line.unitPriceMinor)],
+    [#money(line.amountMinor)],
+  )).flatten(),
+  table.cell(colspan: 6, align: right, fill: luma(245))[*TOTAL #data.currency*],
+  table.cell(align: right, fill: luma(245))[*#money(total)*],
+)
+
+#v(7pt)
+#if payload.bankDetails != "" [
+  #block(width: 100%, inset: 5pt, stroke: .45pt + luma(170))[
+    *BANK DETAILS*\ #payload.bankDetails
+  ]
+]
+#if payload.notes != "" [
+  #v(4pt)
+  *NOTES*\ #payload.notes
+]
+#if payload.declaration != "" [
+  #v(4pt)
+  *DECLARATION*\ #payload.declaration
+]
+
+#v(12pt)
+#grid(
+  columns: (1fr, 45mm),
+  gutter: 15mm,
+  [#text(fill: luma(80))[Generated from encrypted TradeDesk snapshot.]],
+  [#line(length: 100%)\ Authorized Signature],
+)

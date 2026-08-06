@@ -3572,11 +3572,12 @@ dependencies = [
 
 [[package]]
 name = "trade-desk-local"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
+ "sha2",
  "tauri",
  "tauri-build",
  "uuid",

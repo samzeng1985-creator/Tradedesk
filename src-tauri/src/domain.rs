@@ -12,16 +12,6 @@ pub enum PipelineStage {
 }
 
 impl PipelineStage {
-    pub fn next(&self) -> Self {
-        match self {
-            Self::Quotation => Self::Order,
-            Self::Order => Self::Purchase,
-            Self::Purchase => Self::Production,
-            Self::Production => Self::Shipment,
-            Self::Shipment | Self::Documents => Self::Documents,
-        }
-    }
-
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Quotation => "quotation",
@@ -57,6 +47,162 @@ pub struct WorkspaceSummary {
     pub active_cases: u64,
     pub purchase_orders: u64,
     pub production_risks: u64,
+    pub documents: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DocumentType {
+    CommercialInvoice,
+    PackingList,
+    TradeContract,
+}
+
+impl DocumentType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::CommercialInvoice => "commercial_invoice",
+            Self::PackingList => "packing_list",
+            Self::TradeContract => "trade_contract",
+        }
+    }
+
+    pub fn from_db(value: &str) -> Option<Self> {
+        match value {
+            "commercial_invoice" => Some(Self::CommercialInvoice),
+            "packing_list" => Some(Self::PackingList),
+            "trade_contract" => Some(Self::TradeContract),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DocumentStatus {
+    Draft,
+    Issued,
+    Voided,
+}
+
+impl DocumentStatus {
+    pub fn from_db(value: &str) -> Option<Self> {
+        match value {
+            "draft" => Some(Self::Draft),
+            "issued" => Some(Self::Issued),
+            "voided" => Some(Self::Voided),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ValidationSeverity {
+    Error,
+    Warning,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DocumentValidationIssue {
+    pub severity: ValidationSeverity,
+    pub code: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DocumentLineSnapshot {
+    pub product_id: String,
+    pub sku: String,
+    pub description: String,
+    pub model: String,
+    pub hs_code: String,
+    pub quantity: f64,
+    pub unit: String,
+    pub unit_price_minor: i64,
+    pub amount_minor: i64,
+    pub packages: i64,
+    pub package_type: String,
+    pub net_weight_kg: f64,
+    pub gross_weight_kg: f64,
+    pub cbm: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DocumentPayload {
+    pub seller: String,
+    pub seller_address: String,
+    pub buyer: String,
+    pub buyer_address: String,
+    pub origin_country: String,
+    pub destination_country: String,
+    pub port_of_loading: String,
+    pub port_of_discharge: String,
+    pub incoterm: String,
+    pub payment_terms: String,
+    pub shipment_date: String,
+    pub po_reference: String,
+    pub bank_details: String,
+    pub notes: String,
+    pub declaration: String,
+    pub contract_terms: String,
+    pub lines: Vec<DocumentLineSnapshot>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TradeDocument {
+    pub id: String,
+    pub document_type: DocumentType,
+    pub number: String,
+    pub business_case_id: String,
+    pub business_case_number: String,
+    pub customer_name: String,
+    pub version: u32,
+    pub status: DocumentStatus,
+    pub language: String,
+    pub issue_date: String,
+    pub currency: String,
+    pub template_version: String,
+    pub payload: DocumentPayload,
+    pub validation_issues: Vec<DocumentValidationIssue>,
+    pub void_reason: String,
+    pub pdf_path: String,
+    pub pdf_sha256: String,
+    pub exported_at: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateDocumentInput {
+    pub business_case_id: String,
+    pub document_type: DocumentType,
+    pub number: String,
+    pub language: String,
+    pub issue_date: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveDocumentInput {
+    pub id: String,
+    pub number: String,
+    pub language: String,
+    pub issue_date: String,
+    pub payload: DocumentPayload,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DocumentExportResult {
+    pub path: String,
+    pub sha256: String,
+    pub exported_at: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -334,26 +480,4 @@ pub struct BusinessCaseInput {
     pub shipment_date: String,
     pub notes: String,
     pub lines: Vec<BusinessCaseLineInput>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TradeCase {
-    pub id: String,
-    pub number: String,
-    pub customer_id: String,
-    pub stage: PipelineStage,
-    pub currency: String,
-    pub sales_amount_minor: i64,
-    pub purchase_amount_minor: i64,
-}
-
-#[cfg(test)]
-mod tests {
-    use super::PipelineStage;
-
-    #[test]
-    fn pipeline_stops_at_documents() {
-        assert_eq!(PipelineStage::Shipment.next(), PipelineStage::Documents);
-        assert_eq!(PipelineStage::Documents.next(), PipelineStage::Documents);
-    }
 }

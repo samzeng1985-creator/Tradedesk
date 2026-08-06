@@ -2,8 +2,10 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   BusinessCase,
   BusinessCaseInput,
+  CreateDocumentInput,
   Customer,
   CustomerInput,
+  DocumentExportResult,
   Product,
   ProductInput,
   ProductionMilestone,
@@ -13,6 +15,8 @@ import type {
   PurchaseStatus,
   Supplier,
   SupplierInput,
+  SaveDocumentInput,
+  TradeDocument,
   WorkspaceSummary,
 } from "./domain";
 
@@ -22,6 +26,24 @@ export const workspaceApi = {
     invoke<WorkspaceSummary>("unlock_workspace", { password, companyName }),
   lock: () => invoke<void>("lock_workspace"),
   summary: () => invoke<WorkspaceSummary>("workspace_summary"),
+};
+
+export const documentApi = {
+  list: () => invoke<TradeDocument[]>("list_documents"),
+  create: (input: CreateDocumentInput) =>
+    invoke<TradeDocument>("create_document", { input }),
+  save: (input: SaveDocumentInput) =>
+    invoke<TradeDocument>("save_document", { input }),
+  issue: (id: string) => invoke<TradeDocument>("issue_document", { id }),
+  void: (id: string, reason: string) =>
+    invoke<TradeDocument>("void_document", { id, reason }),
+  newVersion: (id: string) =>
+    invoke<TradeDocument>("create_document_version", { id }),
+  exportPdf: (id: string) =>
+    invoke<DocumentExportResult>("export_document_pdf", { id }),
+  exportCsv: (id: string) => invoke<string>("export_document_csv", { id }),
+  print: (id: string) => invoke<DocumentExportResult>("print_document", { id }),
+  openPdf: (id: string) => invoke<void>("open_document_pdf", { id }),
 };
 
 export const masterApi = {

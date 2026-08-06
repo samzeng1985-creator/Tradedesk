@@ -5,13 +5,14 @@ use uuid::Uuid;
 use zeroize::Zeroizing;
 
 use crate::domain::{
-    BusinessCase, BusinessCaseInput, BusinessCaseLine, Customer, CustomerInput, MilestoneStatus,
-    PipelineStage, Product, ProductInput, ProductionMilestone, ProductionMilestoneInput,
-    PurchaseOrder, PurchaseOrderInput, PurchaseOrderLine, PurchaseStatus, Supplier, SupplierInput,
-    WorkspaceSummary,
+    BusinessCase, BusinessCaseInput, BusinessCaseLine, CreateDocumentInput, Customer,
+    CustomerInput, DocumentLineSnapshot, DocumentPayload, DocumentStatus, DocumentType,
+    MilestoneStatus, PipelineStage, Product, ProductInput, ProductionMilestone,
+    ProductionMilestoneInput, PurchaseOrder, PurchaseOrderInput, PurchaseOrderLine, PurchaseStatus,
+    SaveDocumentInput, Supplier, SupplierInput, TradeDocument, WorkspaceSummary,
 };
 
-const SCHEMA_VERSION: i64 = 4;
+const SCHEMA_VERSION: i64 = 5;
 
 const MILESTONE_STAGES: [(&str, &str); 6] = [
     ("raw_material", "原料准备"),
@@ -232,7 +233,34 @@ impl EncryptedDatabase {
                 UNIQUE(purchase_order_line_id, stage)
              );
              CREATE INDEX IF NOT EXISTS idx_production_milestones_line
-                ON production_milestones(purchase_order_line_id, sort_order);",
+                ON production_milestones(purchase_order_line_id, sort_order);
+
+             CREATE TABLE IF NOT EXISTS documents (
+                id TEXT PRIMARY KEY,
+                document_type TEXT NOT NULL,
+                number TEXT NOT NULL,
+                trade_case_id TEXT NOT NULL REFERENCES trade_cases(id),
+                trade_case_number_snapshot TEXT NOT NULL,
+                customer_name_snapshot TEXT NOT NULL,
+                version INTEGER NOT NULL DEFAULT 1,
+                status TEXT NOT NULL DEFAULT 'draft',
+                language TEXT NOT NULL DEFAULT 'en',
+                issue_date TEXT NOT NULL,
+                currency TEXT NOT NULL,
+                template_version TEXT NOT NULL DEFAULT 'base-1',
+                payload_json TEXT NOT NULL,
+                void_reason TEXT NOT NULL DEFAULT '',
+                pdf_path TEXT NOT NULL DEFAULT '',
+                pdf_sha256 TEXT NOT NULL DEFAULT '',
+                exported_at TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(document_type, number, version)
+             );
+             CREATE INDEX IF NOT EXISTS idx_documents_case
+                ON documents(trade_case_id, updated_at DESC);
+             CREATE INDEX IF NOT EXISTS idx_documents_number
+                ON documents(document_type, number, version DESC);",
         )?;
 
         transaction.execute(
@@ -275,6 +303,7 @@ impl EncryptedDatabase {
             active_cases: self.count("trade_cases")?,
             purchase_orders: self.count("purchase_orders")?,
             production_risks: self.count("production_risks")?,
+            documents: self.count("documents")?,
         })
     }
 
@@ -1073,6 +1102,294 @@ impl EncryptedDatabase {
         )
     }
 
+    pub fn list_documents(&self) -> rusqlite::Result<Vec<TradeDocument>> {
+        let mut statement = self.connection.prepare(
+            "SELECT id, document_type, number, trade_case_id, trade_case_number_snapshot,
+                    customer_name_snapshot, version, status, language, issue_date, currency,
+                    template_version, payload_json, void_reason, pdf_path, pdf_sha256,
+                    exported_at, created_at, updated_at
+             FROM documents ORDER BY updated_at DESC, number COLLATE NOCASE DESC, version DESC",
+        )?;
+        statement.query_map([], map_document)?.collect()
+    }
+
+    pub fn get_document(&self, id: &str) -> rusqlite::Result<TradeDocument> {
+        self.connection.query_row(
+            "SELECT id, document_type, number, trade_case_id, trade_case_number_snapshot,
+                    customer_name_snapshot, version, status, language, issue_date, currency,
+                    template_version, payload_json, void_reason, pdf_path, pdf_sha256,
+                    exported_at, created_at, updated_at
+             FROM documents WHERE id = ?1",
+            params![id],
+            map_document,
+        )
+    }
+
+    pub fn create_document(&self, input: CreateDocumentInput) -> rusqlite::Result<TradeDocument> {
+        require_text(&input.business_case_id)?;
+        require_text(&input.number)?;
+        require_text(&input.issue_date)?;
+        validate_language(&input.language)?;
+        let business_case = self.get_business_case(&input.business_case_id)?;
+        let company_name = self
+            .connection
+            .query_row(
+                "SELECT value FROM workspace_meta WHERE key = 'company_name'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?
+            .unwrap_or_else(|| "Local Exporter".to_owned());
+        let destination_country = self.connection.query_row(
+            "SELECT market FROM customers WHERE id = ?1",
+            params![business_case.customer_id],
+            |row| row.get::<_, String>(0),
+        )?;
+        let mut lines = Vec::with_capacity(business_case.lines.len());
+        for line in &business_case.lines {
+            let (model, hs_code, gross_weight_kg) = self.connection.query_row(
+                "SELECT model, hs_code, gross_weight_kg FROM products WHERE id = ?1",
+                params![line.product_id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, f64>(2)?,
+                    ))
+                },
+            )?;
+            lines.push(DocumentLineSnapshot {
+                product_id: line.product_id.clone(),
+                sku: line.sku.clone(),
+                description: if line.name_en.trim().is_empty() {
+                    line.name_zh.clone()
+                } else {
+                    line.name_en.clone()
+                },
+                model,
+                hs_code,
+                quantity: line.quantity,
+                unit: line.unit.clone(),
+                unit_price_minor: line.unit_price_minor,
+                amount_minor: line.amount_minor,
+                packages: 1,
+                package_type: "Carton".to_owned(),
+                net_weight_kg: 0.0,
+                gross_weight_kg: (gross_weight_kg * line.quantity * 1000.0).round() / 1000.0,
+                cbm: 0.0,
+            });
+        }
+        let payload = DocumentPayload {
+            seller: company_name,
+            seller_address: String::new(),
+            buyer: business_case.customer_name.clone(),
+            buyer_address: String::new(),
+            origin_country: "China".to_owned(),
+            destination_country,
+            port_of_loading: String::new(),
+            port_of_discharge: String::new(),
+            incoterm: business_case.incoterm.clone(),
+            payment_terms: business_case.payment_terms.clone(),
+            shipment_date: business_case.shipment_date.clone(),
+            po_reference: business_case.number.clone(),
+            bank_details: String::new(),
+            notes: business_case.notes.clone(),
+            declaration: "We certify that the information in this document is true and correct."
+                .to_owned(),
+            contract_terms: String::new(),
+            lines,
+        };
+        let payload_json = serde_json::to_string(&payload).map_err(json_error)?;
+        let id = Uuid::new_v4().to_string();
+        self.connection.execute(
+            "INSERT INTO documents(
+                id, document_type, number, trade_case_id, trade_case_number_snapshot,
+                customer_name_snapshot, version, status, language, issue_date, currency,
+                template_version, payload_json
+             ) VALUES(?1, ?2, ?3, ?4, ?5, ?6, 1, 'draft', ?7, ?8, ?9, 'base-1', ?10)",
+            params![
+                id,
+                input.document_type.as_str(),
+                input.number.trim(),
+                business_case.id,
+                business_case.number,
+                business_case.customer_name,
+                input.language.trim(),
+                input.issue_date.trim(),
+                business_case.currency,
+                payload_json,
+            ],
+        )?;
+        self.audit("document", &id, "create")?;
+        self.get_document(&id)
+    }
+
+    pub fn save_document(&self, input: SaveDocumentInput) -> rusqlite::Result<TradeDocument> {
+        require_text(&input.id)?;
+        require_text(&input.number)?;
+        require_text(&input.issue_date)?;
+        validate_language(&input.language)?;
+        let mut payload = input.payload;
+        if payload.lines.is_empty() {
+            return Err(rusqlite::Error::InvalidQuery);
+        }
+        for line in &mut payload.lines {
+            if !line.quantity.is_finite()
+                || line.quantity <= 0.0
+                || line.unit_price_minor < 0
+                || line.packages < 0
+                || !line.net_weight_kg.is_finite()
+                || !line.gross_weight_kg.is_finite()
+                || !line.cbm.is_finite()
+                || line.net_weight_kg < 0.0
+                || line.gross_weight_kg < 0.0
+                || line.cbm < 0.0
+            {
+                return Err(rusqlite::Error::InvalidQuery);
+            }
+            line.amount_minor = (line.quantity * line.unit_price_minor as f64).round() as i64;
+        }
+        let payload_json = serde_json::to_string(&payload).map_err(json_error)?;
+        let changed = self.connection.execute(
+            "UPDATE documents SET number = ?1, language = ?2, issue_date = ?3,
+                    payload_json = ?4, pdf_path = '', pdf_sha256 = '', exported_at = '',
+                    updated_at = CURRENT_TIMESTAMP
+             WHERE id = ?5 AND status = 'draft'",
+            params![
+                input.number.trim(),
+                input.language.trim(),
+                input.issue_date.trim(),
+                payload_json,
+                input.id,
+            ],
+        )?;
+        if changed == 0 {
+            return Err(rusqlite::Error::InvalidQuery);
+        }
+        self.audit("document", &input.id, "save")?;
+        self.get_document(&input.id)
+    }
+
+    pub fn issue_document(&self, id: &str) -> rusqlite::Result<TradeDocument> {
+        let document = self.get_document(id)?;
+        if document.status != DocumentStatus::Draft
+            || crate::document::has_blocking_errors(&document)
+        {
+            return Err(rusqlite::Error::InvalidQuery);
+        }
+        let mut checked_products = std::collections::HashSet::new();
+        for line in &document.payload.lines {
+            if !checked_products.insert(&line.product_id) {
+                continue;
+            }
+            let case_quantity = self.connection.query_row(
+                "SELECT COALESCE(SUM(quantity), 0) FROM trade_case_lines
+                 WHERE trade_case_id = ?1 AND product_id = ?2",
+                params![document.business_case_id, line.product_id],
+                |row| row.get::<_, f64>(0),
+            )?;
+            let document_quantity = document
+                .payload
+                .lines
+                .iter()
+                .filter(|item| item.product_id == line.product_id)
+                .map(|item| item.quantity)
+                .sum::<f64>();
+            if document_quantity > case_quantity + 0.000_001 {
+                return Err(rusqlite::Error::InvalidQuery);
+            }
+        }
+        let transaction = self.connection.unchecked_transaction()?;
+        transaction.execute(
+            "UPDATE documents SET status = 'issued', updated_at = CURRENT_TIMESTAMP
+             WHERE id = ?1 AND status = 'draft'",
+            params![id],
+        )?;
+        transaction.execute(
+            "UPDATE trade_cases SET stage = 'documents' WHERE id = ?1",
+            params![document.business_case_id],
+        )?;
+        transaction.execute(
+            "INSERT INTO audit_events(entity_type, entity_id, action, payload_json)
+             VALUES('document', ?1, 'issue', '{}')",
+            params![id],
+        )?;
+        transaction.commit()?;
+        self.get_document(id)
+    }
+
+    pub fn void_document(&self, id: &str, reason: &str) -> rusqlite::Result<TradeDocument> {
+        require_text(reason)?;
+        let changed = self.connection.execute(
+            "UPDATE documents SET status = 'voided', void_reason = ?1,
+                    updated_at = CURRENT_TIMESTAMP
+             WHERE id = ?2 AND status = 'issued'",
+            params![reason.trim(), id],
+        )?;
+        if changed == 0 {
+            return Err(rusqlite::Error::InvalidQuery);
+        }
+        self.audit("document", id, "void")?;
+        self.get_document(id)
+    }
+
+    pub fn create_document_version(&self, id: &str) -> rusqlite::Result<TradeDocument> {
+        let source = self.get_document(id)?;
+        if source.status == DocumentStatus::Draft {
+            return Err(rusqlite::Error::InvalidQuery);
+        }
+        let next_version = self.connection.query_row(
+            "SELECT COALESCE(MAX(version), 0) + 1 FROM documents
+             WHERE document_type = ?1 AND number = ?2",
+            params![source.document_type.as_str(), source.number],
+            |row| row.get::<_, i64>(0),
+        )?;
+        let new_id = Uuid::new_v4().to_string();
+        let payload_json = serde_json::to_string(&source.payload).map_err(json_error)?;
+        self.connection.execute(
+            "INSERT INTO documents(
+                id, document_type, number, trade_case_id, trade_case_number_snapshot,
+                customer_name_snapshot, version, status, language, issue_date, currency,
+                template_version, payload_json
+             ) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, 'draft', ?8, ?9, ?10, ?11, ?12)",
+            params![
+                new_id,
+                source.document_type.as_str(),
+                source.number,
+                source.business_case_id,
+                source.business_case_number,
+                source.customer_name,
+                next_version,
+                source.language,
+                source.issue_date,
+                source.currency,
+                source.template_version,
+                payload_json,
+            ],
+        )?;
+        self.audit("document", &new_id, "new_version")?;
+        self.get_document(&new_id)
+    }
+
+    pub fn update_document_export(
+        &self,
+        id: &str,
+        path: &str,
+        sha256: &str,
+    ) -> rusqlite::Result<TradeDocument> {
+        let changed = self.connection.execute(
+            "UPDATE documents SET pdf_path = ?1, pdf_sha256 = ?2,
+                    exported_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+             WHERE id = ?3",
+            params![path, sha256, id],
+        )?;
+        if changed == 0 {
+            return Err(rusqlite::Error::QueryReturnedNoRows);
+        }
+        self.audit("document", id, "export_pdf")?;
+        self.get_document(id)
+    }
+
     fn audit(&self, entity: &str, id: &str, action: &str) -> rusqlite::Result<()> {
         self.connection.execute(
             "INSERT INTO audit_events(entity_type, entity_id, action, payload_json)
@@ -1097,6 +1414,7 @@ impl EncryptedDatabase {
                 JOIN purchase_orders po ON po.id = pol.purchase_order_id
                 WHERE po.active = 1 AND po.status <> 'cancelled' AND pm.status = 'blocked'"
             }
+            "documents" => "SELECT COUNT(*) FROM documents WHERE status <> 'voided'",
             _ => return Err(rusqlite::Error::InvalidQuery),
         };
         let count = self
@@ -1121,6 +1439,39 @@ fn map_milestone(row: &rusqlite::Row<'_>) -> rusqlite::Result<ProductionMileston
         status,
         issue: row.get(9)?,
     })
+}
+
+fn map_document(row: &rusqlite::Row<'_>) -> rusqlite::Result<TradeDocument> {
+    let type_value: String = row.get(1)?;
+    let status_value: String = row.get(7)?;
+    let payload_value: String = row.get(12)?;
+    let document_type = DocumentType::from_db(&type_value).ok_or(rusqlite::Error::InvalidQuery)?;
+    let status = DocumentStatus::from_db(&status_value).ok_or(rusqlite::Error::InvalidQuery)?;
+    let payload = serde_json::from_str::<DocumentPayload>(&payload_value).map_err(json_error)?;
+    let mut document = TradeDocument {
+        id: row.get(0)?,
+        document_type,
+        number: row.get(2)?,
+        business_case_id: row.get(3)?,
+        business_case_number: row.get(4)?,
+        customer_name: row.get(5)?,
+        version: row.get::<_, i64>(6)? as u32,
+        status,
+        language: row.get(8)?,
+        issue_date: row.get(9)?,
+        currency: row.get(10)?,
+        template_version: row.get(11)?,
+        payload,
+        validation_issues: Vec::new(),
+        void_reason: row.get(13)?,
+        pdf_path: row.get(14)?,
+        pdf_sha256: row.get(15)?,
+        exported_at: row.get(16)?,
+        created_at: row.get(17)?,
+        updated_at: row.get(18)?,
+    };
+    document.validation_issues = crate::document::validate(&document);
+    Ok(document)
 }
 
 fn update_case_purchase_amount(
@@ -1165,6 +1516,18 @@ fn require_text(value: &str) -> rusqlite::Result<()> {
     } else {
         Ok(())
     }
+}
+
+fn validate_language(value: &str) -> rusqlite::Result<()> {
+    if matches!(value.trim(), "en" | "zh_en" | "ru") {
+        Ok(())
+    } else {
+        Err(rusqlite::Error::InvalidQuery)
+    }
+}
+
+fn json_error(error: serde_json::Error) -> rusqlite::Error {
+    rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(error))
 }
 
 #[cfg(test)]
@@ -1300,9 +1663,74 @@ mod tests {
                     })
                     .is_err()
             );
+            let draft = database
+                .create_document(CreateDocumentInput {
+                    business_case_id: business_case.id.clone(),
+                    document_type: DocumentType::CommercialInvoice,
+                    number: "INV-2026-0001".into(),
+                    language: "zh_en".into(),
+                    issue_date: "2026-08-06".into(),
+                })
+                .unwrap();
+            assert_eq!(draft.status, DocumentStatus::Draft);
+            assert_eq!(draft.payload.lines.len(), 1);
+            assert_eq!(draft.payload.lines[0].amount_minor, 3_000);
+            let mut payload = draft.payload.clone();
+            payload.seller_address = "Shenzhen, China".into();
+            payload.buyer_address = "Seattle, USA".into();
+            let saved = database
+                .save_document(SaveDocumentInput {
+                    id: draft.id.clone(),
+                    number: draft.number.clone(),
+                    language: draft.language.clone(),
+                    issue_date: draft.issue_date.clone(),
+                    payload: payload.clone(),
+                })
+                .unwrap();
+            assert!(
+                saved
+                    .validation_issues
+                    .iter()
+                    .all(|issue| { issue.severity != crate::domain::ValidationSeverity::Error })
+            );
+            let issued = database.issue_document(&saved.id).unwrap();
+            assert_eq!(issued.status, DocumentStatus::Issued);
+            if let Some(typst) = crate::document::find_typst(std::path::Path::new("")) {
+                let render_root =
+                    std::env::temp_dir().join(format!("tradedesk-pdf-{}", Uuid::new_v4()));
+                let work_dir = render_root.join("work");
+                let output_dir = render_root.join("output");
+                let export =
+                    crate::document::export_pdf(&issued, &typst, &work_dir, &output_dir).unwrap();
+                let pdf = std::fs::read(&export.path).unwrap();
+                assert_eq!(&pdf[..5], b"%PDF-");
+                assert_eq!(export.sha256.len(), 64);
+                let csv = crate::document::export_csv(&issued, &output_dir).unwrap();
+                assert!(std::fs::read_to_string(csv).unwrap().contains("SKU-1"));
+                let _ = std::fs::remove_dir_all(render_root);
+            }
+            assert!(
+                database
+                    .save_document(SaveDocumentInput {
+                        id: issued.id.clone(),
+                        number: issued.number.clone(),
+                        language: issued.language.clone(),
+                        issue_date: issued.issue_date.clone(),
+                        payload,
+                    })
+                    .is_err()
+            );
+            let version_two = database.create_document_version(&issued.id).unwrap();
+            assert_eq!(version_two.version, 2);
+            assert_eq!(version_two.status, DocumentStatus::Draft);
+            let voided = database
+                .void_document(&issued.id, "Replaced by corrected version")
+                .unwrap();
+            assert_eq!(voided.status, DocumentStatus::Voided);
             assert_eq!(database.summary().unwrap().products, 1);
             assert_eq!(database.summary().unwrap().active_cases, 1);
             assert_eq!(database.summary().unwrap().purchase_orders, 1);
+            assert_eq!(database.summary().unwrap().documents, 1);
         }
         let reopened =
             EncryptedDatabase::open(&path, Zeroizing::new("test-password".to_owned())).unwrap();
@@ -1313,6 +1741,10 @@ mod tests {
         let purchase_orders = reopened.list_purchase_orders().unwrap();
         assert_eq!(purchase_orders[0].number, "PO-2026-0001");
         assert_eq!(purchase_orders[0].ready_quantity, 12.5);
+        let documents = reopened.list_documents().unwrap();
+        assert_eq!(documents.len(), 2);
+        assert_eq!(documents[0].version, 2);
+        assert_eq!(documents[1].status, DocumentStatus::Voided);
         drop(reopened);
 
         let header = std::fs::read(&path).unwrap();
