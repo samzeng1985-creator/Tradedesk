@@ -4,11 +4,14 @@
 
 ## 当前进度
 
-- 已完成可交互前端纵向切片：工作台、主数据搜索、采购与生产节点、单证中心。
+- 已完成加密工作区创建、密码解锁和手动锁定。
+- 产品、客户和供应商支持真实本地新建、编辑、搜索、停用与重启持久化。
+- 业务单中心已完成：客户、订单产品、商业条款、金额与业务快照。
+- 工作台、采购生产节点和单证中心当前仍为下一阶段业务链演示。
 - 已建立 Tauri 2 + Rust 桌面壳。
-- 已建立 SQLCipher 默认加密数据库边界和第一版表结构。
+- 已建立 SQLCipher 默认加密数据库、增量迁移和基础审计事件。
 - 已建立 Typst 商业发票模板入口。
-- 前端生产构建约 205 KB JavaScript，gzip 约 65 KB；未引入 UI 框架、Redux 或 ORM。
+- 前端生产构建约 214 KB JavaScript，gzip 约 67 KB；未引入 UI 框架、Redux 或 ORM。
 
 ## 目录
 
@@ -74,6 +77,12 @@ macOS 还需要：
 
 ```powershell
 pnpm tauri dev
+```
+
+生产构建必须启用 Tauri 自定义协议；项目已将其设为默认 Cargo 特性。完整构建仍推荐：
+
+```powershell
+pnpm tauri build
 ```
 
 本机已验证 WebView2、Rust、Microsoft C++ Build Tools、SQLCipher 与 Tauri 生产构建。

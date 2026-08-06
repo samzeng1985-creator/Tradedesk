@@ -1,21 +1,24 @@
-import { useMemo, useState } from "react";
-import {
-  customers,
-  initialCase,
-  initialDocuments,
-  initialMilestones,
-  products,
-  suppliers,
-} from "./demo";
+import { useEffect, useMemo, useState } from "react";
+import { initialCase, initialDocuments, initialMilestones } from "./demo";
+import { businessCaseApi, masterApi, workspaceApi } from "./api";
+import { BusinessCaseCenter } from "./BusinessCaseCenter";
+import { MasterEditor } from "./MasterEditor";
+import type { MasterInput, MasterRecord, MasterTab } from "./MasterEditor";
+import { UnlockScreen } from "./UnlockScreen";
 import type {
+  BusinessCase,
+  BusinessCaseInput,
+  Customer,
   PipelineStage,
+  Product,
   ProductionMilestone,
   RecordStatus,
+  Supplier,
   TradeDocument,
+  WorkspaceSummary,
 } from "./domain";
 
-type View = "overview" | "masters" | "fulfillment" | "documents";
-type MasterTab = "products" | "customers" | "suppliers";
+type View = "overview" | "cases" | "masters" | "fulfillment" | "documents";
 
 const pipeline: Array<{ key: PipelineStage; label: string }> = [
   { key: "quotation", label: "报价" },
@@ -28,6 +31,7 @@ const pipeline: Array<{ key: PipelineStage; label: string }> = [
 
 const viewTitles: Record<View, { title: string; subtitle: string }> = {
   overview: { title: "业务工作台", subtitle: "从订单到单证的轻量闭环" },
+  cases: { title: "业务单", subtitle: "客户、产品与商业条款的统一业务快照" },
   masters: { title: "主数据", subtitle: "一次建档，多处复用" },
   fulfillment: { title: "采购与生产", subtitle: "只跟踪关键里程碑，不做复杂排产" },
   documents: { title: "单证中心", subtitle: "版本、状态与跨单证一致性" },
@@ -70,12 +74,89 @@ function Pipeline({ stage }: { stage: PipelineStage }) {
 }
 
 export default function App() {
+  const [workspace, setWorkspace] = useState<WorkspaceSummary | null>(null);
+  const [workspaceExists, setWorkspaceExists] = useState(false);
+  const [workspaceChecking, setWorkspaceChecking] = useState(true);
   const [view, setView] = useState<View>("overview");
   const [masterTab, setMasterTab] = useState<MasterTab>("products");
+  const [products, setProducts] = useState<Product[]>([]);
+  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [businessCases, setBusinessCases] = useState<BusinessCase[]>([]);
   const [tradeCase, setTradeCase] = useState(initialCase);
   const [milestones, setMilestones] = useState(initialMilestones);
   const [documents, setDocuments] = useState(initialDocuments);
   const [masterQuery, setMasterQuery] = useState("");
+  const [editorOpen, setEditorOpen] = useState(false);
+  const [editingRecord, setEditingRecord] = useState<MasterRecord | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    workspaceApi.exists()
+      .then(setWorkspaceExists)
+      .finally(() => setWorkspaceChecking(false));
+  }, []);
+
+  async function loadMasterData() {
+    const [nextProducts, nextCustomers, nextSuppliers, nextCases, summary] = await Promise.all([
+      masterApi.listProducts(),
+      masterApi.listCustomers(),
+      masterApi.listSuppliers(),
+      businessCaseApi.list(),
+      workspaceApi.summary(),
+    ]);
+    setProducts(nextProducts);
+    setCustomers(nextCustomers);
+    setSuppliers(nextSuppliers);
+    setBusinessCases(nextCases);
+    setWorkspace(summary);
+  }
+
+  async function unlock(password: string, companyName?: string) {
+    await workspaceApi.unlock(password, companyName);
+    await loadMasterData();
+    setWorkspaceExists(true);
+  }
+
+  async function lock() {
+    await workspaceApi.lock();
+    setWorkspace(null);
+    setWorkspaceExists(true);
+  }
+
+  function openEditor(record: MasterRecord | null = null) {
+    setEditingRecord(record);
+    setEditorOpen(true);
+  }
+
+  async function saveMaster(input: MasterInput) {
+    setSaving(true);
+    try {
+      if (masterTab === "products") await masterApi.saveProduct(input as Parameters<typeof masterApi.saveProduct>[0]);
+      if (masterTab === "customers") await masterApi.saveCustomer(input as Parameters<typeof masterApi.saveCustomer>[0]);
+      if (masterTab === "suppliers") await masterApi.saveSupplier(input as Parameters<typeof masterApi.saveSupplier>[0]);
+      await loadMasterData();
+      setEditorOpen(false);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function archiveMaster(entity: "product" | "customer" | "supplier", record: MasterRecord) {
+    if (!window.confirm(`停用“${"sku" in record ? record.sku : record.legalName}”？历史资料不会被删除。`)) return;
+    await masterApi.archive(entity, record.id);
+    await loadMasterData();
+  }
+
+  async function saveBusinessCase(input: BusinessCaseInput) {
+    await businessCaseApi.save(input);
+    await loadMasterData();
+  }
+
+  async function archiveBusinessCase(id: string) {
+    await businessCaseApi.archive(id);
+    await loadMasterData();
+  }
 
   const margin = useMemo(
     () => Math.round(((tradeCase.salesAmount - tradeCase.purchaseAmount) / tradeCase.salesAmount) * 100),
@@ -84,17 +165,17 @@ export default function App() {
 
   const normalizedQuery = masterQuery.trim().toLocaleLowerCase();
   const filteredProducts = products.filter((item) =>
-    [item.sku, item.name, item.model, item.hsCode].some((value) =>
+    [item.sku, item.nameZh, item.nameEn, item.model, item.hsCode].some((value) =>
       value.toLocaleLowerCase().includes(normalizedQuery),
     ),
   );
   const filteredCustomers = customers.filter((item) =>
-    [item.code, item.name, item.market, item.currency].some((value) =>
+    [item.code, item.legalName, item.market, item.currency].some((value) =>
       value.toLocaleLowerCase().includes(normalizedQuery),
     ),
   );
   const filteredSuppliers = suppliers.filter((item) =>
-    [item.code, item.name].some((value) =>
+    [item.code, item.legalName].some((value) =>
       value.toLocaleLowerCase().includes(normalizedQuery),
     ),
   );
@@ -125,6 +206,10 @@ export default function App() {
     setView("documents");
   }
 
+  if (!workspace) {
+    return <UnlockScreen checking={workspaceChecking} existing={workspaceExists} onUnlock={unlock} />;
+  }
+
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -139,6 +224,9 @@ export default function App() {
         <nav aria-label="主导航">
           <button className={view === "overview" ? "selected" : ""} onClick={() => setView("overview")}>
             工作台
+          </button>
+          <button className={view === "cases" ? "selected" : ""} onClick={() => setView("cases")}>
+            业务单
           </button>
           <button className={view === "masters" ? "selected" : ""} onClick={() => setView("masters")}>
             主数据
@@ -157,8 +245,8 @@ export default function App() {
         <div className="workspace-state">
           <span className="lock-dot" aria-hidden="true" />
           <div>
-            <strong>本地工作区</strong>
-            <small>加密边界已预留</small>
+            <strong>{workspace.companyName}</strong>
+            <small>SQLCipher 已加密</small>
           </div>
         </div>
       </aside>
@@ -170,8 +258,8 @@ export default function App() {
             <p>{viewTitles[view].subtitle}</p>
           </div>
           <div className="top-actions">
-            <span className="demo-badge">演示工作区</span>
-            <button className="button button-secondary">全局搜索</button>
+            <span className="demo-badge">本地加密工作区</span>
+            <button className="button button-secondary" onClick={lock}>锁定</button>
           </div>
         </header>
 
@@ -182,7 +270,7 @@ export default function App() {
                 <div>
                   <span className="eyebrow">当前业务单</span>
                   <h2>{tradeCase.number}</h2>
-                  <p>{tradeCase.customer.name} · 计划发货 {tradeCase.shipmentDate}</p>
+                  <p>{tradeCase.customer.legalName} · 计划发货 {tradeCase.shipmentDate}</p>
                 </div>
                 <button className="button button-primary" onClick={advanceStage}>
                   推进下一节点
@@ -274,6 +362,16 @@ export default function App() {
           </div>
         )}
 
+        {view === "cases" && (
+          <BusinessCaseCenter
+            cases={businessCases}
+            customers={customers}
+            products={products}
+            onSave={saveBusinessCase}
+            onArchive={archiveBusinessCase}
+          />
+        )}
+
         {view === "masters" && (
           <section className="panel master-panel">
             <div className="tabs" role="tablist" aria-label="主数据类型">
@@ -297,18 +395,18 @@ export default function App() {
                   onChange={(event) => setMasterQuery(event.target.value)}
                 />
               </label>
-              <button className="button button-primary">新建记录</button>
+              <button className="button button-primary" onClick={() => openEditor()}>新建记录</button>
             </div>
 
             <div className="table-wrap">
               {masterTab === "products" && (
                 <table>
                   <thead>
-                    <tr><th>SKU</th><th>产品</th><th>型号</th><th>HS 编码</th><th>单位</th><th>毛重</th></tr>
+                    <tr><th>SKU</th><th>产品</th><th>型号</th><th>HS 编码</th><th>单位</th><th>毛重</th><th>操作</th></tr>
                   </thead>
                   <tbody>
                     {filteredProducts.map((item) => (
-                      <tr key={item.id}><td>{item.sku}</td><td>{item.name}</td><td>{item.model}</td><td>{item.hsCode}</td><td>{item.unit}</td><td>{item.grossWeightKg} kg</td></tr>
+                      <tr key={item.id}><td>{item.sku}</td><td><strong>{item.nameEn}</strong><small className="table-subtitle">{item.nameZh}</small></td><td>{item.model || "—"}</td><td>{item.hsCode || "—"}</td><td>{item.unit}</td><td>{item.grossWeightKg} kg</td><td className="row-actions"><button onClick={() => openEditor(item)}>编辑</button><button onClick={() => archiveMaster("product", item)}>停用</button></td></tr>
                     ))}
                   </tbody>
                 </table>
@@ -316,11 +414,11 @@ export default function App() {
               {masterTab === "customers" && (
                 <table>
                   <thead>
-                    <tr><th>客户编码</th><th>客户</th><th>市场</th><th>币种</th><th>默认付款条款</th></tr>
+                    <tr><th>客户编码</th><th>客户</th><th>市场</th><th>币种</th><th>默认付款条款</th><th>操作</th></tr>
                   </thead>
                   <tbody>
                     {filteredCustomers.map((item) => (
-                      <tr key={item.id}><td>{item.code}</td><td>{item.name}</td><td>{item.market}</td><td>{item.currency}</td><td>{item.paymentTerms}</td></tr>
+                      <tr key={item.id}><td>{item.code}</td><td>{item.legalName}</td><td>{item.market || "—"}</td><td>{item.currency}</td><td>{item.paymentTerms || "—"}</td><td className="row-actions"><button onClick={() => openEditor(item)}>编辑</button><button onClick={() => archiveMaster("customer", item)}>停用</button></td></tr>
                     ))}
                   </tbody>
                 </table>
@@ -328,11 +426,11 @@ export default function App() {
               {masterTab === "suppliers" && (
                 <table>
                   <thead>
-                    <tr><th>供应商编码</th><th>供应商</th><th>默认交期</th><th>准时率</th><th>状态</th></tr>
+                    <tr><th>供应商编码</th><th>供应商</th><th>默认交期</th><th>准时率</th><th>状态</th><th>操作</th></tr>
                   </thead>
                   <tbody>
                     {filteredSuppliers.map((item) => (
-                      <tr key={item.id}><td>{item.code}</td><td>{item.name}</td><td>{item.leadTimeDays} 天</td><td>{item.onTimeRate}%</td><td><Status status={item.status} /></td></tr>
+                      <tr key={item.id}><td>{item.code}</td><td>{item.legalName}</td><td>{item.leadTimeDays} 天</td><td>{item.onTimeRate}%</td><td><Status status="ready" /></td><td className="row-actions"><button onClick={() => openEditor(item)}>编辑</button><button onClick={() => archiveMaster("supplier", item)}>停用</button></td></tr>
                     ))}
                   </tbody>
                 </table>
@@ -396,6 +494,7 @@ export default function App() {
           </section>
         )}
       </main>
+      {editorOpen && <MasterEditor tab={masterTab} record={editingRecord} saving={saving} onClose={() => setEditorOpen(false)} onSave={saveMaster} />}
     </div>
   );
 }

@@ -11,20 +11,24 @@ export const products: Product[] = [
   {
     id: "prd-1",
     sku: "TS-1001",
-    name: "不锈钢保温杯 / Stainless Steel Tumbler",
+    nameZh: "不锈钢保温杯",
+    nameEn: "Stainless Steel Tumbler",
     model: "750ml",
     hsCode: "9617.00",
     unit: "pcs",
     grossWeightKg: 0.48,
+    active: true,
   },
   {
     id: "prd-2",
     sku: "PK-2208",
-    name: "食品级硅胶密封圈 / Silicone Seal Ring",
+    nameZh: "食品级硅胶密封圈",
+    nameEn: "Silicone Seal Ring",
     model: "82mm",
     hsCode: "3926.90",
     unit: "pcs",
     grossWeightKg: 0.04,
+    active: true,
   },
 ];
 
@@ -32,18 +36,20 @@ export const customers: Customer[] = [
   {
     id: "cus-1",
     code: "CUS-US-018",
-    name: "Northstar Trading LLC",
+    legalName: "Northstar Trading LLC",
     market: "美国",
     currency: "USD",
     paymentTerms: "30% T/T, 70% before shipment",
+    active: true,
   },
   {
     id: "cus-2",
     code: "CUS-RU-006",
-    name: "ООО Север Импорт",
+    legalName: "ООО Север Импорт",
     market: "俄罗斯",
     currency: "USD",
     paymentTerms: "50% / 50%",
+    active: true,
   },
 ];
 
@@ -51,18 +57,18 @@ export const suppliers: Supplier[] = [
   {
     id: "sup-1",
     code: "SUP-ZJ-012",
-    name: "浙江星河金属制品有限公司",
+    legalName: "浙江星河金属制品有限公司",
     leadTimeDays: 25,
     onTimeRate: 96,
-    status: "ready",
+    active: true,
   },
   {
     id: "sup-2",
     code: "SUP-GD-021",
-    name: "东莞远成硅胶科技有限公司",
+    legalName: "东莞远成硅胶科技有限公司",
     leadTimeDays: 18,
     onTimeRate: 91,
-    status: "working",
+    active: true,
   },
 ];
 

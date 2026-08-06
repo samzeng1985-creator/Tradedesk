@@ -1,6 +1,6 @@
 [package]
 name = "trade-desk-local"
-version = "0.1.0"
+version = "0.3.0"
 description = "Lightweight local-first foreign trade workspace"
 authors = ["TradeDesk"]
 edition = "2024"
@@ -8,6 +8,10 @@ edition = "2024"
 [lib]
 name = "trade_desk_local_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
