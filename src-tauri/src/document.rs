@@ -7,7 +7,8 @@ use std::{
 use sha2::{Digest, Sha256};
 
 use crate::domain::{
-    DocumentExportResult, DocumentType, DocumentValidationIssue, TradeDocument, ValidationSeverity,
+    ConfigurableProduct, DocumentExportResult, DocumentType, DocumentValidationIssue,
+    TradeDocument, ValidationSeverity,
 };
 
 const COMMERCIAL_INVOICE_TEMPLATE: &str =
@@ -17,6 +18,8 @@ const COMMERCIAL_QUOTATION_TEMPLATE: &str =
 const PROFORMA_INVOICE_TEMPLATE: &str = include_str!("../../templates/base/proforma-invoice.typ");
 const PACKING_LIST_TEMPLATE: &str = include_str!("../../templates/base/packing-list.typ");
 const TRADE_CONTRACT_TEMPLATE: &str = include_str!("../../templates/base/trade-contract.typ");
+const CONFIGURATION_SHEET_TEMPLATE: &str =
+    include_str!("../../templates/base/configuration-sheet.typ");
 
 pub fn validate(document: &TradeDocument) -> Vec<DocumentValidationIssue> {
     let mut issues = Vec::new();
@@ -193,6 +196,108 @@ pub fn export_csv(document: &TradeDocument, output_dir: &Path) -> Result<PathBuf
     Ok(output_path)
 }
 
+pub fn export_configuration_pdf(
+    configuration: &ConfigurableProduct,
+    typst_path: &Path,
+    work_dir: &Path,
+    output_dir: &Path,
+) -> Result<DocumentExportResult, String> {
+    fs::create_dir_all(work_dir).map_err(|error| format!("无法创建配置单临时目录：{error}"))?;
+    fs::create_dir_all(output_dir).map_err(|error| format!("无法创建配置单导出目录：{error}"))?;
+    let data_path = work_dir.join("configuration.json");
+    let template_path = work_dir.join("configuration.typ");
+    let output_path = output_dir.join(format!("{}.pdf", configuration_stem(configuration)));
+    let payload = serde_json::to_vec_pretty(configuration)
+        .map_err(|error| format!("无法生成配置清单快照：{error}"))?;
+    fs::write(&data_path, payload).map_err(|error| format!("无法写入配置清单快照：{error}"))?;
+    fs::write(&template_path, CONFIGURATION_SHEET_TEMPLATE)
+        .map_err(|error| format!("无法写入配置单模板：{error}"))?;
+    let output = Command::new(typst_path)
+        .arg("compile")
+        .arg("--root")
+        .arg(work_dir)
+        .arg("--pdf-standard")
+        .arg("1.7")
+        .arg(&template_path)
+        .arg(&output_path)
+        .output()
+        .map_err(|error| format!("无法启动 Typst PDF 渲染器：{error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "配置单 PDF 生成失败：{}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    let bytes =
+        fs::read(&output_path).map_err(|error| format!("无法读取生成的配置单 PDF：{error}"))?;
+    Ok(DocumentExportResult {
+        path: output_path.to_string_lossy().into_owned(),
+        sha256: format!("{:x}", Sha256::digest(&bytes)),
+        exported_at: String::new(),
+    })
+}
+
+pub fn export_configuration_csv(
+    configuration: &ConfigurableProduct,
+    output_dir: &Path,
+) -> Result<PathBuf, String> {
+    fs::create_dir_all(output_dir).map_err(|error| format!("无法创建配置单导出目录：{error}"))?;
+    let output_path = output_dir.join(format!("{}.csv", configuration_stem(configuration)));
+    let mut rows = vec![
+        [
+            csv("配置编号"),
+            csv(&configuration.code),
+            csv("产品名称"),
+            csv(&configuration.name),
+            csv("型号"),
+            csv(&configuration.model),
+            csv("币种"),
+            csv(&configuration.currency),
+        ]
+        .join(","),
+        [csv("配置说明"), csv(&configuration.notes)].join(","),
+        String::new(),
+        "序号,组件类别,品名,型号/规格/材质,数量,单位,单价,总价,币种,品牌,备注".to_owned(),
+    ];
+    for (index, line) in configuration.lines.iter().enumerate() {
+        rows.push(
+            [
+                (index + 1).to_string(),
+                csv(&line.category),
+                csv(&line.name),
+                csv(&line.specification),
+                line.quantity.to_string(),
+                csv(&line.unit),
+                minor(line.unit_price_minor),
+                minor(line.amount_minor),
+                csv(&configuration.currency),
+                csv(&line.brand),
+                csv(&line.notes),
+            ]
+            .join(","),
+        );
+    }
+    rows.push(
+        [
+            String::new(),
+            String::new(),
+            csv("配置总价"),
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new(),
+            minor(configuration.total_amount_minor),
+            csv(&configuration.currency),
+            String::new(),
+            String::new(),
+        ]
+        .join(","),
+    );
+    fs::write(&output_path, format!("\u{feff}{}\r\n", rows.join("\r\n")))
+        .map_err(|error| format!("无法写入配置单 CSV：{error}"))?;
+    Ok(output_path)
+}
+
 pub fn find_typst(executable_dir: &Path) -> Option<PathBuf> {
     let file_name = if cfg!(target_os = "windows") {
         "typst.exe"
@@ -266,6 +371,24 @@ fn export_stem(document: &TradeDocument) -> String {
         "{}_{}_{}_V{}_{}",
         document.customer_name, kind, document.number, document.version, document.issue_date
     );
+    raw.chars()
+        .map(|character| match character {
+            '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*' => '_',
+            _ => character,
+        })
+        .collect::<String>()
+        .trim_matches([' ', '.'])
+        .to_owned()
+}
+
+fn configuration_stem(configuration: &ConfigurableProduct) -> String {
+    sanitize_stem(&format!(
+        "ConfigurationSheet_{}_{}",
+        configuration.code, configuration.name
+    ))
+}
+
+fn sanitize_stem(raw: &str) -> String {
     raw.chars()
         .map(|character| match character {
             '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*' => '_',

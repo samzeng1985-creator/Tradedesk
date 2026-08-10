@@ -287,6 +287,23 @@ pub struct ConfigComponentInput {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ComponentOption {
+    pub id: String,
+    pub kind: String,
+    pub value: String,
+    pub active: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ComponentOptionInput {
+    pub id: Option<String>,
+    pub kind: String,
+    pub value: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ConfigurableProductLine {
     pub id: String,
     pub component_id: String,

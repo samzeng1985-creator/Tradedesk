@@ -1,6 +1,9 @@
 import { useMemo, useState } from "react";
 import type { FormEvent } from "react";
 import type {
+  ComponentOption,
+  ComponentOptionInput,
+  ComponentOptionKind,
   ConfigComponent,
   ConfigComponentInput,
   ConfigurableProduct,
@@ -17,16 +20,115 @@ function formatMoney(valueMinor: number, currency: string) {
 
 interface ComponentLibraryProps {
   components: ConfigComponent[];
+  options: ComponentOption[];
   onSave: (input: ConfigComponentInput) => Promise<void>;
   onArchive: (id: string) => Promise<void>;
+  onSaveOption: (input: ComponentOptionInput) => Promise<void>;
+  onArchiveOption: (id: string) => Promise<void>;
+}
+
+const optionLabels: Record<ComponentOptionKind, string> = {
+  category: "组件类别",
+  name: "品名",
+  brand: "品牌",
+};
+
+function RememberedInput({
+  label,
+  value,
+  suggestions,
+  required,
+  placeholder,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  suggestions: string[];
+  required?: boolean;
+  placeholder?: string;
+  onChange: (value: string) => void;
+}) {
+  const normalized = value.trim().toLocaleLowerCase();
+  const matches = suggestions
+    .filter((item) => !normalized || item.toLocaleLowerCase().includes(normalized))
+    .slice(0, 8);
+  const [focused, setFocused] = useState(false);
+
+  return <label className="remembered-field">{label}{required ? " *" : ""}
+    <input
+      required={required}
+      value={value}
+      placeholder={placeholder}
+      autoComplete="off"
+      onFocus={() => setFocused(true)}
+      onBlur={() => setFocused(false)}
+      onChange={(event) => onChange(event.target.value)}
+    />
+    {focused && matches.length > 0 && <span className="remembered-suggestions" role="listbox">
+      {matches.map((item) => <button type="button" role="option" key={item} onMouseDown={(event) => event.preventDefault()} onClick={() => { onChange(item); setFocused(false); }}>{item}</button>)}
+    </span>}
+  </label>;
+}
+
+function ComponentOptionManager({
+  options,
+  onClose,
+  onSave,
+  onArchive,
+}: {
+  options: ComponentOption[];
+  onClose: () => void;
+  onSave: (input: ComponentOptionInput) => Promise<void>;
+  onArchive: (id: string) => Promise<void>;
+}) {
+  const [kind, setKind] = useState<ComponentOptionKind>("category");
+  const [value, setValue] = useState("");
+  const [query, setQuery] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const normalized = query.trim().toLocaleLowerCase();
+  const filtered = options.filter((item) => item.kind === kind && item.value.toLocaleLowerCase().includes(normalized));
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    try {
+      await onSave({ kind, value });
+      setValue("");
+    } catch (reason) {
+      setError(String(reason));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function archive(option: ComponentOption) {
+    if (!window.confirm(`停用词库选项“${option.value}”？现有组件资料不会改变。`)) return;
+    await onArchive(option.id);
+  }
+
+  return <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
+    <section className="modal-card option-manager" role="dialog" aria-modal="true" onMouseDown={(event) => event.stopPropagation()}>
+      <div className="panel-heading"><div><span className="eyebrow">组件录入词库</span><h2>类别、品名与品牌设置</h2><p>保存组件时，新内容也会自动加入词库。</p></div><button className="icon-button" onClick={onClose} aria-label="关闭">×</button></div>
+      <div className="option-kind-tabs">{(Object.keys(optionLabels) as ComponentOptionKind[]).map((item) => <button type="button" className={kind === item ? "selected" : ""} key={item} onClick={() => { setKind(item); setQuery(""); }}>{optionLabels[item]} {options.filter((option) => option.kind === item).length}</button>)}</div>
+      <form className="option-add-form" onSubmit={submit}><input required value={value} onChange={(event) => setValue(event.target.value)} placeholder={`新增${optionLabels[kind]}`} /><button className="button button-primary" disabled={busy}>{busy ? "保存中…" : "加入词库"}</button></form>
+      <input className="option-search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder={`模糊搜索${optionLabels[kind]}`} />
+      {error && <div className="form-error">{error}</div>}
+      <div className="option-list">{filtered.map((option) => <div key={option.id}><span>{option.value}</span><button type="button" className="danger-link" onClick={() => void archive(option)}>停用</button></div>)}</div>
+      {!filtered.length && <div className="empty-table">暂无符合条件的选项</div>}
+    </section>
+  </div>;
 }
 
 function ComponentEditor({
   record,
+  options,
   onClose,
   onSave,
 }: {
   record: ConfigComponent | null;
+  options: ComponentOption[];
   onClose: () => void;
   onSave: (input: ConfigComponentInput) => Promise<void>;
 }) {
@@ -46,6 +148,7 @@ function ComponentEditor({
   const [error, setError] = useState("");
   const set = (key: keyof typeof values, value: string) =>
     setValues((current) => ({ ...current, [key]: value }));
+  const suggestions = (kind: ComponentOptionKind) => options.filter((item) => item.kind === kind).map((item) => item.value);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -79,9 +182,9 @@ function ComponentEditor({
         <div className="panel-heading"><div><span className="eyebrow">组件库</span><h2>{record ? "编辑组件" : "新建组件"}</h2></div><button className="icon-button" onClick={onClose} aria-label="关闭">×</button></div>
         <form className="editor-form" onSubmit={submit}>
           <label>组件编号 *<input required value={values.code} onChange={(event) => set("code", event.target.value)} autoFocus /></label>
-          <label>组件类别 *<input required value={values.category} onChange={(event) => set("category", event.target.value)} placeholder="例如：冷却系统" /></label>
-          <label>品名 *<input required value={values.name} onChange={(event) => set("name", event.target.value)} /></label>
-          <label>品牌<input value={values.brand} onChange={(event) => set("brand", event.target.value)} /></label>
+          <RememberedInput label="组件类别" required value={values.category} suggestions={suggestions("category")} onChange={(value) => set("category", value)} placeholder="输入关键字，例如：冷却" />
+          <RememberedInput label="品名" required value={values.name} suggestions={suggestions("name")} onChange={(value) => set("name", value)} placeholder="输入关键字搜索历史品名" />
+          <RememberedInput label="品牌" value={values.brand} suggestions={suggestions("brand")} onChange={(value) => set("brand", value)} placeholder="输入关键字搜索品牌" />
           <label className="field-wide">型号 / 规格 / 材质<textarea rows={3} value={values.specification} onChange={(event) => set("specification", event.target.value)} /></label>
           <label>默认数量 *<input required type="number" min="0.001" step="0.001" value={values.defaultQuantity} onChange={(event) => set("defaultQuantity", event.target.value)} /></label>
           <label>单位 *<input required value={values.unit} onChange={(event) => set("unit", event.target.value)} /></label>
@@ -96,9 +199,10 @@ function ComponentEditor({
   );
 }
 
-export function ComponentLibrary({ components, onSave, onArchive }: ComponentLibraryProps) {
+export function ComponentLibrary({ components, options, onSave, onArchive, onSaveOption, onArchiveOption }: ComponentLibraryProps) {
   const [query, setQuery] = useState("");
   const [editing, setEditing] = useState<ConfigComponent | "new" | null>(null);
+  const [managingOptions, setManagingOptions] = useState(false);
   const normalized = query.trim().toLocaleLowerCase();
   const filtered = components.filter((item) =>
     [item.code, item.category, item.name, item.specification, item.brand, item.notes]
@@ -111,10 +215,11 @@ export function ComponentLibrary({ components, onSave, onArchive }: ComponentLib
   }
 
   return <>
-    <div className="table-toolbar"><label><span className="sr-only">搜索组件</span><input placeholder="搜索组件编号、类别、品名、规格或品牌" value={query} onChange={(event) => setQuery(event.target.value)} /></label><button className="button button-primary" onClick={() => setEditing("new")}>新建组件</button></div>
+    <div className="table-toolbar"><label><span className="sr-only">搜索组件</span><input placeholder="搜索组件编号、类别、品名、规格或品牌" value={query} onChange={(event) => setQuery(event.target.value)} /></label><div className="toolbar-buttons"><button className="button button-secondary" onClick={() => setManagingOptions(true)}>词库设置</button><button className="button button-primary" onClick={() => setEditing("new")}>新建组件</button></div></div>
     <div className="table-wrap"><table><thead><tr><th>组件编号</th><th>类别</th><th>品名</th><th>型号/规格/材质</th><th>默认数量</th><th>单价</th><th>品牌</th><th>备注</th><th>操作</th></tr></thead><tbody>{filtered.map((item) => <tr key={item.id}><td>{item.code}</td><td>{item.category}</td><td><strong>{item.name}</strong></td><td>{item.specification || "—"}</td><td>{item.defaultQuantity} {item.unit}</td><td>{formatMoney(item.unitPriceMinor, item.currency)}</td><td>{item.brand || "—"}</td><td>{item.notes || "—"}</td><td><div className="row-actions"><button onClick={() => setEditing(item)}>编辑</button><button onClick={() => void archive(item)}>停用</button></div></td></tr>)}</tbody></table></div>
     {!filtered.length && <div className="empty-table">{components.length ? "没有符合条件的组件" : "还没有组件，请先录入可选组件和价格"}</div>}
-    {editing && <ComponentEditor record={editing === "new" ? null : editing} onClose={() => setEditing(null)} onSave={onSave} />}
+    {editing && <ComponentEditor record={editing === "new" ? null : editing} options={options} onClose={() => setEditing(null)} onSave={onSave} />}
+    {managingOptions && <ComponentOptionManager options={options} onClose={() => setManagingOptions(false)} onSave={onSaveOption} onArchive={onArchiveOption} />}
   </>;
 }
 
@@ -214,14 +319,22 @@ export function ConfigurableProductLibrary({
   components,
   onSave,
   onArchive,
+  onExportPdf,
+  onExportCsv,
+  onPrint,
 }: {
   configurations: ConfigurableProduct[];
   components: ConfigComponent[];
   onSave: (input: ConfigurableProductInput) => Promise<void>;
   onArchive: (id: string) => Promise<void>;
+  onExportPdf: (id: string) => Promise<string>;
+  onExportCsv: (id: string) => Promise<string>;
+  onPrint: (id: string) => Promise<string>;
 }) {
   const [query, setQuery] = useState("");
   const [editing, setEditing] = useState<ConfigurableProduct | "new" | null>(null);
+  const [busy, setBusy] = useState("");
+  const [message, setMessage] = useState("");
   const normalized = query.trim().toLocaleLowerCase();
   const filtered = configurations.filter((item) => [item.code, item.name, item.model, item.notes, ...item.lines.flatMap((line) => [line.category, line.name, line.specification, line.brand])].some((value) => value.toLocaleLowerCase().includes(normalized)));
 
@@ -230,10 +343,24 @@ export function ConfigurableProductLibrary({
     await onArchive(item.id);
   }
 
+  async function output(item: ConfigurableProduct, action: "pdf" | "csv" | "print") {
+    setBusy(`${item.id}-${action}`);
+    setMessage("");
+    try {
+      const path = action === "pdf" ? await onExportPdf(item.id) : action === "csv" ? await onExportCsv(item.id) : await onPrint(item.id);
+      setMessage(`${action === "print" ? "已打开打印用 PDF" : "已导出配置单"}：${path}`);
+    } catch (reason) {
+      setMessage(`导出失败：${String(reason)}`);
+    } finally {
+      setBusy("");
+    }
+  }
+
   return <>
     <div className="table-toolbar"><label><span className="sr-only">搜索配置</span><input placeholder="搜索配置编号、产品、型号或组件" value={query} onChange={(event) => setQuery(event.target.value)} /></label><button className="button button-primary" disabled={!components.length} onClick={() => setEditing("new")}>新建自选配置</button></div>
     {!components.length && <div className="empty-callout">请先进入“组件库”，录入至少一个可选组件。</div>}
-    <div className="table-wrap"><table><thead><tr><th>配置编号</th><th>产品</th><th>型号</th><th>组件数</th><th>币种</th><th>配置总价</th><th>说明</th><th>操作</th></tr></thead><tbody>{filtered.map((item) => <tr key={item.id}><td>{item.code}</td><td><strong>{item.name}</strong></td><td>{item.model || "—"}</td><td>{item.lines.length}</td><td>{item.currency}</td><td><strong>{formatMoney(item.totalAmountMinor, item.currency)}</strong></td><td>{item.notes || "—"}</td><td><div className="row-actions"><button onClick={() => setEditing(item)}>配置/查看</button><button onClick={() => void archive(item)}>停用</button></div></td></tr>)}</tbody></table></div>
+    {message && <div className="document-message">{message}</div>}
+    <div className="table-wrap"><table><thead><tr><th>配置编号</th><th>产品</th><th>型号</th><th>组件数</th><th>币种</th><th>配置总价</th><th>说明</th><th>操作</th></tr></thead><tbody>{filtered.map((item) => <tr key={item.id}><td>{item.code}</td><td><strong>{item.name}</strong></td><td>{item.model || "—"}</td><td>{item.lines.length}</td><td>{item.currency}</td><td><strong>{formatMoney(item.totalAmountMinor, item.currency)}</strong></td><td>{item.notes || "—"}</td><td><div className="row-actions configuration-actions"><button onClick={() => setEditing(item)}>配置/查看</button><button disabled={!!busy} onClick={() => void output(item, "pdf")}>{busy === `${item.id}-pdf` ? "导出中…" : "PDF"}</button><button disabled={!!busy} onClick={() => void output(item, "csv")}>{busy === `${item.id}-csv` ? "导出中…" : "CSV"}</button><button disabled={!!busy} onClick={() => void output(item, "print")}>{busy === `${item.id}-print` ? "打开中…" : "打印"}</button><button className="danger-link" onClick={() => void archive(item)}>停用</button></div></td></tr>)}</tbody></table></div>
     {!filtered.length && <div className="empty-table">{configurations.length ? "没有符合条件的配置" : "还没有自选配置产品"}</div>}
     {editing && <ConfigurationEditor record={editing === "new" ? null : editing} components={components} onClose={() => setEditing(null)} onSave={onSave} />}
   </>;

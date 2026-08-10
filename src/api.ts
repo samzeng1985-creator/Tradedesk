@@ -2,6 +2,8 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   BusinessCase,
   BusinessCaseInput,
+  ComponentOption,
+  ComponentOptionInput,
   ConfigComponent,
   ConfigComponentInput,
   ConfigurableProduct,
@@ -58,13 +60,18 @@ export const masterApi = {
   saveProduct: (input: ProductInput) => invoke<Product>("save_product", { input }),
   listConfigComponents: () => invoke<ConfigComponent[]>("list_config_components"),
   saveConfigComponent: (input: ConfigComponentInput) => invoke<ConfigComponent>("save_config_component", { input }),
+  listComponentOptions: () => invoke<ComponentOption[]>("list_component_options"),
+  saveComponentOption: (input: ComponentOptionInput) => invoke<ComponentOption>("save_component_option", { input }),
   listConfigurableProducts: () => invoke<ConfigurableProduct[]>("list_configurable_products"),
   saveConfigurableProduct: (input: ConfigurableProductInput) => invoke<ConfigurableProduct>("save_configurable_product", { input }),
+  exportConfigurationPdf: (id: string) => invoke<DocumentExportResult>("export_configuration_pdf", { id }),
+  exportConfigurationCsv: (id: string) => invoke<string>("export_configuration_csv", { id }),
+  printConfiguration: (id: string) => invoke<DocumentExportResult>("print_configuration", { id }),
   listCustomers: () => invoke<Customer[]>("list_customers"),
   saveCustomer: (input: CustomerInput) => invoke<Customer>("save_customer", { input }),
   listSuppliers: () => invoke<Supplier[]>("list_suppliers"),
   saveSupplier: (input: SupplierInput) => invoke<Supplier>("save_supplier", { input }),
-  archive: (entity: "product" | "config_component" | "configurable_product" | "customer" | "supplier", id: string) =>
+  archive: (entity: "product" | "config_component" | "component_option" | "configurable_product" | "customer" | "supplier", id: string) =>
     invoke<void>("archive_master", { entity, id }),
 };
 

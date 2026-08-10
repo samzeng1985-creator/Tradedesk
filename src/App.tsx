@@ -10,6 +10,8 @@ import { UnlockScreen } from "./UnlockScreen";
 import type {
   BusinessCase,
   BusinessCaseInput,
+  ComponentOption,
+  ComponentOptionInput,
   ConfigComponent,
   ConfigComponentInput,
   ConfigurableProduct,
@@ -100,6 +102,7 @@ export default function App() {
   const [masterTab, setMasterTab] = useState<MasterTab>("products");
   const [products, setProducts] = useState<Product[]>([]);
   const [configComponents, setConfigComponents] = useState<ConfigComponent[]>([]);
+  const [componentOptions, setComponentOptions] = useState<ComponentOption[]>([]);
   const [configurableProducts, setConfigurableProducts] = useState<ConfigurableProduct[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
@@ -118,9 +121,10 @@ export default function App() {
   }, []);
 
   async function loadMasterData() {
-    const [nextProducts, nextComponents, nextConfigurations, nextCustomers, nextSuppliers, nextCases, nextOrders, nextDocuments, summary] = await Promise.all([
+    const [nextProducts, nextComponents, nextComponentOptions, nextConfigurations, nextCustomers, nextSuppliers, nextCases, nextOrders, nextDocuments, summary] = await Promise.all([
       masterApi.listProducts(),
       masterApi.listConfigComponents(),
+      masterApi.listComponentOptions(),
       masterApi.listConfigurableProducts(),
       masterApi.listCustomers(),
       masterApi.listSuppliers(),
@@ -131,6 +135,7 @@ export default function App() {
     ]);
     setProducts(nextProducts);
     setConfigComponents(nextComponents);
+    setComponentOptions(nextComponentOptions);
     setConfigurableProducts(nextConfigurations);
     setCustomers(nextCustomers);
     setSuppliers(nextSuppliers);
@@ -184,6 +189,30 @@ export default function App() {
   async function saveConfigurableProduct(input: ConfigurableProductInput) {
     await masterApi.saveConfigurableProduct(input);
     await loadMasterData();
+  }
+
+  async function saveComponentOption(input: ComponentOptionInput) {
+    await masterApi.saveComponentOption(input);
+    await loadMasterData();
+  }
+
+  async function archiveComponentOption(id: string) {
+    await masterApi.archive("component_option", id);
+    await loadMasterData();
+  }
+
+  async function exportConfigurationPdf(id: string) {
+    const result = await masterApi.exportConfigurationPdf(id);
+    return result.path;
+  }
+
+  async function exportConfigurationCsv(id: string) {
+    return masterApi.exportConfigurationCsv(id);
+  }
+
+  async function printConfiguration(id: string) {
+    const result = await masterApi.printConfiguration(id);
+    return result.path;
   }
 
   async function archiveConfigMaster(entity: "config_component" | "configurable_product", id: string) {
@@ -321,7 +350,7 @@ export default function App() {
           <span className="brand-mark">TD</span>
           <span>
             <strong>TradeDesk</strong>
-            <small>Local · 0.8.0</small>
+            <small>Local · 0.9.0</small>
           </span>
         </div>
 
@@ -543,8 +572,8 @@ export default function App() {
                 </table>
               )}
             </div>}
-            {masterTab === "configurable" && <ConfigurableProductLibrary configurations={configurableProducts} components={configComponents} onSave={saveConfigurableProduct} onArchive={(id) => archiveConfigMaster("configurable_product", id)} />}
-            {masterTab === "components" && <ComponentLibrary components={configComponents} onSave={saveConfigComponent} onArchive={(id) => archiveConfigMaster("config_component", id)} />}
+            {masterTab === "configurable" && <ConfigurableProductLibrary configurations={configurableProducts} components={configComponents} onSave={saveConfigurableProduct} onArchive={(id) => archiveConfigMaster("configurable_product", id)} onExportPdf={exportConfigurationPdf} onExportCsv={exportConfigurationCsv} onPrint={printConfiguration} />}
+            {masterTab === "components" && <ComponentLibrary components={configComponents} options={componentOptions} onSave={saveConfigComponent} onArchive={(id) => archiveConfigMaster("config_component", id)} onSaveOption={saveComponentOption} onArchiveOption={archiveComponentOption} />}
           </section>
         )}
 

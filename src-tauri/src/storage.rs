@@ -5,16 +5,16 @@ use uuid::Uuid;
 use zeroize::Zeroizing;
 
 use crate::domain::{
-    BusinessCase, BusinessCaseInput, BusinessCaseLine, ConfigComponent, ConfigComponentInput,
-    ConfigurableProduct, ConfigurableProductInput, ConfigurableProductLine, ConvertDocumentInput,
-    CreateDocumentInput, Customer, CustomerInput, DocumentLineSnapshot, DocumentPayload,
-    DocumentStatus, DocumentType, MilestoneStatus, PipelineStage, Product, ProductInput,
-    ProductionMilestone, ProductionMilestoneInput, PurchaseOrder, PurchaseOrderInput,
-    PurchaseOrderLine, PurchaseStatus, SaveDocumentInput, Supplier, SupplierInput, TradeDocument,
-    WorkspaceSummary,
+    BusinessCase, BusinessCaseInput, BusinessCaseLine, ComponentOption, ComponentOptionInput,
+    ConfigComponent, ConfigComponentInput, ConfigurableProduct, ConfigurableProductInput,
+    ConfigurableProductLine, ConvertDocumentInput, CreateDocumentInput, Customer, CustomerInput,
+    DocumentLineSnapshot, DocumentPayload, DocumentStatus, DocumentType, MilestoneStatus,
+    PipelineStage, Product, ProductInput, ProductionMilestone, ProductionMilestoneInput,
+    PurchaseOrder, PurchaseOrderInput, PurchaseOrderLine, PurchaseStatus, SaveDocumentInput,
+    Supplier, SupplierInput, TradeDocument, WorkspaceSummary,
 };
 
-const SCHEMA_VERSION: i64 = 7;
+const SCHEMA_VERSION: i64 = 8;
 
 const MILESTONE_STAGES: [(&str, &str); 6] = [
     ("raw_material", "原料准备"),
@@ -104,6 +104,16 @@ impl EncryptedDatabase {
              );
              CREATE INDEX IF NOT EXISTS idx_config_components_category
                 ON config_components(category, code);
+
+             CREATE TABLE IF NOT EXISTS component_options (
+                id TEXT PRIMARY KEY,
+                kind TEXT NOT NULL,
+                value TEXT NOT NULL COLLATE NOCASE,
+                active INTEGER NOT NULL DEFAULT 1,
+                UNIQUE(kind, value)
+             );
+             CREATE INDEX IF NOT EXISTS idx_component_options_kind
+                ON component_options(kind, value COLLATE NOCASE);
 
              CREATE TABLE IF NOT EXISTS configurable_products (
                 id TEXT PRIMARY KEY,
@@ -329,6 +339,18 @@ impl EncryptedDatabase {
                 ON documents(document_type, number, version DESC);",
         )?;
 
+        transaction.execute_batch(
+            "INSERT OR IGNORE INTO component_options(id, kind, value, active)
+                SELECT lower(hex(randomblob(16))), 'category', trim(category), 1
+                FROM config_components WHERE trim(category) <> '' GROUP BY trim(category);
+             INSERT OR IGNORE INTO component_options(id, kind, value, active)
+                SELECT lower(hex(randomblob(16))), 'name', trim(name), 1
+                FROM config_components WHERE trim(name) <> '' GROUP BY trim(name);
+             INSERT OR IGNORE INTO component_options(id, kind, value, active)
+                SELECT lower(hex(randomblob(16))), 'brand', trim(brand), 1
+                FROM config_components WHERE trim(brand) <> '' GROUP BY trim(brand);",
+        )?;
+
         transaction.execute(
             "INSERT INTO workspace_meta(key, value) VALUES('schema_version', ?1)
              ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -444,6 +466,53 @@ impl EncryptedDatabase {
         statement.query_map([], map_config_component)?.collect()
     }
 
+    pub fn list_component_options(&self) -> rusqlite::Result<Vec<ComponentOption>> {
+        let mut statement = self.connection.prepare(
+            "SELECT id, kind, value, active FROM component_options
+             WHERE active = 1 ORDER BY kind, value COLLATE NOCASE",
+        )?;
+        statement
+            .query_map([], |row| {
+                Ok(ComponentOption {
+                    id: row.get(0)?,
+                    kind: row.get(1)?,
+                    value: row.get(2)?,
+                    active: row.get::<_, i64>(3)? != 0,
+                })
+            })?
+            .collect()
+    }
+
+    pub fn save_component_option(
+        &self,
+        input: ComponentOptionInput,
+    ) -> rusqlite::Result<ComponentOption> {
+        validate_component_option_kind(&input.kind)?;
+        require_text(&input.value)?;
+        let id = input.id.unwrap_or_else(|| Uuid::new_v4().to_string());
+        self.connection.execute(
+            "INSERT INTO component_options(id, kind, value, active)
+             VALUES(?1, ?2, ?3, 1)
+             ON CONFLICT(kind, value) DO UPDATE SET active = 1",
+            params![id, input.kind, input.value.trim()],
+        )?;
+        let option = self.connection.query_row(
+            "SELECT id, kind, value, active FROM component_options
+             WHERE kind = ?1 AND value = ?2 COLLATE NOCASE",
+            params![input.kind, input.value.trim()],
+            |row| {
+                Ok(ComponentOption {
+                    id: row.get(0)?,
+                    kind: row.get(1)?,
+                    value: row.get(2)?,
+                    active: row.get::<_, i64>(3)? != 0,
+                })
+            },
+        )?;
+        self.audit("component_option", &option.id, "save")?;
+        Ok(option)
+    }
+
     pub fn save_config_component(
         &self,
         input: ConfigComponentInput,
@@ -483,6 +552,9 @@ impl EncryptedDatabase {
             ],
         )?;
         self.audit("config_component", &id, "save")?;
+        self.remember_component_option("category", &input.category)?;
+        self.remember_component_option("name", &input.name)?;
+        self.remember_component_option("brand", &input.brand)?;
         self.connection.query_row(
             "SELECT id, code, category, name, specification, default_quantity, unit,
                     unit_price_minor, currency, brand, notes, active
@@ -737,6 +809,7 @@ impl EncryptedDatabase {
         let table = match entity {
             "product" => "products",
             "config_component" => "config_components",
+            "component_option" => "component_options",
             "configurable_product" => "configurable_products",
             "customer" => "customers",
             "supplier" => "suppliers",
@@ -750,6 +823,20 @@ impl EncryptedDatabase {
             return Err(rusqlite::Error::QueryReturnedNoRows);
         }
         self.audit(entity, id, "archive")
+    }
+
+    fn remember_component_option(&self, kind: &str, value: &str) -> rusqlite::Result<()> {
+        if value.trim().is_empty() {
+            return Ok(());
+        }
+        validate_component_option_kind(kind)?;
+        self.connection.execute(
+            "INSERT INTO component_options(id, kind, value, active)
+             VALUES(?1, ?2, ?3, 1)
+             ON CONFLICT(kind, value) DO UPDATE SET active = 1",
+            params![Uuid::new_v4().to_string(), kind, value.trim()],
+        )?;
+        Ok(())
     }
 
     pub fn list_business_cases(&self) -> rusqlite::Result<Vec<BusinessCase>> {
@@ -1927,6 +2014,14 @@ fn require_text(value: &str) -> rusqlite::Result<()> {
     }
 }
 
+fn validate_component_option_kind(value: &str) -> rusqlite::Result<()> {
+    if matches!(value, "category" | "brand" | "name") {
+        Ok(())
+    } else {
+        Err(rusqlite::Error::InvalidQuery)
+    }
+}
+
 fn customer_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Customer> {
     Ok(Customer {
         id: row.get(0)?,
@@ -2036,6 +2131,19 @@ mod tests {
                 .unwrap();
             assert_eq!(configured.lines.len(), 2);
             assert_eq!(configured.total_amount_minor, 1_245_400);
+            let options = database.list_component_options().unwrap();
+            assert_eq!(
+                options
+                    .iter()
+                    .filter(|option| option.kind == "category")
+                    .count(),
+                2
+            );
+            assert!(
+                options
+                    .iter()
+                    .any(|option| option.kind == "brand" && option.value == "康达")
+            );
             let customer = database
                 .save_customer(CustomerInput {
                     id: None,
@@ -2246,6 +2354,24 @@ mod tests {
                             .unwrap();
                     assert_eq!(&std::fs::read(sales_export.path).unwrap()[..5], b"%PDF-");
                 }
+                let configuration_export = crate::document::export_configuration_pdf(
+                    &configured,
+                    &typst,
+                    &work_dir,
+                    &output_dir,
+                )
+                .unwrap();
+                assert_eq!(
+                    &std::fs::read(configuration_export.path).unwrap()[..5],
+                    b"%PDF-"
+                );
+                let configuration_csv =
+                    crate::document::export_configuration_csv(&configured, &output_dir).unwrap();
+                assert!(
+                    std::fs::read_to_string(configuration_csv)
+                        .unwrap()
+                        .contains("润滑油补给箱")
+                );
                 let _ = std::fs::remove_dir_all(render_root);
             }
             assert!(
@@ -2346,7 +2472,62 @@ mod tests {
                     |row| row.get::<_, String>(0),
                 )
                 .unwrap(),
-            "7"
+            "8"
+        );
+        drop(database);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn migrates_component_options_from_schema_v7() {
+        let path = std::env::temp_dir().join(format!("tradedesk-v7-{}.db", Uuid::new_v4()));
+        {
+            let connection = Connection::open(&path).unwrap();
+            connection
+                .pragma_update(None, "key", "test-password")
+                .unwrap();
+            connection
+                .execute_batch(
+                    "CREATE TABLE workspace_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+                     INSERT INTO workspace_meta(key, value) VALUES('schema_version', '7');
+                     CREATE TABLE config_components (
+                        id TEXT PRIMARY KEY, code TEXT NOT NULL UNIQUE, category TEXT NOT NULL,
+                        name TEXT NOT NULL, specification TEXT NOT NULL DEFAULT '',
+                        default_quantity REAL NOT NULL DEFAULT 1, unit TEXT NOT NULL,
+                        unit_price_minor INTEGER NOT NULL DEFAULT 0, currency TEXT NOT NULL DEFAULT 'CNY',
+                        brand TEXT NOT NULL DEFAULT '', notes TEXT NOT NULL DEFAULT '',
+                        active INTEGER NOT NULL DEFAULT 1
+                     );
+                     INSERT INTO config_components(
+                        id, code, category, name, specification, default_quantity, unit,
+                        unit_price_minor, currency, brand, notes, active
+                     ) VALUES(
+                        'component-1', 'COMP-1', '冷却系统', '卧式远置散热器', '', 1, '套',
+                        2850000, 'CNY', '华东冷却', '', 1
+                     );",
+                )
+                .unwrap();
+        }
+
+        let database =
+            EncryptedDatabase::open(&path, Zeroizing::new("test-password".to_owned())).unwrap();
+        let options = database.list_component_options().unwrap();
+        assert_eq!(options.len(), 3);
+        assert!(
+            options
+                .iter()
+                .any(|option| option.kind == "category" && option.value == "冷却系统")
+        );
+        assert_eq!(
+            database
+                .connection
+                .query_row(
+                    "SELECT value FROM workspace_meta WHERE key = 'schema_version'",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .unwrap(),
+            "8"
         );
         drop(database);
         let _ = std::fs::remove_file(&path);

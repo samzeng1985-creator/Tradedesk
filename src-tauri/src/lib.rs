@@ -5,11 +5,11 @@ mod storage;
 use std::{path::PathBuf, sync::Mutex};
 
 use domain::{
-    BusinessCase, BusinessCaseInput, ConfigComponent, ConfigComponentInput, ConfigurableProduct,
-    ConfigurableProductInput, ConvertDocumentInput, CreateDocumentInput, Customer, CustomerInput,
-    DocumentExportResult, Product, ProductInput, ProductionMilestone, ProductionMilestoneInput,
-    PurchaseOrder, PurchaseOrderInput, PurchaseStatus, SaveDocumentInput, Supplier, SupplierInput,
-    TradeDocument, WorkspaceSummary,
+    BusinessCase, BusinessCaseInput, ComponentOption, ComponentOptionInput, ConfigComponent,
+    ConfigComponentInput, ConfigurableProduct, ConfigurableProductInput, ConvertDocumentInput,
+    CreateDocumentInput, Customer, CustomerInput, DocumentExportResult, Product, ProductInput,
+    ProductionMilestone, ProductionMilestoneInput, PurchaseOrder, PurchaseOrderInput,
+    PurchaseStatus, SaveDocumentInput, Supplier, SupplierInput, TradeDocument, WorkspaceSummary,
 };
 use storage::EncryptedDatabase;
 use tauri::{Manager, State};
@@ -130,6 +130,19 @@ fn save_config_component(
 }
 
 #[tauri::command]
+fn list_component_options(state: State<'_, AppState>) -> Result<Vec<ComponentOption>, String> {
+    with_database(state, EncryptedDatabase::list_component_options)
+}
+
+#[tauri::command]
+fn save_component_option(
+    input: ComponentOptionInput,
+    state: State<'_, AppState>,
+) -> Result<ComponentOption, String> {
+    with_database(state, |database| database.save_component_option(input))
+}
+
+#[tauri::command]
 fn list_configurable_products(
     state: State<'_, AppState>,
 ) -> Result<Vec<ConfigurableProduct>, String> {
@@ -142,6 +155,52 @@ fn save_configurable_product(
     state: State<'_, AppState>,
 ) -> Result<ConfigurableProduct, String> {
     with_database(state, |database| database.save_configurable_product(input))
+}
+
+fn export_configuration_pdf_file(
+    id: &str,
+    state: &State<'_, AppState>,
+) -> Result<DocumentExportResult, String> {
+    let configuration = with_database(state.clone(), |database| {
+        database.get_configurable_product(id)
+    })?;
+    let typst_path = state
+        .typst_path
+        .as_ref()
+        .ok_or("未找到 Typst PDF 渲染器，请重新运行开发环境安装脚本。")?;
+    document::export_configuration_pdf(
+        &configuration,
+        typst_path,
+        &state.render_cache_dir.join("configuration").join(id),
+        &state.export_dir,
+    )
+}
+
+#[tauri::command]
+fn export_configuration_pdf(
+    id: String,
+    state: State<'_, AppState>,
+) -> Result<DocumentExportResult, String> {
+    export_configuration_pdf_file(&id, &state)
+}
+
+#[tauri::command]
+fn export_configuration_csv(id: String, state: State<'_, AppState>) -> Result<String, String> {
+    let configuration = with_database(state.clone(), |database| {
+        database.get_configurable_product(&id)
+    })?;
+    document::export_configuration_csv(&configuration, &state.export_dir)
+        .map(|path| path.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
+fn print_configuration(
+    id: String,
+    state: State<'_, AppState>,
+) -> Result<DocumentExportResult, String> {
+    let result = export_configuration_pdf_file(&id, &state)?;
+    document::open_file(std::path::Path::new(&result.path))?;
+    Ok(result)
 }
 
 #[tauri::command]
@@ -356,8 +415,13 @@ pub fn run() {
             save_product,
             list_config_components,
             save_config_component,
+            list_component_options,
+            save_component_option,
             list_configurable_products,
             save_configurable_product,
+            export_configuration_pdf,
+            export_configuration_csv,
+            print_configuration,
             list_customers,
             save_customer,
             list_suppliers,

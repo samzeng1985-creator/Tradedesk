@@ -39,6 +39,21 @@ export interface ConfigComponent {
 
 export type ConfigComponentInput = Omit<ConfigComponent, "active" | "id"> & { id?: string };
 
+export type ComponentOptionKind = "category" | "brand" | "name";
+
+export interface ComponentOption {
+  id: string;
+  kind: ComponentOptionKind;
+  value: string;
+  active: boolean;
+}
+
+export interface ComponentOptionInput {
+  id?: string;
+  kind: ComponentOptionKind;
+  value: string;
+}
+
 export interface ConfigurableProductLine {
   id: string;
   componentId: string;
