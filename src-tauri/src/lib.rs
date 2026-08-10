@@ -5,10 +5,10 @@ mod storage;
 use std::{path::PathBuf, sync::Mutex};
 
 use domain::{
-    BusinessCase, BusinessCaseInput, CreateDocumentInput, Customer, CustomerInput,
-    DocumentExportResult, Product, ProductInput, ProductionMilestone, ProductionMilestoneInput,
-    PurchaseOrder, PurchaseOrderInput, PurchaseStatus, SaveDocumentInput, Supplier, SupplierInput,
-    TradeDocument, WorkspaceSummary,
+    BusinessCase, BusinessCaseInput, ConvertDocumentInput, CreateDocumentInput, Customer,
+    CustomerInput, DocumentExportResult, Product, ProductInput, ProductionMilestone,
+    ProductionMilestoneInput, PurchaseOrder, PurchaseOrderInput, PurchaseStatus, SaveDocumentInput,
+    Supplier, SupplierInput, TradeDocument, WorkspaceSummary,
 };
 use storage::EncryptedDatabase;
 use tauri::{Manager, State};
@@ -206,6 +206,14 @@ fn create_document(
 }
 
 #[tauri::command]
+fn convert_document(
+    input: ConvertDocumentInput,
+    state: State<'_, AppState>,
+) -> Result<TradeDocument, String> {
+    with_database(state, |database| database.convert_document(input))
+}
+
+#[tauri::command]
 fn save_document(
     input: SaveDocumentInput,
     state: State<'_, AppState>,
@@ -331,6 +339,7 @@ pub fn run() {
             update_production_milestone,
             list_documents,
             create_document,
+            convert_document,
             save_document,
             issue_document,
             void_document,

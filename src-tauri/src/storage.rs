@@ -5,8 +5,8 @@ use uuid::Uuid;
 use zeroize::Zeroizing;
 
 use crate::domain::{
-    BusinessCase, BusinessCaseInput, BusinessCaseLine, CreateDocumentInput, Customer,
-    CustomerInput, DocumentLineSnapshot, DocumentPayload, DocumentStatus, DocumentType,
+    BusinessCase, BusinessCaseInput, BusinessCaseLine, ConvertDocumentInput, CreateDocumentInput,
+    Customer, CustomerInput, DocumentLineSnapshot, DocumentPayload, DocumentStatus, DocumentType,
     MilestoneStatus, PipelineStage, Product, ProductInput, ProductionMilestone,
     ProductionMilestoneInput, PurchaseOrder, PurchaseOrderInput, PurchaseOrderLine, PurchaseStatus,
     SaveDocumentInput, Supplier, SupplierInput, TradeDocument, WorkspaceSummary,
@@ -1145,6 +1145,11 @@ impl EncryptedDatabase {
             params![business_case.customer_id],
             |row| row.get::<_, String>(0),
         )?;
+        let valid_until = self.connection.query_row(
+            "SELECT date(?1, '+30 days')",
+            params![input.issue_date.trim()],
+            |row| row.get::<_, String>(0),
+        )?;
         let mut lines = Vec::with_capacity(business_case.lines.len());
         for line in &business_case.lines {
             let (model, hs_code, gross_weight_kg) = self.connection.query_row(
@@ -1192,6 +1197,8 @@ impl EncryptedDatabase {
             payment_terms: business_case.payment_terms.clone(),
             shipment_date: business_case.shipment_date.clone(),
             po_reference: business_case.number.clone(),
+            valid_until,
+            discount_minor: 0,
             bank_details: String::new(),
             notes: business_case.notes.clone(),
             declaration: "We certify that the information in this document is true and correct."
@@ -1224,6 +1231,59 @@ impl EncryptedDatabase {
         self.get_document(&id)
     }
 
+    pub fn convert_document(&self, input: ConvertDocumentInput) -> rusqlite::Result<TradeDocument> {
+        require_text(&input.source_document_id)?;
+        require_text(&input.number)?;
+        require_text(&input.issue_date)?;
+        validate_language(&input.language)?;
+        let source = self.get_document(&input.source_document_id)?;
+        if source.status != DocumentStatus::Issued
+            || !matches!(
+                (&source.document_type, &input.target_document_type),
+                (
+                    DocumentType::CommercialQuotation,
+                    DocumentType::ProformaInvoice | DocumentType::TradeContract
+                ) | (
+                    DocumentType::ProformaInvoice,
+                    DocumentType::TradeContract | DocumentType::CommercialInvoice
+                )
+            )
+        {
+            return Err(rusqlite::Error::InvalidQuery);
+        }
+        let id = Uuid::new_v4().to_string();
+        let payload_json = serde_json::to_string(&source.payload).map_err(json_error)?;
+        self.connection.execute(
+            "INSERT INTO documents(
+                id, document_type, number, trade_case_id, trade_case_number_snapshot,
+                customer_name_snapshot, version, status, language, issue_date, currency,
+                template_version, payload_json
+             ) VALUES(?1, ?2, ?3, ?4, ?5, ?6, 1, 'draft', ?7, ?8, ?9, 'base-1', ?10)",
+            params![
+                id,
+                input.target_document_type.as_str(),
+                input.number.trim(),
+                source.business_case_id,
+                source.business_case_number,
+                source.customer_name,
+                input.language.trim(),
+                input.issue_date.trim(),
+                source.currency,
+                payload_json,
+            ],
+        )?;
+        let audit_payload = serde_json::json!({
+            "sourceDocumentId": input.source_document_id,
+        })
+        .to_string();
+        self.connection.execute(
+            "INSERT INTO audit_events(entity_type, entity_id, action, payload_json)
+             VALUES('document', ?1, 'convert', ?2)",
+            params![id, audit_payload],
+        )?;
+        self.get_document(&id)
+    }
+
     pub fn save_document(&self, input: SaveDocumentInput) -> rusqlite::Result<TradeDocument> {
         require_text(&input.id)?;
         require_text(&input.number)?;
@@ -1248,6 +1308,14 @@ impl EncryptedDatabase {
                 return Err(rusqlite::Error::InvalidQuery);
             }
             line.amount_minor = (line.quantity * line.unit_price_minor as f64).round() as i64;
+        }
+        let subtotal = payload
+            .lines
+            .iter()
+            .map(|line| line.amount_minor)
+            .sum::<i64>();
+        if payload.discount_minor < 0 || payload.discount_minor > subtotal {
+            return Err(rusqlite::Error::InvalidQuery);
         }
         let payload_json = serde_json::to_string(&payload).map_err(json_error)?;
         let changed = self.connection.execute(
@@ -1305,10 +1373,22 @@ impl EncryptedDatabase {
              WHERE id = ?1 AND status = 'draft'",
             params![id],
         )?;
-        transaction.execute(
-            "UPDATE trade_cases SET stage = 'documents' WHERE id = ?1",
-            params![document.business_case_id],
-        )?;
+        match document.document_type {
+            DocumentType::CommercialQuotation => {}
+            DocumentType::ProformaInvoice | DocumentType::TradeContract => {
+                transaction.execute(
+                    "UPDATE trade_cases SET stage = 'order'
+                     WHERE id = ?1 AND stage = 'quotation'",
+                    params![document.business_case_id],
+                )?;
+            }
+            DocumentType::CommercialInvoice | DocumentType::PackingList => {
+                transaction.execute(
+                    "UPDATE trade_cases SET stage = 'documents' WHERE id = ?1",
+                    params![document.business_case_id],
+                )?;
+            }
+        }
         transaction.execute(
             "INSERT INTO audit_events(entity_type, entity_id, action, payload_json)
              VALUES('document', ?1, 'issue', '{}')",
@@ -1577,7 +1657,7 @@ mod tests {
                     id: None,
                     number: "TD-2026-0001".into(),
                     customer_id: customer.id,
-                    stage: PipelineStage::Order,
+                    stage: PipelineStage::Quotation,
                     currency: "USD".into(),
                     incoterm: "FOB".into(),
                     payment_terms: "30% deposit".into(),
@@ -1592,6 +1672,46 @@ mod tests {
                 })
                 .unwrap();
             assert_eq!(business_case.total_amount_minor, 3_000);
+            let quote = database
+                .create_document(CreateDocumentInput {
+                    business_case_id: business_case.id.clone(),
+                    document_type: DocumentType::CommercialQuotation,
+                    number: "QUO-2026-0001".into(),
+                    language: "zh_en".into(),
+                    issue_date: "2026-08-06".into(),
+                })
+                .unwrap();
+            assert_eq!(quote.payload.valid_until, "2026-09-05");
+            let mut quote_payload = quote.payload.clone();
+            quote_payload.seller_address = "Shenzhen, China".into();
+            quote_payload.buyer_address = "Seattle, USA".into();
+            quote_payload.discount_minor = 100;
+            let quote = database
+                .save_document(SaveDocumentInput {
+                    id: quote.id,
+                    number: quote.number,
+                    language: quote.language,
+                    issue_date: quote.issue_date,
+                    payload: quote_payload,
+                })
+                .unwrap();
+            let issued_quote = database.issue_document(&quote.id).unwrap();
+            let proforma = database
+                .convert_document(ConvertDocumentInput {
+                    source_document_id: issued_quote.id.clone(),
+                    target_document_type: DocumentType::ProformaInvoice,
+                    number: "PI-2026-0001".into(),
+                    language: "zh_en".into(),
+                    issue_date: "2026-10-07".into(),
+                })
+                .unwrap();
+            assert_eq!(proforma.payload.discount_minor, 100);
+            assert_eq!(proforma.payload.seller_address, "Shenzhen, China");
+            let issued_proforma = database.issue_document(&proforma.id).unwrap();
+            assert_eq!(
+                database.get_business_case(&business_case.id).unwrap().stage,
+                PipelineStage::Order
+            );
             let purchase_order = database
                 .create_purchase_order(PurchaseOrderInput {
                     number: "PO-2026-0001".into(),
@@ -1707,6 +1827,12 @@ mod tests {
                 assert_eq!(export.sha256.len(), 64);
                 let csv = crate::document::export_csv(&issued, &output_dir).unwrap();
                 assert!(std::fs::read_to_string(csv).unwrap().contains("SKU-1"));
+                for sales_document in [&issued_quote, &issued_proforma] {
+                    let sales_export =
+                        crate::document::export_pdf(sales_document, &typst, &work_dir, &output_dir)
+                            .unwrap();
+                    assert_eq!(&std::fs::read(sales_export.path).unwrap()[..5], b"%PDF-");
+                }
                 let _ = std::fs::remove_dir_all(render_root);
             }
             assert!(
@@ -1730,7 +1856,7 @@ mod tests {
             assert_eq!(database.summary().unwrap().products, 1);
             assert_eq!(database.summary().unwrap().active_cases, 1);
             assert_eq!(database.summary().unwrap().purchase_orders, 1);
-            assert_eq!(database.summary().unwrap().documents, 1);
+            assert_eq!(database.summary().unwrap().documents, 3);
         }
         let reopened =
             EncryptedDatabase::open(&path, Zeroizing::new("test-password".to_owned())).unwrap();
@@ -1742,9 +1868,18 @@ mod tests {
         assert_eq!(purchase_orders[0].number, "PO-2026-0001");
         assert_eq!(purchase_orders[0].ready_quantity, 12.5);
         let documents = reopened.list_documents().unwrap();
-        assert_eq!(documents.len(), 2);
-        assert_eq!(documents[0].version, 2);
-        assert_eq!(documents[1].status, DocumentStatus::Voided);
+        assert_eq!(documents.len(), 4);
+        assert!(documents.iter().any(|document| {
+            document.document_type == DocumentType::CommercialInvoice && document.version == 2
+        }));
+        assert!(documents.iter().any(|document| {
+            document.document_type == DocumentType::CommercialInvoice
+                && document.status == DocumentStatus::Voided
+        }));
+        assert!(documents.iter().any(|document| {
+            document.document_type == DocumentType::ProformaInvoice
+                && document.status == DocumentStatus::Issued
+        }));
         drop(reopened);
 
         let header = std::fs::read(&path).unwrap();

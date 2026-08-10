@@ -53,6 +53,8 @@ pub struct WorkspaceSummary {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum DocumentType {
+    CommercialQuotation,
+    ProformaInvoice,
     CommercialInvoice,
     PackingList,
     TradeContract,
@@ -61,6 +63,8 @@ pub enum DocumentType {
 impl DocumentType {
     pub fn as_str(&self) -> &'static str {
         match self {
+            Self::CommercialQuotation => "commercial_quotation",
+            Self::ProformaInvoice => "proforma_invoice",
             Self::CommercialInvoice => "commercial_invoice",
             Self::PackingList => "packing_list",
             Self::TradeContract => "trade_contract",
@@ -69,6 +73,8 @@ impl DocumentType {
 
     pub fn from_db(value: &str) -> Option<Self> {
         match value {
+            "commercial_quotation" => Some(Self::CommercialQuotation),
+            "proforma_invoice" => Some(Self::ProformaInvoice),
             "commercial_invoice" => Some(Self::CommercialInvoice),
             "packing_list" => Some(Self::PackingList),
             "trade_contract" => Some(Self::TradeContract),
@@ -145,6 +151,10 @@ pub struct DocumentPayload {
     pub payment_terms: String,
     pub shipment_date: String,
     pub po_reference: String,
+    #[serde(default)]
+    pub valid_until: String,
+    #[serde(default)]
+    pub discount_minor: i64,
     pub bank_details: String,
     pub notes: String,
     pub declaration: String,
@@ -182,6 +192,16 @@ pub struct TradeDocument {
 pub struct CreateDocumentInput {
     pub business_case_id: String,
     pub document_type: DocumentType,
+    pub number: String,
+    pub language: String,
+    pub issue_date: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConvertDocumentInput {
+    pub source_document_id: String,
+    pub target_document_type: DocumentType,
     pub number: String,
     pub language: String,
     pub issue_date: String,

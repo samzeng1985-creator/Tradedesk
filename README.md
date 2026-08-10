@@ -1,33 +1,35 @@
 # TradeDesk Local
 
-轻量、本地优先的外贸业务与单证桌面工具。首版范围锁定为单用户、Windows/macOS、产品/客户/供应商主数据、采购与生产里程碑、业务单和单证快照。
+TradeDesk Local 是一款轻量、本地优先的外贸业务与单证桌面工具，同时面向 Windows 和 macOS。当前版本为单用户模式，业务数据默认存储在 SQLCipher 加密数据库中，不依赖本地 Web 服务或云端账号。
 
-## 当前进度
+## 当前能力
 
-- 已完成加密工作区创建、密码解锁和手动锁定。
-- 产品、客户和供应商支持真实本地新建、编辑、搜索、停用与重启持久化。
-- 业务单中心已完成：客户、订单产品、商业条款、金额与业务快照。
-- 采购与生产中心已接入真实加密数据：业务单拆分采购、供应商分配、采购状态和六个生产里程碑。
-- 工作台已显示真实销售金额、采购成本、生产进度、可发货数量和异常节点。
-- 单证中心已完成真实纵向切片：商业发票、详细装箱单、外贸合同的创建、编辑、预览、签发、作废和新版本。
-- 已建立 Tauri 2 + Rust 桌面壳。
-- 已建立 SQLCipher 默认加密数据库、增量迁移和基础审计事件。
-- 已使用 Typst 0.15.1 建立三套专业 A4 模板，支持 PDF、CSV 和从最终 PDF 打印。
-- 前端生产构建约 252 KB JavaScript，gzip 约 76 KB；未引入 UI 框架、Redux 或 ORM。
+- 产品、客户和供应商主数据：新建、编辑、搜索、停用及历史引用保护。
+- 业务单：客户、产品、价格、币种、贸易术语、付款和交期快照。
+- 采购与生产：按供应商拆单、采购成本、采购状态和六阶段生产进度。
+- 销售单证：商业报价单、形式发票、外贸合同。
+- 履约单证：商业发票、详细装箱单。
+- 报价可直接转换为 PI/合同，PI 可转换为合同/商业发票，转换时复用已签发快照。
+- 单证草稿、签发冻结、作废、新版本、历史搜索和基础一致性校验。
+- Typst 专业 A4 模板，支持 PDF、CSV 和从最终 PDF 打印。
+- PDF 导出记录路径、SHA-256、时间和对应的加密业务快照。
+
+前端生产构建约 255 KB JavaScript（gzip 约 76 KB）。项目未引入 UI 组件框架、Redux、ORM 或后台服务。
 
 ## 目录
 
 ```text
 src/                    React 界面与前端领域类型
-src-tauri/src/          Rust 核心、SQLCipher 存储、单证快照
+src-tauri/src/          Rust 核心、SQLCipher 存储与单证引擎
 templates/base/         Typst 单证模板
 docs/architecture/      轻量化架构约束
-outputs/                PRD 与实施蓝图
+outputs/                PRD、研究记录与实施蓝图
+scripts/                Windows/macOS 开发环境脚本
 ```
 
 ## 前端开发
 
-需要 Node.js 20+ 和 pnpm。
+需要 Node.js 20+ 和 pnpm：
 
 ```powershell
 pnpm install
@@ -40,73 +42,55 @@ pnpm dev
 pnpm build
 ```
 
-## 桌面端开发环境
+## 桌面开发环境
 
-共同环境：
+共同依赖：
 
-- Rust stable（rustup 安装）
+- Rust stable（rustup）
 - Node.js 20+
 - pnpm
-- Tauri CLI（已经作为项目开发依赖）
+- Tauri CLI（项目开发依赖）
+- Typst 0.15.1
 
-Windows 还需要：
-
-- Microsoft C++ Build Tools，选择“使用 C++ 的桌面开发”
-- WebView2 Runtime
-- Strawberry Perl（仅用于编译静态 OpenSSL/SQLCipher）
-- NASM（仅用于加速 Windows 下的 OpenSSL 构建）
-- Typst 0.15.1（安装脚本下载到项目 `tools/typst`，发布时与主程序一起分发）
-
-可使用 WinGet 安装两个构建工具：
-
-```powershell
-winget install --exact --id StrawberryPerl.StrawberryPerl --source winget
-winget install --exact --id NASM.NASM --source winget
-```
-
-Windows 可在管理员 PowerShell 中执行最小化安装脚本：
+Windows 还需要 Microsoft C++ Build Tools、WebView2 Runtime、Strawberry Perl 和 NASM。可在管理员 PowerShell 中执行：
 
 ```powershell
 Set-ExecutionPolicy -Scope Process Bypass
 .\scripts\setup-windows-dev.ps1
 .\scripts\verify-dev.ps1
-```
-
-macOS 还需要：
-
-- Xcode Command Line Tools
-- 执行 `bash scripts/setup-macos-dev.sh` 下载对应 Apple Silicon/Intel 的 Typst 0.15.1 渲染器
-
-环境就绪后运行：
-
-```powershell
 pnpm tauri dev
 ```
 
-生产构建必须启用 Tauri 自定义协议；项目已将其设为默认 Cargo 特性。完整构建仍推荐：
+macOS 还需要 Xcode Command Line Tools：
+
+```bash
+bash scripts/setup-macos-dev.sh
+pnpm tauri dev
+```
+
+生产构建：
 
 ```powershell
 pnpm tauri build
 ```
 
-本机已验证 WebView2、Rust、Microsoft C++ Build Tools、SQLCipher 与 Tauri 生产构建。
+## 单证使用路径
 
-## 单证导出
+1. 创建加密工作区并录入公司名称。
+2. 建立产品、客户和供应商。
+3. 新建业务单；报价业务可从“报价”阶段开始。
+4. 在“单证中心”创建商业报价单并签发。
+5. 对已签发报价选择“转换单证”，生成 PI 或合同草稿。
+6. 继续采购、生产和履约，生成发票与箱单。
+7. PDF/CSV 默认保存到用户“文档/TradeDesk Exports”。
 
-- PDF 与 CSV 默认保存到用户“文档/TradeDesk Exports”。
-- 每次 PDF 导出会保存 SHA-256、导出时间和对应的加密业务快照。
-- “打印”先生成与预览一致的 PDF，再调用系统默认 PDF 阅读器进行打印。
-- Typst 是独立渲染器，不需要最终用户安装 Node.js、Python 或办公软件。
+“打印”会先生成与预览一致的最终 PDF，再使用系统默认 PDF 阅读器打开。
 
-## 版本仓库
+## 数据与版本
 
-项目远端仓库为：<https://github.com/samzeng1985-creator/Tradedesk>
+- 数据库：SQLCipher Schema V5，新增销售单证字段保存在向后兼容的 JSON 快照中。
+- 旧单证在读取时自动补齐报价有效期和折扣默认值，无需手动迁移。
+- 已签发版本只读；修改必须创建新版本。
+- 当前 V1.0 仍为单用户。V1.1 再增加同机多人账号、角色权限和审核流。
 
-`main` 分支上的 GitHub Actions 会验证前端构建，并分别在 Windows 和 macOS 上执行 Rust 原生代码检查。
-
-## 轻量化守则
-
-- 页面状态优先使用 React 原生状态；达到跨模块共享阈值后再引入状态方案。
-- 数据访问只保留少量显式 SQL，不引入 ORM。
-- 每类单证共享一个快照模型，模板只负责版式差异。
-- 首版不加入多人协作、云同步、Excel 导出或复杂排产。
+远端仓库：<https://github.com/samzeng1985-creator/Tradedesk>

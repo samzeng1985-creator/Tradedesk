@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   BusinessCase,
   BusinessCaseInput,
+  ConvertDocumentInput,
   CreateDocumentInput,
   Customer,
   CustomerInput,
@@ -32,6 +33,8 @@ export const documentApi = {
   list: () => invoke<TradeDocument[]>("list_documents"),
   create: (input: CreateDocumentInput) =>
     invoke<TradeDocument>("create_document", { input }),
+  convert: (input: ConvertDocumentInput) =>
+    invoke<TradeDocument>("convert_document", { input }),
   save: (input: SaveDocumentInput) =>
     invoke<TradeDocument>("save_document", { input }),
   issue: (id: string) => invoke<TradeDocument>("issue_document", { id }),

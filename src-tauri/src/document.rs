@@ -12,6 +12,9 @@ use crate::domain::{
 
 const COMMERCIAL_INVOICE_TEMPLATE: &str =
     include_str!("../../templates/base/commercial-invoice.typ");
+const COMMERCIAL_QUOTATION_TEMPLATE: &str =
+    include_str!("../../templates/base/commercial-quotation.typ");
+const PROFORMA_INVOICE_TEMPLATE: &str = include_str!("../../templates/base/proforma-invoice.typ");
 const PACKING_LIST_TEMPLATE: &str = include_str!("../../templates/base/packing-list.typ");
 const TRADE_CONTRACT_TEMPLATE: &str = include_str!("../../templates/base/trade-contract.typ");
 
@@ -38,6 +41,17 @@ pub fn validate(document: &TradeDocument) -> Vec<DocumentValidationIssue> {
     }
     if document.payload.lines.is_empty() {
         error("lines_required", "至少需要一个产品明细");
+    }
+    if document.document_type == DocumentType::CommercialQuotation
+        && document.payload.valid_until.trim().is_empty()
+    {
+        error("valid_until_required", "报价有效期不能为空");
+    }
+    if document.document_type == DocumentType::CommercialQuotation
+        && !document.payload.valid_until.trim().is_empty()
+        && document.payload.valid_until < document.issue_date
+    {
+        error("invalid_valid_until", "报价有效期不能早于签发日期");
     }
     for (index, line) in document.payload.lines.iter().enumerate() {
         if line.description.trim().is_empty() || line.quantity <= 0.0 || !line.quantity.is_finite()
@@ -68,6 +82,15 @@ pub fn validate(document: &TradeDocument) -> Vec<DocumentValidationIssue> {
             }
         }
     }
+    let subtotal = document
+        .payload
+        .lines
+        .iter()
+        .map(|line| line.amount_minor)
+        .sum::<i64>();
+    if document.payload.discount_minor < 0 || document.payload.discount_minor > subtotal {
+        error("invalid_discount", "折扣不能为负数或超过产品小计");
+    }
     if document.document_type != DocumentType::PackingList {
         for (index, line) in document.payload.lines.iter().enumerate() {
             if line.hs_code.trim().is_empty() {
@@ -78,6 +101,15 @@ pub fn validate(document: &TradeDocument) -> Vec<DocumentValidationIssue> {
                 });
             }
         }
+    }
+    if document.document_type == DocumentType::ProformaInvoice
+        && document.payload.bank_details.trim().is_empty()
+    {
+        issues.push(DocumentValidationIssue {
+            severity: ValidationSeverity::Warning,
+            code: "bank_details_missing".to_owned(),
+            message: "形式发票尚未填写收款银行资料".to_owned(),
+        });
     }
     issues
 }
@@ -214,6 +246,8 @@ pub fn open_file(path: &Path) -> Result<(), String> {
 
 fn template(document: &TradeDocument) -> &'static str {
     match document.document_type {
+        DocumentType::CommercialQuotation => COMMERCIAL_QUOTATION_TEMPLATE,
+        DocumentType::ProformaInvoice => PROFORMA_INVOICE_TEMPLATE,
         DocumentType::CommercialInvoice => COMMERCIAL_INVOICE_TEMPLATE,
         DocumentType::PackingList => PACKING_LIST_TEMPLATE,
         DocumentType::TradeContract => TRADE_CONTRACT_TEMPLATE,
@@ -222,6 +256,8 @@ fn template(document: &TradeDocument) -> &'static str {
 
 fn export_stem(document: &TradeDocument) -> String {
     let kind = match document.document_type {
+        DocumentType::CommercialQuotation => "CommercialQuotation",
+        DocumentType::ProformaInvoice => "ProformaInvoice",
         DocumentType::CommercialInvoice => "CommercialInvoice",
         DocumentType::PackingList => "PackingList",
         DocumentType::TradeContract => "TradeContract",

@@ -26,3 +26,4 @@ tools/installers/_rustup_parts/
 tools/nasm/
 tools/typst/
 tmp/
+/output/

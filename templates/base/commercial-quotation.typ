@@ -8,7 +8,7 @@
 #let subtotal = payload.lines.fold(0, (sum, line) => sum + line.amountMinor)
 #let total = subtotal - payload.discountMinor
 
-#set document(title: "Commercial Invoice " + data.number, author: payload.seller)
+#set document(title: "Commercial Quotation " + data.number, author: payload.seller)
 #set page(
   paper: "a4",
   margin: (x: 14mm, y: 13mm),
@@ -20,9 +20,9 @@
 #set par(leading: 0.55em)
 
 #align(center)[
-  #text(size: 18pt, weight: "bold")[COMMERCIAL INVOICE]
+  #text(size: 18pt, weight: "bold")[COMMERCIAL QUOTATION]
   #linebreak()
-  #text(size: 8pt, fill: luma(90))[商业发票 / Commercial Invoice]
+  #text(size: 8pt, fill: luma(90))[商业报价单 / Commercial Quotation]
 ]
 #if data.status == "draft" [
   #align(right, text(size: 9pt, weight: "bold", fill: rgb("b42318"))[DRAFT / 草稿])
@@ -33,21 +33,20 @@
   columns: (1fr, 1fr),
   inset: 5pt,
   stroke: .55pt + luma(145),
-  [*SELLER / EXPORTER*\ #payload.seller\ #text(fill: luma(70))[#payload.sellerAddress]],
-  [*BUYER / CONSIGNEE*\ #payload.buyer\ #text(fill: luma(70))[#payload.buyerAddress]],
+  [*SELLER / QUOTED BY*\ #payload.seller\ #text(fill: luma(70))[#payload.sellerAddress]],
+  [*CUSTOMER / QUOTED TO*\ #payload.buyer\ #text(fill: luma(70))[#payload.buyerAddress]],
 )
 #v(5pt)
 #table(
-  columns: (22mm, 1fr, 22mm, 1fr),
+  columns: (23mm, 1fr, 23mm, 1fr),
   inset: 4pt,
   stroke: .45pt + luma(160),
   fill: (column, _) => if calc.even(column) { luma(245) },
-  [*Invoice No.*], [#data.number], [*Issue Date*], [#data.issueDate],
-  [*Order No.*], [#data.businessCaseNumber], [*PO Reference*], [#payload.poReference],
+  [*Quotation No.*], [#data.number], [*Issue Date*], [#data.issueDate],
+  [*Reference*], [#data.businessCaseNumber], [*Valid Until*], [#payload.validUntil],
   [*Currency*], [#data.currency], [*Incoterm*], [#payload.incoterm],
-  [*Payment*], [#payload.paymentTerms], [*Shipment Date*], [#payload.shipmentDate],
+  [*Payment*], [#payload.paymentTerms], [*Estimated Shipment*], [#payload.shipmentDate],
   [*Origin*], [#payload.originCountry], [*Destination*], [#payload.destinationCountry],
-  [*Port of Loading*], [#payload.portOfLoading], [*Port of Discharge*], [#payload.portOfDischarge],
 )
 #v(6pt)
 #table(
@@ -57,12 +56,12 @@
   stroke: .45pt + luma(155),
   fill: (_, row) => if row == 0 { luma(235) },
   table.header(
-    [*NO.*], [*SKU*], [*DESCRIPTION / HS CODE*], [*QTY*], [*UNIT*], [*UNIT PRICE*], [*AMOUNT*],
+    [*NO.*], [*SKU*], [*DESCRIPTION / MODEL*], [*QTY*], [*UNIT*], [*UNIT PRICE*], [*AMOUNT*],
   ),
   ..payload.lines.enumerate().map(((index, line)) => (
     [#(index + 1)],
     [#line.sku],
-    [#line.description #if line.model != "" [\ Model: #line.model] #if line.hsCode != "" [\ HS: #line.hsCode]],
+    [#line.description #if line.model != "" [\ Model: #line.model]],
     [#line.quantity],
     [#line.unit],
     [#money(line.unitPriceMinor)],
@@ -72,29 +71,24 @@
   table.cell(align: right, fill: luma(245))[*#money(subtotal)*],
   table.cell(colspan: 6, align: right)[DISCOUNT],
   table.cell(align: right)[-#money(payload.discountMinor)],
-  table.cell(colspan: 6, align: right, fill: luma(235))[*TOTAL #data.currency*],
+  table.cell(colspan: 6, align: right, fill: luma(235))[*QUOTATION TOTAL #data.currency*],
   table.cell(align: right, fill: luma(235))[*#money(total)*],
 )
 
 #v(7pt)
-#if payload.bankDetails != "" [
-  #block(width: 100%, inset: 5pt, stroke: .45pt + luma(170))[
-    *BANK DETAILS*\ #payload.bankDetails
-  ]
+#block(width: 100%, inset: 5pt, stroke: .45pt + luma(170))[
+  *COMMERCIAL TERMS*\
+  Validity: #payload.validUntil #h(8pt) Payment: #payload.paymentTerms #h(8pt) Incoterm: #payload.incoterm
 ]
 #if payload.notes != "" [
   #v(4pt)
   *NOTES*\ #payload.notes
-]
-#if payload.declaration != "" [
-  #v(4pt)
-  *DECLARATION*\ #payload.declaration
 ]
 
 #v(12pt)
 #grid(
   columns: (1fr, 45mm),
   gutter: 15mm,
-  [#text(fill: luma(80))[Generated from encrypted TradeDesk snapshot.]],
+  [#text(fill: luma(80))[This quotation is subject to final written confirmation.]],
   [#line(length: 100%)\ Authorized Signature],
 )

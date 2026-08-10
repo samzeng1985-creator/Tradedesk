@@ -5,7 +5,8 @@
   let cents = calc.abs(value - whole * 100)
   str(whole) + "." + (if cents < 10 { "0" } else { "" }) + str(cents)
 }
-#let total = payload.lines.fold(0, (sum, line) => sum + line.amountMinor)
+#let subtotal = payload.lines.fold(0, (sum, line) => sum + line.amountMinor)
+#let total = subtotal - payload.discountMinor
 
 #set document(title: "Trade Contract " + data.number, author: payload.seller)
 #set page(
@@ -16,7 +17,7 @@
   ]),
 )
 #set text(font: ("Arial", "Microsoft YaHei"), size: 8.5pt)
-#set par(justify: true, leading: 0.65em)
+#set par(justify: false, leading: 0.65em)
 
 #align(center)[
   #text(size: 18pt, weight: "bold")[SALES CONTRACT]
@@ -54,9 +55,15 @@
     [#(index + 1)], [#line.sku], [#line.description #if line.model != "" [\ #line.model]],
     [#line.quantity], [#line.unit], [#money(line.unitPriceMinor)], [#money(line.amountMinor)],
   )).flatten(),
-  table.cell(colspan: 6, align: right, fill: luma(245))[*TOTAL #data.currency*],
-  table.cell(align: right, fill: luma(245))[*#money(total)*],
+  table.cell(colspan: 6, align: right, fill: luma(245))[*SUBTOTAL #data.currency*],
+  table.cell(align: right, fill: luma(245))[*#money(subtotal)*],
+  table.cell(colspan: 6, align: right)[DISCOUNT],
+  table.cell(align: right)[-#money(payload.discountMinor)],
+  table.cell(colspan: 6, align: right, fill: luma(235))[*TOTAL #data.currency*],
+  table.cell(align: right, fill: luma(235))[*#money(total)*],
 )
+
+#set par(justify: true, leading: 0.65em)
 
 #v(8pt)
 *2. DELIVERY AND PAYMENT*\

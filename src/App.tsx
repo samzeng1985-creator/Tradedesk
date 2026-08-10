@@ -9,6 +9,7 @@ import { UnlockScreen } from "./UnlockScreen";
 import type {
   BusinessCase,
   BusinessCaseInput,
+  ConvertDocumentInput,
   CreateDocumentInput,
   Customer,
   PipelineStage,
@@ -195,6 +196,12 @@ export default function App() {
     return document;
   }
 
+  async function convertDocument(input: ConvertDocumentInput) {
+    const document = await documentApi.convert(input);
+    await loadMasterData();
+    return document;
+  }
+
   async function saveDocument(input: SaveDocumentInput) {
     const document = await documentApi.save(input);
     await loadMasterData();
@@ -284,7 +291,7 @@ export default function App() {
           <span className="brand-mark">TD</span>
           <span>
             <strong>TradeDesk</strong>
-            <small>Local · 0.5.0</small>
+            <small>Local · 0.6.0</small>
           </span>
         </div>
 
@@ -519,6 +526,7 @@ export default function App() {
             documents={documents}
             cases={businessCases}
             onCreate={createDocument}
+            onConvert={convertDocument}
             onSave={saveDocument}
             onIssue={issueDocument}
             onVoid={voidDocument}

@@ -185,7 +185,12 @@ export interface BusinessCaseInput {
   lines: BusinessCaseLineInput[];
 }
 
-export type DocumentType = "commercial_invoice" | "packing_list" | "trade_contract";
+export type DocumentType =
+  | "commercial_quotation"
+  | "proforma_invoice"
+  | "commercial_invoice"
+  | "packing_list"
+  | "trade_contract";
 export type DocumentStatus = "draft" | "issued" | "voided";
 export type ValidationSeverity = "error" | "warning";
 
@@ -225,6 +230,8 @@ export interface DocumentPayload {
   paymentTerms: string;
   shipmentDate: string;
   poReference: string;
+  validUntil: string;
+  discountMinor: number;
   bankDetails: string;
   notes: string;
   declaration: string;
@@ -258,6 +265,14 @@ export interface TradeDocument {
 export interface CreateDocumentInput {
   businessCaseId: string;
   documentType: DocumentType;
+  number: string;
+  language: string;
+  issueDate: string;
+}
+
+export interface ConvertDocumentInput {
+  sourceDocumentId: string;
+  targetDocumentType: DocumentType;
   number: string;
   language: string;
   issueDate: string;

@@ -8,7 +8,7 @@
 #let subtotal = payload.lines.fold(0, (sum, line) => sum + line.amountMinor)
 #let total = subtotal - payload.discountMinor
 
-#set document(title: "Commercial Invoice " + data.number, author: payload.seller)
+#set document(title: "Proforma Invoice " + data.number, author: payload.seller)
 #set page(
   paper: "a4",
   margin: (x: 14mm, y: 13mm),
@@ -20,9 +20,9 @@
 #set par(leading: 0.55em)
 
 #align(center)[
-  #text(size: 18pt, weight: "bold")[COMMERCIAL INVOICE]
+  #text(size: 18pt, weight: "bold")[PROFORMA INVOICE]
   #linebreak()
-  #text(size: 8pt, fill: luma(90))[商业发票 / Commercial Invoice]
+  #text(size: 8pt, fill: luma(90))[形式发票 / Proforma Invoice]
 ]
 #if data.status == "draft" [
   #align(right, text(size: 9pt, weight: "bold", fill: rgb("b42318"))[DRAFT / 草稿])
@@ -34,16 +34,16 @@
   inset: 5pt,
   stroke: .55pt + luma(145),
   [*SELLER / EXPORTER*\ #payload.seller\ #text(fill: luma(70))[#payload.sellerAddress]],
-  [*BUYER / CONSIGNEE*\ #payload.buyer\ #text(fill: luma(70))[#payload.buyerAddress]],
+  [*BUYER / IMPORTER*\ #payload.buyer\ #text(fill: luma(70))[#payload.buyerAddress]],
 )
 #v(5pt)
 #table(
-  columns: (22mm, 1fr, 22mm, 1fr),
+  columns: (23mm, 1fr, 23mm, 1fr),
   inset: 4pt,
   stroke: .45pt + luma(160),
   fill: (column, _) => if calc.even(column) { luma(245) },
-  [*Invoice No.*], [#data.number], [*Issue Date*], [#data.issueDate],
-  [*Order No.*], [#data.businessCaseNumber], [*PO Reference*], [#payload.poReference],
+  [*PI No.*], [#data.number], [*Issue Date*], [#data.issueDate],
+  [*Reference*], [#data.businessCaseNumber], [*Customer PO*], [#payload.poReference],
   [*Currency*], [#data.currency], [*Incoterm*], [#payload.incoterm],
   [*Payment*], [#payload.paymentTerms], [*Shipment Date*], [#payload.shipmentDate],
   [*Origin*], [#payload.originCountry], [*Destination*], [#payload.destinationCountry],
@@ -86,15 +86,11 @@
   #v(4pt)
   *NOTES*\ #payload.notes
 ]
-#if payload.declaration != "" [
-  #v(4pt)
-  *DECLARATION*\ #payload.declaration
-]
 
 #v(12pt)
 #grid(
   columns: (1fr, 45mm),
   gutter: 15mm,
-  [#text(fill: luma(80))[Generated from encrypted TradeDesk snapshot.]],
+  [#text(fill: luma(80))[Proforma invoice - not a tax or customs invoice.]],
   [#line(length: 100%)\ Authorized Signature],
 )
