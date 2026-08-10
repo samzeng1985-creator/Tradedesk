@@ -15,8 +15,9 @@ use domain::{
     CompanyRegistry, ComponentOption, ComponentOptionInput, ComponentOptionTranslationInput,
     ConfigComponent, ConfigComponentInput, ConfigurableProduct, ConfigurableProductInput,
     ConvertDocumentInput, CreateDocumentInput, Customer, CustomerInput, DocumentDraft,
-    DocumentExportResult, Product, ProductInput, ProductionMilestone, ProductionMilestoneInput,
-    PurchaseOrder, PurchaseOrderInput, PurchaseStatus, SaveDocumentInput, Supplier, SupplierInput,
+    DocumentExportResult, Partner, PartnerInput, PaymentPlan, PaymentPlanInput, Product,
+    ProductInput, ProductionMilestone, ProductionMilestoneInput, PurchaseOrder, PurchaseOrderInput,
+    PurchaseStatus, SaveDocumentInput, ShipmentBatch, ShipmentBatchInput, Supplier, SupplierInput,
     TradeDocument, WorkspaceSummary,
 };
 use storage::EncryptedDatabase;
@@ -220,6 +221,17 @@ fn rollback_workspace_restore(state: State<'_, AppState>) -> Result<(), String> 
 #[tauri::command]
 fn list_attachments(state: State<'_, AppState>) -> Result<Vec<AttachmentRecord>, String> {
     with_database(state, EncryptedDatabase::list_attachments)
+}
+
+#[tauri::command]
+fn list_entity_attachments(
+    entity_type: String,
+    entity_id: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<AttachmentRecord>, String> {
+    with_database(state, |database| {
+        database.list_entity_attachments(&entity_type, &entity_id)
+    })
 }
 
 #[tauri::command]
@@ -642,6 +654,47 @@ fn update_production_milestone(
 }
 
 #[tauri::command]
+fn list_partners(state: State<'_, AppState>) -> Result<Vec<Partner>, String> {
+    with_database(state, EncryptedDatabase::list_partners)
+}
+
+#[tauri::command]
+fn save_partner(input: PartnerInput, state: State<'_, AppState>) -> Result<Partner, String> {
+    with_database(state, |database| database.save_partner(input))
+}
+
+#[tauri::command]
+fn archive_partner(id: String, state: State<'_, AppState>) -> Result<(), String> {
+    with_database(state, |database| database.archive_partner(&id))
+}
+
+#[tauri::command]
+fn list_shipment_batches(state: State<'_, AppState>) -> Result<Vec<ShipmentBatch>, String> {
+    with_database(state, EncryptedDatabase::list_shipment_batches)
+}
+
+#[tauri::command]
+fn save_shipment_batch(
+    input: ShipmentBatchInput,
+    state: State<'_, AppState>,
+) -> Result<ShipmentBatch, String> {
+    with_database(state, |database| database.save_shipment_batch(input))
+}
+
+#[tauri::command]
+fn list_payment_plans(state: State<'_, AppState>) -> Result<Vec<PaymentPlan>, String> {
+    with_database(state, EncryptedDatabase::list_payment_plans)
+}
+
+#[tauri::command]
+fn save_payment_plan(
+    input: PaymentPlanInput,
+    state: State<'_, AppState>,
+) -> Result<PaymentPlan, String> {
+    with_database(state, |database| database.save_payment_plan(input))
+}
+
+#[tauri::command]
 fn list_documents(state: State<'_, AppState>) -> Result<Vec<TradeDocument>, String> {
     with_database(state, EncryptedDatabase::list_documents)
 }
@@ -813,6 +866,7 @@ pub fn run() {
             workspace_restore_pending,
             rollback_workspace_restore,
             list_attachments,
+            list_entity_attachments,
             save_attachment,
             export_attachment,
             delete_attachment,
@@ -847,6 +901,13 @@ pub fn run() {
             create_purchase_order,
             update_purchase_order_status,
             update_production_milestone,
+            list_partners,
+            save_partner,
+            archive_partner,
+            list_shipment_batches,
+            save_shipment_batch,
+            list_payment_plans,
+            save_payment_plan,
             list_documents,
             create_document,
             convert_document,

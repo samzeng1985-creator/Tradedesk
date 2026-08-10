@@ -22,6 +22,10 @@ import type {
   DocumentExportResult,
   DocumentDraft,
   MasterImportResult,
+  Partner,
+  PartnerInput,
+  PaymentPlan,
+  PaymentPlanInput,
   Product,
   ProductInput,
   ProductionMilestone,
@@ -32,6 +36,8 @@ import type {
   Supplier,
   SupplierInput,
   SaveDocumentInput,
+  ShipmentBatch,
+  ShipmentBatchInput,
   TradeDocument,
   WorkspaceSummary,
 } from "./domain";
@@ -56,9 +62,20 @@ export const workspaceApi = {
 
 export const attachmentApi = {
   list: () => invoke<AttachmentRecord[]>("list_attachments"),
+  listFor: (entityType: string, entityId: string) => invoke<AttachmentRecord[]>("list_entity_attachments", { entityType, entityId }),
   save: (input: AttachmentInput) => invoke<AttachmentRecord>("save_attachment", { input }),
   export: (id: string) => invoke<string>("export_attachment", { id }),
   delete: (id: string) => invoke<void>("delete_attachment", { id }),
+};
+
+export const logisticsApi = {
+  listPartners: () => invoke<Partner[]>("list_partners"),
+  savePartner: (input: PartnerInput) => invoke<Partner>("save_partner", { input }),
+  archivePartner: (id: string) => invoke<void>("archive_partner", { id }),
+  listShipments: () => invoke<ShipmentBatch[]>("list_shipment_batches"),
+  saveShipment: (input: ShipmentBatchInput) => invoke<ShipmentBatch>("save_shipment_batch", { input }),
+  listPayments: () => invoke<PaymentPlan[]>("list_payment_plans"),
+  savePayment: (input: PaymentPlanInput) => invoke<PaymentPlan>("save_payment_plan", { input }),
 };
 
 export const documentApi = {

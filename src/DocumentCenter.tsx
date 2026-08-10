@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { documentDraftApi } from "./api";
+import { AttachmentPanel } from "./AttachmentPanel";
+import { nextDatedNumber, todayIso } from "./numbering";
 import type {
   BusinessCase,
   CompanyRecord,
@@ -61,19 +63,12 @@ const documentTypes: DocumentType[] = [
   "packing_list",
 ];
 
-function today() {
-  return new Date().toISOString().slice(0, 10);
-}
-
-function nextNumber(documents: TradeDocument[], type: DocumentType) {
-  const year = new Date().getFullYear();
-  const prefix = `${prefixes[type]}-${year}-`;
-  const largest = documents.reduce((max, document) => {
-    if (document.documentType !== type || !document.number.startsWith(prefix)) return max;
-    const value = Number(document.number.slice(prefix.length));
-    return Number.isFinite(value) ? Math.max(max, value) : max;
-  }, 0);
-  return `${prefix}${String(largest + 1).padStart(4, "0")}`;
+function nextNumber(documents: TradeDocument[], type: DocumentType, issueDate = todayIso()) {
+  return nextDatedNumber(
+    documents.filter((item) => item.documentType === type).map((item) => item.number),
+    prefixes[type],
+    issueDate,
+  );
 }
 
 function money(value: number, currency: string) {
@@ -106,7 +101,7 @@ function CreateDocumentModal({
   const [type, setType] = useState<DocumentType>("commercial_quotation");
   const [caseId, setCaseId] = useState(cases[0]?.id ?? "");
   const [number, setNumber] = useState(nextNumber(documents, type));
-  const [issueDate, setIssueDate] = useState(today());
+  const [issueDate, setIssueDate] = useState(todayIso());
   const [language, setLanguage] = useState("zh_en");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -128,10 +123,10 @@ function CreateDocumentModal({
     <form className="modal-card document-create" onSubmit={submit} onMouseDown={(event) => event.stopPropagation()}>
       <div className="panel-heading"><div><span className="eyebrow">业务单证包</span><h2>从业务单生成单证</h2></div><button type="button" className="icon-button" onClick={onClose}>×</button></div>
       <div className="form-grid two-columns">
-        <label>单证类型<select value={type} onChange={(event) => { const next = event.target.value as DocumentType; setType(next); setNumber(nextNumber(documents, next)); }}>{documentTypes.map((item) => <option value={item} key={item}>{typeLabels[item]}</option>)}</select></label>
+        <label>单证类型<select value={type} onChange={(event) => { const next = event.target.value as DocumentType; setType(next); setNumber(nextNumber(documents, next, issueDate)); }}>{documentTypes.map((item) => <option value={item} key={item}>{typeLabels[item]}</option>)}</select></label>
         <label>来源业务单<select required value={caseId} onChange={(event) => setCaseId(event.target.value)}>{cases.map((item) => <option value={item.id} key={item.id}>{item.number} · {item.customerName}</option>)}</select></label>
         <label>单证编号<input required value={number} onChange={(event) => setNumber(event.target.value)} /></label>
-        <label>签发日期<input required type="date" value={issueDate} onChange={(event) => setIssueDate(event.target.value)} /></label>
+        <label>签发日期<input required type="date" value={issueDate} onChange={(event) => { setIssueDate(event.target.value); setNumber(nextNumber(documents, type, event.target.value)); }} /></label>
         <label>输出语言<select value={language} onChange={(event) => setLanguage(event.target.value)}><option value="zh_en">中英双语</option><option value="en">英文</option><option value="ru">俄文</option></select></label>
       </div>
       {error && <div className="form-error">{error}</div>}
@@ -151,7 +146,7 @@ function ConvertDocumentModal({ source, documents, onClose, onConvert }: {
     : ["trade_contract", "commercial_invoice"];
   const [target, setTarget] = useState<DocumentType>(targets[0]);
   const [number, setNumber] = useState(nextNumber(documents, targets[0]));
-  const [issueDate, setIssueDate] = useState(today());
+  const [issueDate, setIssueDate] = useState(todayIso());
   const [language, setLanguage] = useState(source.language);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -173,9 +168,9 @@ function ConvertDocumentModal({ source, documents, onClose, onConvert }: {
       <div className="panel-heading"><div><span className="eyebrow">复用已签发快照</span><h2>转换 {source.number}</h2></div><button type="button" className="icon-button" onClick={onClose}>×</button></div>
       <p className="empty-callout">客户、产品、价格、折扣和贸易条款将原样复制，不读取已变化的主数据。</p>
       <div className="form-grid two-columns">
-        <label>目标单证<select value={target} onChange={(event) => { const next = event.target.value as DocumentType; setTarget(next); setNumber(nextNumber(documents, next)); }}>{targets.map((item) => <option value={item} key={item}>{typeLabels[item]}</option>)}</select></label>
+        <label>目标单证<select value={target} onChange={(event) => { const next = event.target.value as DocumentType; setTarget(next); setNumber(nextNumber(documents, next, issueDate)); }}>{targets.map((item) => <option value={item} key={item}>{typeLabels[item]}</option>)}</select></label>
         <label>单证编号<input required value={number} onChange={(event) => setNumber(event.target.value)} /></label>
-        <label>签发日期<input required type="date" value={issueDate} onChange={(event) => setIssueDate(event.target.value)} /></label>
+        <label>签发日期<input required type="date" value={issueDate} onChange={(event) => { setIssueDate(event.target.value); setNumber(nextNumber(documents, target, event.target.value)); }} /></label>
         <label>输出语言<select value={language} onChange={(event) => setLanguage(event.target.value)}><option value="zh_en">中英双语</option><option value="en">英文</option><option value="ru">俄文</option></select></label>
       </div>
       {error && <div className="form-error">{error}</div>}
@@ -192,11 +187,11 @@ function Preview({ document, payload, company, signingAsset }: { document: Trade
   const quotation = document.documentType === "commercial_quotation";
   const proforma = document.documentType === "proforma_invoice";
   const title = contract ? "SALES CONTRACT" : packing ? "DETAILED PACKING LIST" : quotation ? "COMMERCIAL QUOTATION" : proforma ? "PROFORMA INVOICE" : "COMMERCIAL INVOICE";
-  return <div className={`document-paper ${packing ? "landscape" : ""}`}>
+  return <div className="document-paper landscape">
     <header>{company?.logoDataUrl && <img className="preview-logo" src={company.logoDataUrl} alt="公司 Logo" />}<h2>{title}</h2><p>{typeLabels[document.documentType]} · {document.number} · V{document.version}</p>{document.status === "draft" && <strong>DRAFT / 草稿</strong>}</header>
     <div className="preview-parties"><div><b>{packing ? "SHIPPER" : "SELLER / EXPORTER"}</b><span>{payload.seller}</span><small>{payload.sellerAddress}</small></div><div><b>{packing ? "CONSIGNEE" : "BUYER / CONSIGNEE"}</b><span>{payload.buyer}</span><small>{payload.buyerAddress}</small></div></div>
     <div className="preview-meta"><span><b>No.</b>{document.number}</span><span><b>Date</b>{document.issueDate}</span><span><b>Reference</b>{document.businessCaseNumber}</span><span><b>Incoterm</b>{payload.incoterm}</span>{quotation ? <span><b>Valid until</b>{payload.validUntil}</span> : <><span><b>Loading</b>{payload.portOfLoading}</span><span><b>Discharge</b>{payload.portOfDischarge}</span></>}</div>
-    <table><thead><tr><th>No.</th><th>SKU / Description</th><th>Qty</th>{packing ? <><th>Packages</th><th>Net kg</th><th>Gross kg</th><th>CBM</th></> : <><th>Unit price</th><th>Amount</th></>}</tr></thead><tbody>{payload.lines.map((line, index) => <tr key={`${line.productId}-${index}`}><td>{index + 1}</td><td><b>{line.sku}</b><br />{line.description}{line.model && <small>{line.model}</small>}</td><td>{line.quantity} {line.unit}</td>{packing ? <><td>{line.packages} {line.packageType}</td><td>{line.netWeightKg}</td><td>{line.grossWeightKg}</td><td>{line.cbm}</td></> : <><td>{money(line.unitPriceMinor, document.currency)}</td><td>{money(line.amountMinor, document.currency)}</td></>}</tr>)}</tbody>{!packing && <tfoot><tr><td colSpan={4}>TOTAL</td><td>{money(payable, document.currency)}</td></tr></tfoot>}</table>
+    <table><thead><tr><th>No.</th><th>SKU / Description</th><th>Qty</th>{packing ? <><th>Packages</th><th>Net kg</th><th>Gross kg</th><th>CBM</th></> : <><th>Unit price</th><th>Amount</th></>}</tr></thead><tbody>{payload.lines.map((line, index) => <tr key={`${line.productId}-${index}`}><td>{index + 1}</td><td><b>{line.sku}</b> · {line.description}{line.model && <small> · {line.model}</small>}</td><td>{line.quantity} {line.unit}</td>{packing ? <><td>{line.packages} {line.packageType}</td><td>{line.netWeightKg}</td><td>{line.grossWeightKg}</td><td>{line.cbm}</td></> : <><td>{money(line.unitPriceMinor, document.currency)}</td><td>{money(line.amountMinor, document.currency)}</td></>}</tr>)}</tbody>{!packing && <tfoot><tr><td colSpan={4}>TOTAL</td><td>{money(payable, document.currency)}</td></tr></tfoot>}</table>
     {!packing && payload.discountMinor > 0 && <section><h3>DISCOUNT</h3><p>{money(payload.discountMinor, document.currency)} · Total after discount: {money(payable, document.currency)}</p></section>}
     {contract && <section><h3>GENERAL TERMS</h3><p>{payload.contractTerms || "General trade terms shall be confirmed in writing by both parties."}</p></section>}
     {payload.notes && <section><h3>NOTES</h3><p>{payload.notes}</p></section>}
@@ -358,6 +353,7 @@ function DocumentEditor({ initial, companyRegistry, onClose, onSave, onIssue, on
     <div className="document-editor-layout">
       <div className="document-form-panel">
         <div className="document-brand-selectors"><label>导出公司<select value={companyId} onChange={(event) => { setCompanyId(event.target.value); setSigningAssetId(""); }}>{companyRegistry?.companies.map((item) => <option value={item.id} key={item.id}>{item.companyName}</option>)}</select></label><label>签章（可不选）<select value={signingAssetId} onChange={(event) => setSigningAssetId(event.target.value)}><option value="">不使用签章</option>{selectedCompany?.signingAssets.map((item) => <option value={item.id} key={item.id}>{item.kind === "stamp" ? "电子章" : "电子签名"} · {item.name}</option>)}</select></label></div>
+        <AttachmentPanel entityType="document" entityId={document.id} entityLabel={`${document.number} V${document.version}`} title="单证附件" />
         {!editable && <div className="locked-callout">该版本已{document.status === "issued" ? "签发" : "作废"}，内容只读；修改请创建新版本。</div>}
         {document.validationIssues.length > 0 && <div className="validation-list">{document.validationIssues.map((issue, index) => <span className={issue.severity} key={`${issue.code}-${index}`}>{issue.severity === "error" ? "错误" : "提醒"} · {issue.message}</span>)}</div>}
         <fieldset disabled={!editable}><div className="form-grid two-columns"><label>单证编号<input value={number} onChange={(event) => setNumber(event.target.value)} /></label><label>签发日期<input type="date" value={issueDate} onChange={(event) => setIssueDate(event.target.value)} /></label><label>输出语言<select value={language} onChange={(event) => setLanguage(event.target.value)}><option value="zh_en">中英双语</option><option value="en">英文</option><option value="ru">俄文</option></select></label><label>来源业务单<input value={document.businessCaseNumber} readOnly /></label></div>

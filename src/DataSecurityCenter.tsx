@@ -15,6 +15,7 @@ function entityLabel(value: string) {
     purchase_order: "采购单",
     document: "单证",
     production: "生产记录",
+    production_milestone: "生产节点",
   }[value] ?? value;
 }
 
@@ -77,7 +78,7 @@ export function DataSecurityCenter({ recoveryReady, onRecoveryKey }: {
     setBusy("attachment"); setMessage("");
     try {
       const bytes = Array.from(new Uint8Array(await file.arrayBuffer()));
-      await attachmentApi.save({ entityType, entityId: entityId.trim(), fileName: file.name, mimeType: file.type, bytes });
+      await attachmentApi.save({ entityType, entityId: entityId.trim(), entityLabel: entityId.trim(), fileName: file.name, mimeType: file.type, bytes });
       setAttachments(await attachmentApi.list());
       setMessage(`${file.name} 已写入 SQLCipher 加密附件库。`);
     } catch (error) { setMessage(String(error)); } finally { setBusy(""); }
@@ -118,11 +119,11 @@ export function DataSecurityCenter({ recoveryReady, onRecoveryKey }: {
     <section className="panel attachment-library">
       <div className="panel-heading"><div><h2>加密附件库</h2><p>文件内容作为 SQLCipher BLOB 保存，导出时才写入普通文件</p></div></div>
       <div className="attachment-toolbar">
-        <label>资料类型<select value={entityType} onChange={(event) => setEntityType(event.target.value)}><option value="workspace">工作区</option><option value="business_case">业务单</option><option value="purchase_order">采购单</option><option value="production">生产记录</option><option value="document">单证</option></select></label>
-        <label>关联编号（可选）<input value={entityId} onChange={(event) => setEntityId(event.target.value)} placeholder="例如 TD-2026-0001" /></label>
+        <label>资料类型<select value={entityType} onChange={(event) => setEntityType(event.target.value)}><option value="workspace">工作区</option><option value="business_case">业务单</option><option value="purchase_order">采购单</option><option value="production_milestone">生产节点</option><option value="document">单证</option></select></label>
+        <label>关联编号（可选）<input value={entityId} onChange={(event) => setEntityId(event.target.value)} placeholder="例如 TD-20260810-0001" /></label>
         <label className="button button-primary attachment-upload">{busy === "attachment" ? "上传中…" : "添加附件"}<input className="sr-only" type="file" disabled={!!busy} onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (file) void upload(file); }} /></label>
       </div>
-      <div className="table-wrap"><table><thead><tr><th>文件</th><th>关联资料</th><th>大小</th><th>校验值</th><th>添加时间</th><th>操作</th></tr></thead><tbody>{attachments.map((item) => <tr key={item.id}><td><strong>{item.fileName}</strong><small className="table-subtitle">{item.mimeType || "未知类型"}</small></td><td>{entityLabel(item.entityType)}{item.entityId ? ` · ${item.entityId}` : ""}</td><td>{fileSize(item.sizeBytes)}</td><td><code>{item.sha256.slice(0, 12)}…</code></td><td>{item.createdAt}</td><td><div className="row-actions"><button disabled={!!busy} onClick={() => void exportAttachment(item)}>导出</button><button className="danger-link" disabled={!!busy} onClick={() => void deleteAttachment(item)}>删除</button></div></td></tr>)}</tbody></table></div>
+      <div className="table-wrap"><table><thead><tr><th>文件</th><th>关联资料</th><th>大小</th><th>校验值</th><th>添加时间</th><th>操作</th></tr></thead><tbody>{attachments.map((item) => <tr key={item.id}><td><strong>{item.fileName}</strong><small className="table-subtitle">{item.mimeType || "未知类型"}</small></td><td>{entityLabel(item.entityType)}{item.entityLabel || item.entityId ? ` · ${item.entityLabel || item.entityId}` : ""}</td><td>{fileSize(item.sizeBytes)}</td><td><code>{item.sha256.slice(0, 12)}…</code></td><td>{item.createdAt}</td><td><div className="row-actions"><button disabled={!!busy} onClick={() => void exportAttachment(item)}>导出</button><button className="danger-link" disabled={!!busy} onClick={() => void deleteAttachment(item)}>删除</button></div></td></tr>)}</tbody></table></div>
       {!attachments.length && <div className="empty-table">暂无附件。可先保存合同附件、采购确认文件或生产照片。</div>}
     </section>
   </div>;

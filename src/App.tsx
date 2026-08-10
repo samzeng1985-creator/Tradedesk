@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
-import { businessCaseApi, documentApi, fulfillmentApi, masterApi, workspaceApi } from "./api";
+import { businessCaseApi, documentApi, fulfillmentApi, logisticsApi, masterApi, workspaceApi } from "./api";
 import { BusinessCaseCenter } from "./BusinessCaseCenter";
 import { CompanySettings } from "./CompanySettings";
 import { ComponentLibrary, ConfigurableProductLibrary } from "./ConfigurableProductCenter";
 import { DataSecurityCenter, RecoveryKeyNotice } from "./DataSecurityCenter";
 import { DocumentCenter } from "./DocumentCenter";
 import { FulfillmentCenter } from "./FulfillmentCenter";
+import { LogisticsCenter } from "./LogisticsCenter";
 import { MasterEditor } from "./MasterEditor";
 import type { MasterInput, MasterRecord, MasterTab } from "./MasterEditor";
 import { UnlockScreen } from "./UnlockScreen";
@@ -26,6 +27,10 @@ import type {
   CreateDocumentInput,
   Customer,
   PipelineStage,
+  Partner,
+  PartnerInput,
+  PaymentPlan,
+  PaymentPlanInput,
   Product,
   ProductionMilestoneInput,
   PurchaseOrder,
@@ -33,12 +38,14 @@ import type {
   PurchaseStatus,
   RecordStatus,
   SaveDocumentInput,
+  ShipmentBatch,
+  ShipmentBatchInput,
   Supplier,
   TradeDocument,
   WorkspaceSummary,
 } from "./domain";
 
-type View = "overview" | "cases" | "masters" | "fulfillment" | "documents" | "settings" | "security";
+type View = "overview" | "cases" | "masters" | "fulfillment" | "logistics" | "documents" | "settings" | "security";
 
 const pipeline: Array<{ key: PipelineStage; label: string }> = [
   { key: "quotation", label: "报价" },
@@ -54,6 +61,7 @@ const viewTitles: Record<View, { title: string; subtitle: string }> = {
   cases: { title: "业务单", subtitle: "客户、产品与商业条款的统一业务快照" },
   masters: { title: "主数据", subtitle: "一次建档，多处复用" },
   fulfillment: { title: "采购与生产", subtitle: "只跟踪关键里程碑，不做复杂排产" },
+  logistics: { title: "装运与收款", subtitle: "分批发货、物流合作方与收款节点统一管理" },
   documents: { title: "单证中心", subtitle: "版本、状态与跨单证一致性" },
   settings: { title: "企业设置", subtitle: "统一配置公司名称、Logo 和电子签名" },
   security: { title: "数据与安全", subtitle: "恢复密钥、加密备份与附件保护" },
@@ -121,6 +129,9 @@ export default function App() {
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [businessCases, setBusinessCases] = useState<BusinessCase[]>([]);
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
+  const [partners, setPartners] = useState<Partner[]>([]);
+  const [shipmentBatches, setShipmentBatches] = useState<ShipmentBatch[]>([]);
+  const [paymentPlans, setPaymentPlans] = useState<PaymentPlan[]>([]);
   const [documents, setDocuments] = useState<TradeDocument[]>([]);
   const [masterQuery, setMasterQuery] = useState("");
   const [editorOpen, setEditorOpen] = useState(false);
@@ -138,7 +149,7 @@ export default function App() {
   }, []);
 
   async function loadMasterData() {
-    const [nextProducts, nextComponents, nextComponentOptions, nextConfigurations, nextCustomers, nextSuppliers, nextCases, nextOrders, nextDocuments, summary] = await Promise.all([
+    const [nextProducts, nextComponents, nextComponentOptions, nextConfigurations, nextCustomers, nextSuppliers, nextCases, nextOrders, nextPartners, nextShipments, nextPayments, nextDocuments, summary] = await Promise.all([
       masterApi.listProducts(),
       masterApi.listConfigComponents(),
       masterApi.listComponentOptions(),
@@ -147,6 +158,9 @@ export default function App() {
       masterApi.listSuppliers(),
       businessCaseApi.list(),
       fulfillmentApi.list(),
+      logisticsApi.listPartners(),
+      logisticsApi.listShipments(),
+      logisticsApi.listPayments(),
       documentApi.list(),
       workspaceApi.summary(),
     ]);
@@ -158,6 +172,9 @@ export default function App() {
     setSuppliers(nextSuppliers);
     setBusinessCases(nextCases);
     setPurchaseOrders(nextOrders);
+    setPartners(nextPartners);
+    setShipmentBatches(nextShipments);
+    setPaymentPlans(nextPayments);
     setDocuments(nextDocuments);
     setWorkspace(summary);
   }
@@ -316,6 +333,26 @@ export default function App() {
     await loadMasterData();
   }
 
+  async function savePartner(input: PartnerInput) {
+    await logisticsApi.savePartner(input);
+    await loadMasterData();
+  }
+
+  async function archivePartner(id: string) {
+    await logisticsApi.archivePartner(id);
+    await loadMasterData();
+  }
+
+  async function saveShipment(input: ShipmentBatchInput) {
+    await logisticsApi.saveShipment(input);
+    await loadMasterData();
+  }
+
+  async function savePayment(input: PaymentPlanInput) {
+    await logisticsApi.savePayment(input);
+    await loadMasterData();
+  }
+
   async function createDocument(input: CreateDocumentInput) {
     const document = await documentApi.create(input);
     await loadMasterData();
@@ -421,7 +458,7 @@ export default function App() {
           <span className="brand-mark">TD</span>
           <span>
             <strong>TradeDesk</strong>
-            <small>Local · 0.14.0</small>
+            <small>Local · 0.15.0</small>
           </span>
         </div>
 
@@ -440,6 +477,9 @@ export default function App() {
             onClick={() => setView("fulfillment")}
           >
             采购与生产
+          </button>
+          <button className={view === "logistics" ? "selected" : ""} onClick={() => setView("logistics")}>
+            装运与收款
           </button>
           <button className={view === "documents" ? "selected" : ""} onClick={() => setView("documents")}>
             单证中心
@@ -683,6 +723,19 @@ export default function App() {
             onExportCsv={exportDocumentCsv}
             onPrint={printDocument}
             onOpenPdf={documentApi.openPdf}
+          />
+        )}
+
+        {view === "logistics" && (
+          <LogisticsCenter
+            cases={businessCases}
+            partners={partners}
+            shipments={shipmentBatches}
+            payments={paymentPlans}
+            onSavePartner={savePartner}
+            onArchivePartner={archivePartner}
+            onSaveShipment={saveShipment}
+            onSavePayment={savePayment}
           />
         )}
 

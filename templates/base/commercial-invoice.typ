@@ -8,11 +8,13 @@
 }
 #let subtotal = payload.lines.fold(0, (sum, line) => sum + line.amountMinor)
 #let total = subtotal - payload.discountMinor
+#let nowrap(body) = box[#text(size: 6.5pt)[#body]]
 
 #set document(title: "Commercial Invoice " + data.number, author: payload.seller)
 #set page(
   paper: "a4",
-  margin: (x: 14mm, y: 13mm),
+  flipped: true,
+  margin: (x: 10mm, y: 10mm),
   footer: context align(center, text(size: 7pt, fill: luma(90))[
     #branding.companyName - #data.number - V#data.version - Page #counter(page).display("1 / 1")
   ]),
@@ -24,7 +26,7 @@
   columns: (38mm, 1fr, 38mm),
   align: (left, center, right),
   [#if branding.logoPath != "" [#image(branding.logoPath, width: 34mm, height: 13mm, fit: "contain")]],
-  [#text(size: 18pt, weight: "bold")[COMMERCIAL INVOICE]\ #text(size: 8pt, fill: luma(90))[商业发票 / Commercial Invoice]],
+  [#text(size: 18pt, weight: "bold")[COMMERCIAL INVOICE] #h(6pt) #text(size: 8pt, fill: luma(90))[商业发票]],
   [],
 )
 #if data.status == "draft" [
@@ -36,40 +38,40 @@
   columns: (1fr, 1fr),
   inset: 5pt,
   stroke: .55pt + luma(145),
-  [*SELLER / EXPORTER*\ #payload.seller\ #text(fill: luma(70))[#payload.sellerAddress]],
-  [*BUYER / CONSIGNEE*\ #payload.buyer\ #text(fill: luma(70))[#payload.buyerAddress]],
+  [#nowrap[*SELLER / EXPORTER* #h(4pt) #payload.seller #h(4pt) #text(fill: luma(70))[#payload.sellerAddress]]],
+  [#nowrap[*BUYER / CONSIGNEE* #h(4pt) #payload.buyer #h(4pt) #text(fill: luma(70))[#payload.buyerAddress]]],
 )
 #v(5pt)
 #table(
-  columns: (22mm, 1fr, 22mm, 1fr),
+  columns: (25mm, 1fr, 25mm, 1fr),
   inset: 4pt,
   stroke: .45pt + luma(160),
   fill: (column, _) => if calc.even(column) { luma(245) },
-  [*Invoice No.*], [#data.number], [*Issue Date*], [#data.issueDate],
-  [*Order No.*], [#data.businessCaseNumber], [*PO Reference*], [#payload.poReference],
-  [*Currency*], [#data.currency], [*Incoterm*], [#payload.incoterm],
-  [*Payment*], [#payload.paymentTerms], [*Shipment Date*], [#payload.shipmentDate],
-  [*Origin*], [#payload.originCountry], [*Destination*], [#payload.destinationCountry],
-  [*Port of Loading*], [#payload.portOfLoading], [*Port of Discharge*], [#payload.portOfDischarge],
+  [#nowrap[*Invoice No.*]], [#nowrap[#data.number]], [#nowrap[*Issue Date*]], [#nowrap[#data.issueDate]],
+  [#nowrap[*Order No.*]], [#nowrap[#data.businessCaseNumber]], [#nowrap[*PO Reference*]], [#nowrap[#payload.poReference]],
+  [#nowrap[*Currency*]], [#nowrap[#data.currency]], [#nowrap[*Incoterm*]], [#nowrap[#payload.incoterm]],
+  [#nowrap[*Payment*]], [#nowrap[#payload.paymentTerms]], [#nowrap[*Shipment Date*]], [#nowrap[#payload.shipmentDate]],
+  [#nowrap[*Origin*]], [#nowrap[#payload.originCountry]], [#nowrap[*Destination*]], [#nowrap[#payload.destinationCountry]],
+  [#nowrap[*Port of Loading*]], [#nowrap[#payload.portOfLoading]], [#nowrap[*Port of Discharge*]], [#nowrap[#payload.portOfDischarge]],
 )
 #v(6pt)
 #table(
-  columns: (8mm, 25mm, 1fr, 20mm, 14mm, 25mm, 27mm),
+  columns: (8mm, 29mm, 1fr, 20mm, 16mm, 29mm, 32mm),
   inset: (x: 3pt, y: 4pt),
   align: (center, left, left, right, center, right, right),
   stroke: .45pt + luma(155),
   fill: (_, row) => if row == 0 { luma(235) },
   table.header(
-    [*NO.*], [*SKU*], [*DESCRIPTION / HS CODE*], [*QTY*], [*UNIT*], [*UNIT PRICE*], [*AMOUNT*],
+    [#nowrap[*NO.*]], [#nowrap[*SKU*]], [#nowrap[*DESCRIPTION / MODEL / HS CODE*]], [#nowrap[*QTY*]], [#nowrap[*UNIT*]], [#nowrap[*UNIT PRICE*]], [#nowrap[*AMOUNT*]],
   ),
   ..payload.lines.enumerate().map(((index, line)) => (
-    [#(index + 1)],
-    [#line.sku],
-    [#line.description #if line.model != "" [\ Model: #line.model] #if line.hsCode != "" [\ HS: #line.hsCode]],
-    [#line.quantity],
-    [#line.unit],
-    [#money(line.unitPriceMinor)],
-    [#money(line.amountMinor)],
+    [#nowrap[#(index + 1)]],
+    [#nowrap[#line.sku]],
+    [#nowrap[#line.description #if line.model != "" [ #h(3pt) Model: #line.model] #if line.hsCode != "" [ #h(3pt) HS: #line.hsCode]]],
+    [#nowrap[#line.quantity]],
+    [#nowrap[#line.unit]],
+    [#nowrap[#money(line.unitPriceMinor)]],
+    [#nowrap[#money(line.amountMinor)]],
   )).flatten(),
   table.cell(colspan: 6, align: right, fill: luma(245))[*SUBTOTAL #data.currency*],
   table.cell(align: right, fill: luma(245))[*#money(subtotal)*],

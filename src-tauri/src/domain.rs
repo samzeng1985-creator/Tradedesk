@@ -68,6 +68,8 @@ pub struct AttachmentRecord {
     pub id: String,
     pub entity_type: String,
     pub entity_id: String,
+    #[serde(default)]
+    pub entity_label: String,
     pub file_name: String,
     pub mime_type: String,
     pub size_bytes: u64,
@@ -80,6 +82,8 @@ pub struct AttachmentRecord {
 pub struct AttachmentInput {
     pub entity_type: String,
     pub entity_id: String,
+    #[serde(default)]
+    pub entity_label: String,
     pub file_name: String,
     pub mime_type: String,
     pub bytes: Vec<u8>,
@@ -720,4 +724,172 @@ pub struct BusinessCaseInput {
     pub shipment_date: String,
     pub notes: String,
     pub lines: Vec<BusinessCaseLineInput>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Partner {
+    pub id: String,
+    pub code: String,
+    pub legal_name: String,
+    pub partner_type: String,
+    pub contact: String,
+    pub address: String,
+    pub active: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PartnerInput {
+    pub id: Option<String>,
+    pub code: String,
+    pub legal_name: String,
+    pub partner_type: String,
+    pub contact: String,
+    pub address: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ShipmentStatus {
+    Planned,
+    Booked,
+    Shipped,
+    Delivered,
+    Cancelled,
+}
+
+impl ShipmentStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Planned => "planned",
+            Self::Booked => "booked",
+            Self::Shipped => "shipped",
+            Self::Delivered => "delivered",
+            Self::Cancelled => "cancelled",
+        }
+    }
+
+    pub fn from_db(value: &str) -> Option<Self> {
+        match value {
+            "planned" => Some(Self::Planned),
+            "booked" => Some(Self::Booked),
+            "shipped" => Some(Self::Shipped),
+            "delivered" => Some(Self::Delivered),
+            "cancelled" => Some(Self::Cancelled),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShipmentLine {
+    pub id: String,
+    pub business_case_line_id: String,
+    pub sku: String,
+    pub product_name: String,
+    pub quantity: f64,
+    pub unit: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShipmentLineInput {
+    pub business_case_line_id: String,
+    pub quantity: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShipmentBatch {
+    pub id: String,
+    pub number: String,
+    pub business_case_id: String,
+    pub business_case_number: String,
+    pub partner_id: String,
+    pub partner_name: String,
+    pub status: ShipmentStatus,
+    pub planned_date: String,
+    pub actual_date: String,
+    pub tracking_number: String,
+    pub notes: String,
+    pub lines: Vec<ShipmentLine>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShipmentBatchInput {
+    pub id: Option<String>,
+    pub number: String,
+    pub business_case_id: String,
+    pub partner_id: String,
+    pub status: ShipmentStatus,
+    pub planned_date: String,
+    pub actual_date: String,
+    pub tracking_number: String,
+    pub notes: String,
+    pub lines: Vec<ShipmentLineInput>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PaymentStatus {
+    Planned,
+    Partial,
+    Received,
+    Cancelled,
+}
+
+impl PaymentStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Planned => "planned",
+            Self::Partial => "partial",
+            Self::Received => "received",
+            Self::Cancelled => "cancelled",
+        }
+    }
+
+    pub fn from_db(value: &str) -> Option<Self> {
+        match value {
+            "planned" => Some(Self::Planned),
+            "partial" => Some(Self::Partial),
+            "received" => Some(Self::Received),
+            "cancelled" => Some(Self::Cancelled),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PaymentPlan {
+    pub id: String,
+    pub number: String,
+    pub business_case_id: String,
+    pub business_case_number: String,
+    pub payment_type: String,
+    pub due_date: String,
+    pub currency: String,
+    pub amount_minor: i64,
+    pub received_amount_minor: i64,
+    pub received_date: String,
+    pub status: PaymentStatus,
+    pub notes: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PaymentPlanInput {
+    pub id: Option<String>,
+    pub number: String,
+    pub business_case_id: String,
+    pub payment_type: String,
+    pub due_date: String,
+    pub amount_minor: i64,
+    pub received_amount_minor: i64,
+    pub received_date: String,
+    pub status: PaymentStatus,
+    pub notes: String,
 }

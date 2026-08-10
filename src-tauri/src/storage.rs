@@ -11,13 +11,14 @@ use crate::domain::{
     ComponentOptionInput, ComponentOptionTranslationInput, ConfigComponent, ConfigComponentInput,
     ConfigurableProduct, ConfigurableProductInput, ConfigurableProductLine, ConvertDocumentInput,
     CreateDocumentInput, Customer, CustomerInput, DocumentDraft, DocumentLineSnapshot,
-    DocumentPayload, DocumentStatus, DocumentType, MilestoneStatus, PipelineStage, Product,
-    ProductInput, ProductionMilestone, ProductionMilestoneInput, PurchaseOrder, PurchaseOrderInput,
-    PurchaseOrderLine, PurchaseStatus, SaveDocumentInput, Supplier, SupplierInput, TradeDocument,
-    WorkspaceSummary,
+    DocumentPayload, DocumentStatus, DocumentType, MilestoneStatus, Partner, PartnerInput,
+    PaymentPlan, PaymentPlanInput, PaymentStatus, PipelineStage, Product, ProductInput,
+    ProductionMilestone, ProductionMilestoneInput, PurchaseOrder, PurchaseOrderInput,
+    PurchaseOrderLine, PurchaseStatus, SaveDocumentInput, ShipmentBatch, ShipmentBatchInput,
+    ShipmentLine, ShipmentStatus, Supplier, SupplierInput, TradeDocument, WorkspaceSummary,
 };
 
-const SCHEMA_VERSION: i64 = 11;
+const SCHEMA_VERSION: i64 = 12;
 
 const MILESTONE_STAGES: [(&str, &str); 6] = [
     ("raw_material", "原料准备"),
@@ -391,7 +392,74 @@ impl EncryptedDatabase {
              CREATE INDEX IF NOT EXISTS idx_documents_case
                 ON documents(trade_case_id, updated_at DESC);
              CREATE INDEX IF NOT EXISTS idx_documents_number
-                ON documents(document_type, number, version DESC);",
+                ON documents(document_type, number, version DESC);
+
+             CREATE TABLE IF NOT EXISTS partners (
+                id TEXT PRIMARY KEY,
+                code TEXT NOT NULL UNIQUE,
+                legal_name TEXT NOT NULL,
+                partner_type TEXT NOT NULL DEFAULT 'freight_forwarder',
+                contact TEXT NOT NULL DEFAULT '',
+                address TEXT NOT NULL DEFAULT '',
+                active INTEGER NOT NULL DEFAULT 1
+             );
+
+             CREATE TABLE IF NOT EXISTS shipment_batches (
+                id TEXT PRIMARY KEY,
+                number TEXT NOT NULL UNIQUE,
+                trade_case_id TEXT NOT NULL REFERENCES trade_cases(id),
+                trade_case_number_snapshot TEXT NOT NULL,
+                partner_id TEXT REFERENCES partners(id),
+                partner_name_snapshot TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'planned',
+                planned_date TEXT NOT NULL DEFAULT '',
+                actual_date TEXT NOT NULL DEFAULT '',
+                tracking_number TEXT NOT NULL DEFAULT '',
+                notes TEXT NOT NULL DEFAULT '',
+                active INTEGER NOT NULL DEFAULT 1
+             );
+             CREATE INDEX IF NOT EXISTS idx_shipment_batches_case
+                ON shipment_batches(trade_case_id, active, planned_date);
+
+             CREATE TABLE IF NOT EXISTS shipment_batch_lines (
+                id TEXT PRIMARY KEY,
+                shipment_batch_id TEXT NOT NULL REFERENCES shipment_batches(id) ON DELETE CASCADE,
+                trade_case_line_id TEXT NOT NULL REFERENCES trade_case_lines(id),
+                sort_order INTEGER NOT NULL,
+                sku_snapshot TEXT NOT NULL,
+                product_name_snapshot TEXT NOT NULL,
+                quantity REAL NOT NULL,
+                unit_snapshot TEXT NOT NULL
+             );
+             CREATE INDEX IF NOT EXISTS idx_shipment_batch_lines_batch
+                ON shipment_batch_lines(shipment_batch_id, sort_order);
+             CREATE INDEX IF NOT EXISTS idx_shipment_batch_lines_case_line
+                ON shipment_batch_lines(trade_case_line_id);
+
+             CREATE TABLE IF NOT EXISTS payment_plans (
+                id TEXT PRIMARY KEY,
+                number TEXT NOT NULL UNIQUE,
+                trade_case_id TEXT NOT NULL REFERENCES trade_cases(id),
+                trade_case_number_snapshot TEXT NOT NULL,
+                payment_type TEXT NOT NULL DEFAULT 'deposit',
+                due_date TEXT NOT NULL DEFAULT '',
+                currency TEXT NOT NULL,
+                amount_minor INTEGER NOT NULL,
+                received_amount_minor INTEGER NOT NULL DEFAULT 0,
+                received_date TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'planned',
+                notes TEXT NOT NULL DEFAULT '',
+                active INTEGER NOT NULL DEFAULT 1
+             );
+             CREATE INDEX IF NOT EXISTS idx_payment_plans_case
+                ON payment_plans(trade_case_id, active, due_date);",
+        )?;
+
+        ensure_column(
+            &transaction,
+            "attachments",
+            "entity_label",
+            "TEXT NOT NULL DEFAULT ''",
         )?;
 
         ensure_column(
@@ -1878,6 +1946,350 @@ impl EncryptedDatabase {
         )
     }
 
+    pub fn list_partners(&self) -> rusqlite::Result<Vec<Partner>> {
+        let mut statement = self.connection.prepare(
+            "SELECT id, code, legal_name, partner_type, contact, address, active
+             FROM partners WHERE active = 1 ORDER BY code COLLATE NOCASE",
+        )?;
+        statement
+            .query_map([], |row| {
+                Ok(Partner {
+                    id: row.get(0)?,
+                    code: row.get(1)?,
+                    legal_name: row.get(2)?,
+                    partner_type: row.get(3)?,
+                    contact: row.get(4)?,
+                    address: row.get(5)?,
+                    active: row.get::<_, i64>(6)? != 0,
+                })
+            })?
+            .collect()
+    }
+
+    pub fn save_partner(&self, input: PartnerInput) -> rusqlite::Result<Partner> {
+        require_text(&input.code)?;
+        require_text(&input.legal_name)?;
+        if !matches!(
+            input.partner_type.as_str(),
+            "freight_forwarder" | "customs_broker" | "insurer" | "inspection" | "other"
+        ) {
+            return Err(rusqlite::Error::InvalidQuery);
+        }
+        let id = input.id.unwrap_or_else(|| Uuid::new_v4().to_string());
+        self.connection.execute(
+            "INSERT INTO partners(id, code, legal_name, partner_type, contact, address, active)
+             VALUES(?1, ?2, ?3, ?4, ?5, ?6, 1)
+             ON CONFLICT(id) DO UPDATE SET
+                code = excluded.code, legal_name = excluded.legal_name,
+                partner_type = excluded.partner_type, contact = excluded.contact,
+                address = excluded.address, active = 1",
+            params![
+                id,
+                input.code.trim(),
+                input.legal_name.trim(),
+                input.partner_type,
+                input.contact.trim(),
+                input.address.trim(),
+            ],
+        )?;
+        self.audit("partner", &id, "save")?;
+        self.connection.query_row(
+            "SELECT id, code, legal_name, partner_type, contact, address, active
+             FROM partners WHERE id = ?1",
+            params![id],
+            |row| {
+                Ok(Partner {
+                    id: row.get(0)?,
+                    code: row.get(1)?,
+                    legal_name: row.get(2)?,
+                    partner_type: row.get(3)?,
+                    contact: row.get(4)?,
+                    address: row.get(5)?,
+                    active: row.get::<_, i64>(6)? != 0,
+                })
+            },
+        )
+    }
+
+    pub fn archive_partner(&self, id: &str) -> rusqlite::Result<()> {
+        let changed = self
+            .connection
+            .execute("UPDATE partners SET active = 0 WHERE id = ?1", params![id])?;
+        if changed == 0 {
+            return Err(rusqlite::Error::QueryReturnedNoRows);
+        }
+        self.audit("partner", id, "archive")
+    }
+
+    pub fn list_shipment_batches(&self) -> rusqlite::Result<Vec<ShipmentBatch>> {
+        let ids = {
+            let mut statement = self.connection.prepare(
+                "SELECT id FROM shipment_batches WHERE active = 1
+                 ORDER BY planned_date DESC, number COLLATE NOCASE DESC",
+            )?;
+            statement
+                .query_map([], |row| row.get::<_, String>(0))?
+                .collect::<rusqlite::Result<Vec<_>>>()?
+        };
+        ids.iter().map(|id| self.get_shipment_batch(id)).collect()
+    }
+
+    pub fn get_shipment_batch(&self, id: &str) -> rusqlite::Result<ShipmentBatch> {
+        let mut batch = self.connection.query_row(
+            "SELECT id, number, trade_case_id, trade_case_number_snapshot,
+                    COALESCE(partner_id, ''), partner_name_snapshot, status, planned_date,
+                    actual_date, tracking_number, notes
+             FROM shipment_batches WHERE id = ?1 AND active = 1",
+            params![id],
+            |row| {
+                let status_value: String = row.get(6)?;
+                Ok(ShipmentBatch {
+                    id: row.get(0)?,
+                    number: row.get(1)?,
+                    business_case_id: row.get(2)?,
+                    business_case_number: row.get(3)?,
+                    partner_id: row.get(4)?,
+                    partner_name: row.get(5)?,
+                    status: ShipmentStatus::from_db(&status_value)
+                        .ok_or(rusqlite::Error::InvalidQuery)?,
+                    planned_date: row.get(7)?,
+                    actual_date: row.get(8)?,
+                    tracking_number: row.get(9)?,
+                    notes: row.get(10)?,
+                    lines: Vec::new(),
+                })
+            },
+        )?;
+        let mut statement = self.connection.prepare(
+            "SELECT id, trade_case_line_id, sku_snapshot, product_name_snapshot, quantity, unit_snapshot
+             FROM shipment_batch_lines WHERE shipment_batch_id = ?1 ORDER BY sort_order",
+        )?;
+        batch.lines = statement
+            .query_map(params![id], |row| {
+                Ok(ShipmentLine {
+                    id: row.get(0)?,
+                    business_case_line_id: row.get(1)?,
+                    sku: row.get(2)?,
+                    product_name: row.get(3)?,
+                    quantity: row.get(4)?,
+                    unit: row.get(5)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(batch)
+    }
+
+    pub fn save_shipment_batch(
+        &self,
+        input: ShipmentBatchInput,
+    ) -> rusqlite::Result<ShipmentBatch> {
+        require_text(&input.number)?;
+        require_text(&input.business_case_id)?;
+        if input.lines.is_empty()
+            || input.lines.iter().any(|line| {
+                line.business_case_line_id.trim().is_empty()
+                    || !line.quantity.is_finite()
+                    || line.quantity <= 0.0
+            })
+        {
+            return Err(rusqlite::Error::InvalidQuery);
+        }
+        let mut unique_lines = std::collections::HashSet::new();
+        if input
+            .lines
+            .iter()
+            .any(|line| !unique_lines.insert(line.business_case_line_id.as_str()))
+        {
+            return Err(rusqlite::Error::InvalidQuery);
+        }
+        let id = input.id.unwrap_or_else(|| Uuid::new_v4().to_string());
+        let transaction = self.connection.unchecked_transaction()?;
+        let case_number = transaction.query_row(
+            "SELECT number FROM trade_cases WHERE id = ?1 AND active = 1",
+            params![input.business_case_id],
+            |row| row.get::<_, String>(0),
+        )?;
+        let (partner_id, partner_name) = if input.partner_id.trim().is_empty() {
+            (None, String::new())
+        } else {
+            let name = transaction.query_row(
+                "SELECT legal_name FROM partners WHERE id = ?1 AND active = 1",
+                params![input.partner_id],
+                |row| row.get::<_, String>(0),
+            )?;
+            (Some(input.partner_id.clone()), name)
+        };
+        let mut prepared = Vec::with_capacity(input.lines.len());
+        for line in &input.lines {
+            let snapshot = transaction.query_row(
+                "SELECT sku_snapshot, COALESCE(NULLIF(name_en_snapshot, ''), name_zh_snapshot), quantity, unit_snapshot
+                 FROM trade_case_lines WHERE id = ?1 AND trade_case_id = ?2",
+                params![line.business_case_line_id, input.business_case_id],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, f64>(2)?, row.get::<_, String>(3)?)),
+            )?;
+            let allocated = transaction.query_row(
+                "SELECT COALESCE(SUM(sbl.quantity), 0) FROM shipment_batch_lines sbl
+                 JOIN shipment_batches sb ON sb.id = sbl.shipment_batch_id
+                 WHERE sbl.trade_case_line_id = ?1 AND sb.id <> ?2
+                   AND sb.active = 1 AND sb.status <> 'cancelled'",
+                params![line.business_case_line_id, id],
+                |row| row.get::<_, f64>(0),
+            )?;
+            if input.status != ShipmentStatus::Cancelled
+                && allocated + line.quantity > snapshot.2 + 0.000_001
+            {
+                return Err(rusqlite::Error::InvalidQuery);
+            }
+            prepared.push((line, snapshot));
+        }
+        transaction.execute(
+            "INSERT INTO shipment_batches(
+                id, number, trade_case_id, trade_case_number_snapshot, partner_id,
+                partner_name_snapshot, status, planned_date, actual_date, tracking_number, notes, active
+             ) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 1)
+             ON CONFLICT(id) DO UPDATE SET
+                number = excluded.number, trade_case_id = excluded.trade_case_id,
+                trade_case_number_snapshot = excluded.trade_case_number_snapshot,
+                partner_id = excluded.partner_id, partner_name_snapshot = excluded.partner_name_snapshot,
+                status = excluded.status, planned_date = excluded.planned_date,
+                actual_date = excluded.actual_date, tracking_number = excluded.tracking_number,
+                notes = excluded.notes, active = 1",
+            params![id, input.number.trim(), input.business_case_id, case_number, partner_id,
+                partner_name, input.status.as_str(), input.planned_date.trim(), input.actual_date.trim(),
+                input.tracking_number.trim(), input.notes.trim()],
+        )?;
+        transaction.execute(
+            "DELETE FROM shipment_batch_lines WHERE shipment_batch_id = ?1",
+            params![id],
+        )?;
+        for (index, (line, snapshot)) in prepared.iter().enumerate() {
+            transaction.execute(
+                "INSERT INTO shipment_batch_lines(
+                    id, shipment_batch_id, trade_case_line_id, sort_order, sku_snapshot,
+                    product_name_snapshot, quantity, unit_snapshot
+                 ) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                params![
+                    Uuid::new_v4().to_string(),
+                    id,
+                    line.business_case_line_id,
+                    index as i64,
+                    snapshot.0,
+                    snapshot.1,
+                    line.quantity,
+                    snapshot.3
+                ],
+            )?;
+        }
+        if matches!(
+            input.status,
+            ShipmentStatus::Shipped | ShipmentStatus::Delivered
+        ) {
+            transaction.execute(
+                "UPDATE trade_cases SET stage = 'shipment' WHERE id = ?1 AND stage <> 'documents'",
+                params![input.business_case_id],
+            )?;
+        }
+        transaction.execute(
+            "INSERT INTO audit_events(entity_type, entity_id, action, payload_json)
+             VALUES('shipment_batch', ?1, 'save', '{}')",
+            params![id],
+        )?;
+        transaction.commit()?;
+        self.get_shipment_batch(&id)
+    }
+
+    pub fn list_payment_plans(&self) -> rusqlite::Result<Vec<PaymentPlan>> {
+        let mut statement = self.connection.prepare(
+            "SELECT id, number, trade_case_id, trade_case_number_snapshot, payment_type,
+                    due_date, currency, amount_minor, received_amount_minor, received_date,
+                    status, notes FROM payment_plans WHERE active = 1
+             ORDER BY due_date DESC, number COLLATE NOCASE DESC",
+        )?;
+        statement.query_map([], map_payment_plan)?.collect()
+    }
+
+    pub fn save_payment_plan(&self, input: PaymentPlanInput) -> rusqlite::Result<PaymentPlan> {
+        require_text(&input.number)?;
+        require_text(&input.business_case_id)?;
+        if !matches!(
+            input.payment_type.as_str(),
+            "deposit" | "balance" | "installment" | "other"
+        ) || input.amount_minor <= 0
+            || input.received_amount_minor < 0
+            || input.received_amount_minor > input.amount_minor
+        {
+            return Err(rusqlite::Error::InvalidQuery);
+        }
+        let id = input.id.unwrap_or_else(|| Uuid::new_v4().to_string());
+        let transaction = self.connection.unchecked_transaction()?;
+        let (case_number, currency, sales_amount) = transaction.query_row(
+            "SELECT number, currency, sales_amount_minor FROM trade_cases WHERE id = ?1 AND active = 1",
+            params![input.business_case_id],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, i64>(2)?)),
+        )?;
+        let planned_elsewhere = transaction.query_row(
+            "SELECT COALESCE(SUM(amount_minor), 0) FROM payment_plans
+             WHERE trade_case_id = ?1 AND id <> ?2 AND active = 1 AND status <> 'cancelled'",
+            params![input.business_case_id, id],
+            |row| row.get::<_, i64>(0),
+        )?;
+        if input.status != PaymentStatus::Cancelled
+            && planned_elsewhere.saturating_add(input.amount_minor) > sales_amount
+        {
+            return Err(rusqlite::Error::InvalidQuery);
+        }
+        let status = if input.status == PaymentStatus::Cancelled {
+            PaymentStatus::Cancelled
+        } else if input.received_amount_minor == 0 {
+            PaymentStatus::Planned
+        } else if input.received_amount_minor < input.amount_minor {
+            PaymentStatus::Partial
+        } else {
+            PaymentStatus::Received
+        };
+        transaction.execute(
+            "INSERT INTO payment_plans(
+                id, number, trade_case_id, trade_case_number_snapshot, payment_type, due_date,
+                currency, amount_minor, received_amount_minor, received_date, status, notes, active
+             ) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 1)
+             ON CONFLICT(id) DO UPDATE SET
+                number = excluded.number, trade_case_id = excluded.trade_case_id,
+                trade_case_number_snapshot = excluded.trade_case_number_snapshot,
+                payment_type = excluded.payment_type, due_date = excluded.due_date,
+                currency = excluded.currency, amount_minor = excluded.amount_minor,
+                received_amount_minor = excluded.received_amount_minor,
+                received_date = excluded.received_date, status = excluded.status,
+                notes = excluded.notes, active = 1",
+            params![
+                id,
+                input.number.trim(),
+                input.business_case_id,
+                case_number,
+                input.payment_type,
+                input.due_date.trim(),
+                currency,
+                input.amount_minor,
+                input.received_amount_minor,
+                input.received_date.trim(),
+                status.as_str(),
+                input.notes.trim()
+            ],
+        )?;
+        transaction.execute(
+            "INSERT INTO audit_events(entity_type, entity_id, action, payload_json)
+             VALUES('payment_plan', ?1, 'save', '{}')",
+            params![id],
+        )?;
+        transaction.commit()?;
+        self.connection.query_row(
+            "SELECT id, number, trade_case_id, trade_case_number_snapshot, payment_type,
+                    due_date, currency, amount_minor, received_amount_minor, received_date,
+                    status, notes FROM payment_plans WHERE id = ?1",
+            params![id],
+            map_payment_plan,
+        )
+    }
+
     pub fn list_documents(&self) -> rusqlite::Result<Vec<TradeDocument>> {
         let mut statement = self.connection.prepare(
             "SELECT id, document_type, number, trade_case_id, trade_case_number_snapshot,
@@ -2302,12 +2714,13 @@ impl EncryptedDatabase {
         let sha256 = format!("{:x}", Sha256::digest(&input.bytes));
         self.connection.execute(
             "INSERT INTO attachments(
-                id, entity_type, entity_id, file_name, mime_type, content, size_bytes, sha256
-             ) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                id, entity_type, entity_id, entity_label, file_name, mime_type, content, size_bytes, sha256
+             ) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             params![
                 id,
                 entity_type,
                 input.entity_id.trim(),
+                input.entity_label.trim(),
                 file_name,
                 if input.mime_type.trim().is_empty() {
                     "application/octet-stream"
@@ -2325,15 +2738,35 @@ impl EncryptedDatabase {
 
     pub fn list_attachments(&self) -> rusqlite::Result<Vec<AttachmentRecord>> {
         let mut statement = self.connection.prepare(
-            "SELECT id, entity_type, entity_id, file_name, mime_type, size_bytes, sha256, created_at
+            "SELECT id, entity_type, entity_id, entity_label, file_name, mime_type, size_bytes, sha256, created_at
              FROM attachments ORDER BY created_at DESC, id DESC",
         )?;
         statement.query_map([], map_attachment)?.collect()
     }
 
+    pub fn list_entity_attachments(
+        &self,
+        entity_type: &str,
+        entity_id: &str,
+    ) -> rusqlite::Result<Vec<AttachmentRecord>> {
+        require_text(entity_type)?;
+        require_text(entity_id)?;
+        let mut statement = self.connection.prepare(
+            "SELECT id, entity_type, entity_id, entity_label, file_name, mime_type, size_bytes, sha256, created_at
+             FROM attachments WHERE entity_type = ?1 AND entity_id = ?2
+             ORDER BY created_at DESC, id DESC",
+        )?;
+        statement
+            .query_map(
+                params![entity_type.trim(), entity_id.trim()],
+                map_attachment,
+            )?
+            .collect()
+    }
+
     pub fn get_attachment(&self, id: &str) -> rusqlite::Result<AttachmentRecord> {
         self.connection.query_row(
-            "SELECT id, entity_type, entity_id, file_name, mime_type, size_bytes, sha256, created_at
+            "SELECT id, entity_type, entity_id, entity_label, file_name, mime_type, size_bytes, sha256, created_at
              FROM attachments WHERE id = ?1",
             params![id],
             map_attachment,
@@ -2447,11 +2880,30 @@ fn map_attachment(row: &rusqlite::Row<'_>) -> rusqlite::Result<AttachmentRecord>
         id: row.get(0)?,
         entity_type: row.get(1)?,
         entity_id: row.get(2)?,
-        file_name: row.get(3)?,
-        mime_type: row.get(4)?,
-        size_bytes: row.get::<_, i64>(5)? as u64,
-        sha256: row.get(6)?,
-        created_at: row.get(7)?,
+        entity_label: row.get(3)?,
+        file_name: row.get(4)?,
+        mime_type: row.get(5)?,
+        size_bytes: row.get::<_, i64>(6)? as u64,
+        sha256: row.get(7)?,
+        created_at: row.get(8)?,
+    })
+}
+
+fn map_payment_plan(row: &rusqlite::Row<'_>) -> rusqlite::Result<PaymentPlan> {
+    let status_value: String = row.get(10)?;
+    Ok(PaymentPlan {
+        id: row.get(0)?,
+        number: row.get(1)?,
+        business_case_id: row.get(2)?,
+        business_case_number: row.get(3)?,
+        payment_type: row.get(4)?,
+        due_date: row.get(5)?,
+        currency: row.get(6)?,
+        amount_minor: row.get(7)?,
+        received_amount_minor: row.get(8)?,
+        received_date: row.get(9)?,
+        status: PaymentStatus::from_db(&status_value).ok_or(rusqlite::Error::InvalidQuery)?,
+        notes: row.get(11)?,
     })
 }
 
@@ -2651,7 +3103,7 @@ fn json_error(error: serde_json::Error) -> rusqlite::Error {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::{BusinessCaseLineInput, ConfigurableProductLineInput};
+    use crate::domain::{BusinessCaseLineInput, ConfigurableProductLineInput, ShipmentLineInput};
 
     #[test]
     fn encrypted_attachments_and_online_backup_round_trip() {
@@ -2668,6 +3120,7 @@ mod tests {
                 .save_attachment(AttachmentInput {
                     entity_type: "purchase_order".into(),
                     entity_id: "PO-2026-0001".into(),
+                    entity_label: "PO-2026-0001".into(),
                     file_name: "confirmation.txt".into(),
                     mime_type: "text/plain".into(),
                     bytes: secret_bytes.clone(),
@@ -3002,6 +3455,84 @@ mod tests {
                     issue: String::new(),
                 })
                 .unwrap();
+            let freight_partner = database
+                .save_partner(PartnerInput {
+                    id: None,
+                    code: "FWD-001".into(),
+                    legal_name: "Example Freight Ltd.".into(),
+                    partner_type: "freight_forwarder".into(),
+                    contact: "ops@example.test".into(),
+                    address: "Shanghai".into(),
+                })
+                .unwrap();
+            let shipment = database
+                .save_shipment_batch(ShipmentBatchInput {
+                    id: None,
+                    number: "SHP-20260810-0001".into(),
+                    business_case_id: business_case.id.clone(),
+                    partner_id: freight_partner.id,
+                    status: ShipmentStatus::Booked,
+                    planned_date: "2026-09-18".into(),
+                    actual_date: String::new(),
+                    tracking_number: "BOOKING-001".into(),
+                    notes: String::new(),
+                    lines: vec![ShipmentLineInput {
+                        business_case_line_id: business_case.lines[0].id.clone(),
+                        quantity: 7.5,
+                    }],
+                })
+                .unwrap();
+            assert_eq!(shipment.lines[0].quantity, 7.5);
+            assert!(
+                database
+                    .save_shipment_batch(ShipmentBatchInput {
+                        id: None,
+                        number: "SHP-20260810-0002".into(),
+                        business_case_id: business_case.id.clone(),
+                        partner_id: String::new(),
+                        status: ShipmentStatus::Planned,
+                        planned_date: "2026-09-19".into(),
+                        actual_date: String::new(),
+                        tracking_number: String::new(),
+                        notes: String::new(),
+                        lines: vec![ShipmentLineInput {
+                            business_case_line_id: business_case.lines[0].id.clone(),
+                            quantity: 6.0,
+                        }],
+                    })
+                    .is_err()
+            );
+            let payment = database
+                .save_payment_plan(PaymentPlanInput {
+                    id: None,
+                    number: "PAY-20260810-0001".into(),
+                    business_case_id: business_case.id.clone(),
+                    payment_type: "deposit".into(),
+                    due_date: "2026-08-20".into(),
+                    amount_minor: 1_000,
+                    received_amount_minor: 500,
+                    received_date: "2026-08-18".into(),
+                    status: PaymentStatus::Planned,
+                    notes: String::new(),
+                })
+                .unwrap();
+            assert_eq!(payment.status, PaymentStatus::Partial);
+            assert!(
+                database
+                    .save_payment_plan(PaymentPlanInput {
+                        id: None,
+                        number: "PAY-20260810-0002".into(),
+                        business_case_id: business_case.id.clone(),
+                        payment_type: "balance".into(),
+                        due_date: "2026-09-10".into(),
+                        amount_minor: 2_001,
+                        received_amount_minor: 0,
+                        received_date: String::new(),
+                        status: PaymentStatus::Planned,
+                        notes: String::new(),
+                    })
+                    .is_err()
+            );
             assert!(
                 database
                     .create_purchase_order(PurchaseOrderInput {
@@ -3149,6 +3680,12 @@ mod tests {
         let purchase_orders = reopened.list_purchase_orders().unwrap();
         assert_eq!(purchase_orders[0].number, "PO-2026-0001");
         assert_eq!(purchase_orders[0].ready_quantity, 12.5);
+        assert_eq!(reopened.list_partners().unwrap()[0].code, "FWD-001");
+        assert_eq!(reopened.list_shipment_batches().unwrap()[0].lines.len(), 1);
+        assert_eq!(
+            reopened.list_payment_plans().unwrap()[0].status,
+            PaymentStatus::Partial
+        );
         let documents = reopened.list_documents().unwrap();
         assert_eq!(documents.len(), 4);
         assert!(documents.iter().any(|document| {
@@ -3211,7 +3748,7 @@ mod tests {
                     |row| row.get::<_, String>(0),
                 )
                 .unwrap(),
-            "11"
+            "12"
         );
         drop(database);
         let _ = std::fs::remove_file(&path);
@@ -3266,7 +3803,7 @@ mod tests {
                     |row| row.get::<_, String>(0),
                 )
                 .unwrap(),
-            "11"
+            "12"
         );
         drop(database);
         let _ = std::fs::remove_file(&path);

@@ -350,6 +350,7 @@ tbody tr:hover { background: #fafbfc; }
 .preview-meta b { padding: 7px; background: #f3f4f6; }
 .preview-meta span { padding-right: 7px; align-items: center; }
 .document-paper table { margin-top: 12px; font-size: 10px; }
+.document-paper table th, .document-paper table td { white-space: nowrap; }
 .document-paper th, .document-paper td { padding: 7px; border: 1px solid #9ca3af; white-space: normal; vertical-align: top; }
 .document-paper th { color: #111827; background: #e5e7eb; }
 .document-paper td small { display: block; margin-top: 3px; color: #64748b; }
@@ -418,6 +419,38 @@ tbody tr:hover { background: #fafbfc; }
 .attachment-toolbar input, .attachment-toolbar select { width: 100%; border: 1px solid #cfd7e3; border-radius: 8px; padding: 9px 10px; background: white; }
 .attachment-upload { display: inline-flex; justify-content: center; cursor: pointer; }
 .attachment-library code { color: #475569; font-size: 11px; }
+.attachment-modal { width: min(760px, calc(100vw - 32px)); }
+.embedded-attachments { margin-top: 18px; padding: 14px; border: 1px solid #ddd6fe; border-radius: 10px; background: #faf9ff; }
+.embedded-attachment-heading { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+.embedded-attachment-heading > div { display: grid; gap: 3px; }
+.embedded-attachment-heading span, .attachment-empty { color: #64748b; font-size: 11px; }
+.embedded-attachment-list { display: grid; gap: 8px; margin-top: 10px; }
+.embedded-attachment-list article { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 11px; border: 1px solid #e5e7eb; border-radius: 8px; background: white; }
+.embedded-attachment-list article > div:first-child { min-width: 0; display: grid; gap: 2px; }
+.embedded-attachment-list article strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.embedded-attachment-list article span, .attachment-message { color: #64748b; font-size: 11px; }
+.attachment-message { margin-top: 9px; overflow-wrap: anywhere; }
+
+.logistics-center { overflow: hidden; }
+.shipment-list { display: grid; gap: 10px; margin-top: 18px; }
+.shipment-card { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 16px; border: 1px solid #e1e6ed; border-radius: 11px; background: #fff; }
+.shipment-card h3 { margin: 4px 0; }
+.shipment-card p { margin: 0; color: #64748b; }
+.shipment-card > div:last-child { display: flex; align-items: center; gap: 14px; }
+.shipment-status { padding: 5px 9px; border-radius: 999px; color: #5b21b6; background: #ede9fe; font-size: 11px; font-weight: 700; }
+.shipment-status.shipped, .shipment-status.delivered { color: #166534; background: #dcfce7; }
+.shipment-status.cancelled { color: #991b1b; background: #fee2e2; }
+.shipment-editor { width: min(920px, calc(100vw - 32px)); }
+.shipment-lines { display: grid; gap: 8px; margin-top: 18px; }
+.shipment-draft-line { display: grid; grid-template-columns: 1fr 150px; gap: 14px; align-items: center; padding: 11px; border: 1px solid #e5e7eb; border-radius: 9px; background: #f8fafc; }
+.shipment-draft-line label { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 10px; }
+.shipment-draft-line label span { display: grid; gap: 2px; }
+.shipment-draft-line small { color: #64748b; }
+.shipment-draft-line input[type="number"] { width: 100%; }
+.payment-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 18px 0; }
+.payment-metrics article { display: grid; gap: 5px; padding: 14px; border: 1px solid #e1e6ed; border-radius: 10px; }
+.payment-metrics span { color: #64748b; font-size: 12px; }
+.payment-metrics strong { font-size: 20px; }
 
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 
@@ -434,7 +467,7 @@ tbody tr:hover { background: #fafbfc; }
 @media (max-width: 760px) {
   .app-shell { grid-template-columns: 1fr; }
   .sidebar { padding: 14px; gap: 14px; }
-  .sidebar nav { grid-template-columns: repeat(7, minmax(0, 1fr)); }
+  .sidebar nav { grid-template-columns: repeat(8, minmax(0, 1fr)); }
   .sidebar nav button { text-align: center; padding: 9px 5px; font-size: 12px; }
   .workspace-state { display: none; }
   .topbar { padding: 18px; align-items: flex-start; }
@@ -469,4 +502,7 @@ tbody tr:hover { background: #fafbfc; }
   .company-registry-layout, .document-brand-selectors, .signing-asset-fields { grid-template-columns: 1fr; }
   .master-transfer-toolbar, .signing-assets-heading { align-items: stretch; flex-direction: column; }
   .security-grid, .attachment-toolbar { grid-template-columns: 1fr; }
+  .embedded-attachment-heading, .embedded-attachment-list article, .shipment-card { align-items: flex-start; flex-direction: column; }
+  .shipment-card > div:last-child { flex-wrap: wrap; }
+  .shipment-draft-line, .payment-metrics { grid-template-columns: 1fr; }
 }

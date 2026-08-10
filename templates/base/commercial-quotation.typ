@@ -8,11 +8,13 @@
 }
 #let subtotal = payload.lines.fold(0, (sum, line) => sum + line.amountMinor)
 #let total = subtotal - payload.discountMinor
+#let nowrap(body) = box[#text(size: 6.5pt)[#body]]
 
 #set document(title: "Commercial Quotation " + data.number, author: payload.seller)
 #set page(
   paper: "a4",
-  margin: (x: 14mm, y: 13mm),
+  flipped: true,
+  margin: (x: 10mm, y: 10mm),
   footer: context align(center, text(size: 7pt, fill: luma(90))[
     #branding.companyName - #data.number - V#data.version - Page #counter(page).display("1 / 1")
   ]),
@@ -24,7 +26,7 @@
   columns: (38mm, 1fr, 38mm),
   align: (left, center, right),
   [#if branding.logoPath != "" [#image(branding.logoPath, width: 34mm, height: 13mm, fit: "contain")]],
-  [#text(size: 18pt, weight: "bold")[COMMERCIAL QUOTATION]\ #text(size: 8pt, fill: luma(90))[商业报价单 / Commercial Quotation]],
+  [#text(size: 18pt, weight: "bold")[COMMERCIAL QUOTATION] #h(6pt) #text(size: 8pt, fill: luma(90))[商业报价单]],
   [],
 )
 #if data.status == "draft" [
@@ -36,39 +38,39 @@
   columns: (1fr, 1fr),
   inset: 5pt,
   stroke: .55pt + luma(145),
-  [*SELLER / QUOTED BY*\ #payload.seller\ #text(fill: luma(70))[#payload.sellerAddress]],
-  [*CUSTOMER / QUOTED TO*\ #payload.buyer\ #text(fill: luma(70))[#payload.buyerAddress]],
+  [#nowrap[*SELLER / QUOTED BY* #h(4pt) #payload.seller #h(4pt) #text(fill: luma(70))[#payload.sellerAddress]]],
+  [#nowrap[*CUSTOMER / QUOTED TO* #h(4pt) #payload.buyer #h(4pt) #text(fill: luma(70))[#payload.buyerAddress]]],
 )
 #v(5pt)
 #table(
-  columns: (23mm, 1fr, 23mm, 1fr),
+  columns: (27mm, 1fr, 27mm, 1fr),
   inset: 4pt,
   stroke: .45pt + luma(160),
   fill: (column, _) => if calc.even(column) { luma(245) },
-  [*Quotation No.*], [#data.number], [*Issue Date*], [#data.issueDate],
-  [*Reference*], [#data.businessCaseNumber], [*Valid Until*], [#payload.validUntil],
-  [*Currency*], [#data.currency], [*Incoterm*], [#payload.incoterm],
-  [*Payment*], [#payload.paymentTerms], [*Estimated Shipment*], [#payload.shipmentDate],
-  [*Origin*], [#payload.originCountry], [*Destination*], [#payload.destinationCountry],
+  [#nowrap[*Quotation No.*]], [#nowrap[#data.number]], [#nowrap[*Issue Date*]], [#nowrap[#data.issueDate]],
+  [#nowrap[*Reference*]], [#nowrap[#data.businessCaseNumber]], [#nowrap[*Valid Until*]], [#nowrap[#payload.validUntil]],
+  [#nowrap[*Currency*]], [#nowrap[#data.currency]], [#nowrap[*Incoterm*]], [#nowrap[#payload.incoterm]],
+  [#nowrap[*Payment*]], [#nowrap[#payload.paymentTerms]], [#nowrap[*Estimated Shipment*]], [#nowrap[#payload.shipmentDate]],
+  [#nowrap[*Origin*]], [#nowrap[#payload.originCountry]], [#nowrap[*Destination*]], [#nowrap[#payload.destinationCountry]],
 )
 #v(6pt)
 #table(
-  columns: (8mm, 25mm, 1fr, 20mm, 14mm, 25mm, 27mm),
+  columns: (8mm, 29mm, 1fr, 20mm, 16mm, 29mm, 32mm),
   inset: (x: 3pt, y: 4pt),
   align: (center, left, left, right, center, right, right),
   stroke: .45pt + luma(155),
   fill: (_, row) => if row == 0 { luma(235) },
   table.header(
-    [*NO.*], [*SKU*], [*DESCRIPTION / MODEL*], [*QTY*], [*UNIT*], [*UNIT PRICE*], [*AMOUNT*],
+    [#nowrap[*NO.*]], [#nowrap[*SKU*]], [#nowrap[*DESCRIPTION / MODEL*]], [#nowrap[*QTY*]], [#nowrap[*UNIT*]], [#nowrap[*UNIT PRICE*]], [#nowrap[*AMOUNT*]],
   ),
   ..payload.lines.enumerate().map(((index, line)) => (
-    [#(index + 1)],
-    [#line.sku],
-    [#line.description #if line.model != "" [\ Model: #line.model]],
-    [#line.quantity],
-    [#line.unit],
-    [#money(line.unitPriceMinor)],
-    [#money(line.amountMinor)],
+    [#nowrap[#(index + 1)]],
+    [#nowrap[#line.sku]],
+    [#nowrap[#line.description #if line.model != "" [ #h(3pt) Model: #line.model]]],
+    [#nowrap[#line.quantity]],
+    [#nowrap[#line.unit]],
+    [#nowrap[#money(line.unitPriceMinor)]],
+    [#nowrap[#money(line.amountMinor)]],
   )).flatten(),
   table.cell(colspan: 6, align: right, fill: luma(245))[*SUBTOTAL #data.currency*],
   table.cell(align: right, fill: luma(245))[*#money(subtotal)*],

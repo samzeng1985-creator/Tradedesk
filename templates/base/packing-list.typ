@@ -6,6 +6,7 @@
 #let total-net = payload.lines.fold(0, (sum, line) => sum + line.netWeightKg)
 #let total-gross = payload.lines.fold(0, (sum, line) => sum + line.grossWeightKg)
 #let total-cbm = payload.lines.fold(0, (sum, line) => sum + line.cbm)
+#let nowrap(body) = box[#text(size: 6.3pt)[#body]]
 
 #set document(title: "Detailed Packing List " + data.number, author: payload.seller)
 #set page(
@@ -23,7 +24,7 @@
   columns: (42mm, 1fr, 42mm),
   align: (left, center, right),
   [#if branding.logoPath != "" [#image(branding.logoPath, width: 36mm, height: 12mm, fit: "contain")]],
-  [#text(size: 17pt, weight: "bold")[DETAILED PACKING LIST]\ #text(size: 8pt, fill: luma(90))[详细装箱单 / Commercial Packing List]],
+  [#text(size: 17pt, weight: "bold")[DETAILED PACKING LIST] #h(6pt) #text(size: 8pt, fill: luma(90))[详细装箱单]],
   [],
 )
 #if data.status == "draft" [
@@ -32,35 +33,35 @@
 
 #v(4pt)
 #table(
-  columns: (1fr, 1fr, 24mm, 1fr, 24mm, 1fr),
+  columns: (1fr, 1fr, 29mm, 1fr, 25mm, 1fr),
   inset: 4pt,
   stroke: .45pt + luma(155),
-  [*SHIPPER*\ #payload.seller\ #text(fill: luma(70))[#payload.sellerAddress]],
-  [*CONSIGNEE*\ #payload.buyer\ #text(fill: luma(70))[#payload.buyerAddress]],
-  [*Packing List No.*], [#data.number], [*Issue Date*], [#data.issueDate],
-  [*Order No.*], [#data.businessCaseNumber], [*Shipment Date*], [#payload.shipmentDate],
-  [*Port of Loading*], [#payload.portOfLoading], [*Port of Discharge*], [#payload.portOfDischarge],
+  [#nowrap[*SHIPPER* #h(3pt) #payload.seller #h(3pt) #text(fill: luma(70))[#payload.sellerAddress]]],
+  [#nowrap[*CONSIGNEE* #h(3pt) #payload.buyer #h(3pt) #text(fill: luma(70))[#payload.buyerAddress]]],
+  [#nowrap[*Packing List No.*]], [#nowrap[#data.number]], [#nowrap[*Issue Date*]], [#nowrap[#data.issueDate]],
+  [#nowrap[*Order No.*]], [#nowrap[#data.businessCaseNumber]], [#nowrap[*Shipment Date*]], [#nowrap[#payload.shipmentDate]],
+  [#nowrap[*Port of Loading*]], [#nowrap[#payload.portOfLoading]], [#nowrap[*Port of Discharge*]], [#nowrap[#payload.portOfDischarge]],
 )
 #v(5pt)
 #table(
-  columns: (7mm, 23mm, 1fr, 18mm, 14mm, 17mm, 19mm, 19mm, 17mm),
+  columns: (7mm, 26mm, 1fr, 18mm, 15mm, 22mm, 22mm, 24mm, 19mm),
   inset: (x: 3pt, y: 4pt),
   align: (center, left, left, right, center, right, right, right, right),
   stroke: .45pt + luma(155),
   fill: (_, row) => if row == 0 { luma(235) },
   table.header(
-    [*NO.*], [*SKU*], [*DESCRIPTION / MODEL*], [*QTY*], [*UNIT*], [*PACKAGES*], [*NET KG*], [*GROSS KG*], [*CBM*],
+    [#nowrap[*NO.*]], [#nowrap[*SKU*]], [#nowrap[*DESCRIPTION / MODEL / PACKAGE*]], [#nowrap[*QTY*]], [#nowrap[*UNIT*]], [#nowrap[*PACKAGES*]], [#nowrap[*NET KG*]], [#nowrap[*GROSS KG*]], [#nowrap[*CBM*]],
   ),
   ..payload.lines.enumerate().map(((index, line)) => (
-    [#(index + 1)],
-    [#line.sku],
-    [#line.description #if line.model != "" [\ #line.model] #if line.packageType != "" [\ #line.packageType]],
-    [#line.quantity],
-    [#line.unit],
-    [#line.packages],
-    [#line.netWeightKg],
-    [#line.grossWeightKg],
-    [#line.cbm],
+    [#nowrap[#(index + 1)]],
+    [#nowrap[#line.sku]],
+    [#nowrap[#line.description #if line.model != "" [ #h(3pt) #line.model] #if line.packageType != "" [ #h(3pt) #line.packageType]]],
+    [#nowrap[#line.quantity]],
+    [#nowrap[#line.unit]],
+    [#nowrap[#line.packages]],
+    [#nowrap[#line.netWeightKg]],
+    [#nowrap[#line.grossWeightKg]],
+    [#nowrap[#line.cbm]],
   )).flatten(),
   table.cell(colspan: 3, align: right, fill: luma(245))[*TOTAL*],
   table.cell(align: right, fill: luma(245))[*#total-quantity*],

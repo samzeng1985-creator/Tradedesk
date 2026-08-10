@@ -11,6 +11,8 @@ import type {
   Supplier,
 } from "./domain";
 import { CurrencySelect, formatMoney } from "./currencies";
+import { AttachmentPanel } from "./AttachmentPanel";
+import { nextDatedNumber } from "./numbering";
 
 interface FulfillmentCenterProps {
   orders: PurchaseOrder[];
@@ -38,15 +40,6 @@ const milestoneStatusLabels: Record<MilestoneStatus, string> = {
   blocked: "异常",
 };
 
-function nextNumber(orders: PurchaseOrder[]) {
-  const year = new Date().getFullYear();
-  const maximum = orders.reduce((current, order) => {
-    const match = order.number.match(new RegExp(`^PO-${year}-(\\d+)$`));
-    return Math.max(current, match ? Number(match[1]) : 0);
-  }, 0);
-  return `PO-${year}-${String(maximum + 1).padStart(4, "0")}`;
-}
-
 interface DraftPurchaseLine {
   sourceCaseLineId: string;
   sku: string;
@@ -65,7 +58,7 @@ function PurchaseEditor({ orders, cases, suppliers, onClose, onCreate }: {
   onClose: () => void;
   onCreate: (input: PurchaseOrderInput) => Promise<void>;
 }) {
-  const [number, setNumber] = useState(nextNumber(orders));
+  const [number, setNumber] = useState(nextDatedNumber(orders.map((item) => item.number), "PO"));
   const [caseId, setCaseId] = useState("");
   const [supplierId, setSupplierId] = useState("");
   const [currency, setCurrency] = useState("USD");
@@ -242,6 +235,7 @@ function MilestoneEditor({ milestone, lineQuantity, onClose, onSave }: {
         {error && <div className="form-error field-wide" role="alert">{error}</div>}
         <div className="modal-actions field-wide"><button type="button" className="button button-secondary" onClick={onClose}>取消</button><button className="button button-primary" disabled={saving}>{saving ? "保存中…" : "保存节点"}</button></div>
       </form>
+      <AttachmentPanel entityType="production_milestone" entityId={milestone.id} entityLabel={milestone.label} title="生产节点附件" />
     </section>
   </div>;
 }
@@ -249,6 +243,7 @@ function MilestoneEditor({ milestone, lineQuantity, onClose, onSave }: {
 export function FulfillmentCenter({ orders, cases, suppliers, onCreate, onStatus, onMilestone }: FulfillmentCenterProps) {
   const [creating, setCreating] = useState(false);
   const [editingMilestone, setEditingMilestone] = useState<{ milestone: ProductionMilestone; quantity: number } | null>(null);
+  const [attachmentOrder, setAttachmentOrder] = useState<PurchaseOrder | null>(null);
   const [query, setQuery] = useState("");
   const normalizedQuery = query.trim().toLocaleLowerCase();
   const filtered = orders.filter((order) => [order.number, order.businessCaseNumber, order.supplierName]
@@ -273,7 +268,7 @@ export function FulfillmentCenter({ orders, cases, suppliers, onCreate, onStatus
           return <article className="purchase-order-card" key={order.id}>
             <header className="purchase-order-header">
               <div><span className="eyebrow">{order.businessCaseNumber}</span><h3>{order.number}</h3><p>{order.supplierName} · 预计交货 {order.expectedDate || "未设置"}</p></div>
-              <div className="purchase-order-actions"><strong>{formatMoney(order.totalAmountMinor, order.currency)}</strong><select aria-label={`${order.number}状态`} value={order.status} onChange={(event) => changeStatus(order.id, event.target.value as PurchaseStatus)}>{Object.entries(purchaseStatusLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></div>
+              <div className="purchase-order-actions"><strong>{formatMoney(order.totalAmountMinor, order.currency)}</strong><button className="button button-secondary" onClick={() => setAttachmentOrder(order)}>附件</button><select aria-label={`${order.number}状态`} value={order.status} onChange={(event) => changeStatus(order.id, event.target.value as PurchaseStatus)}>{Object.entries(purchaseStatusLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></div>
             </header>
             <div className="purchase-summary"><span>采购 {totalQuantity}</span><span>生产完成 {order.completedQuantity}</span><span>可发货 {order.readyQuantity}</span><span>{order.lines.length} 个产品行</span></div>
             <div className="purchase-products">
@@ -293,5 +288,6 @@ export function FulfillmentCenter({ orders, cases, suppliers, onCreate, onStatus
     </section>
     {creating && <PurchaseEditor orders={orders} cases={cases} suppliers={suppliers} onClose={() => setCreating(false)} onCreate={onCreate} />}
     {editingMilestone && <MilestoneEditor milestone={editingMilestone.milestone} lineQuantity={editingMilestone.quantity} onClose={() => setEditingMilestone(null)} onSave={onMilestone} />}
+    {attachmentOrder && <div className="modal-backdrop" onMouseDown={() => setAttachmentOrder(null)}><section className="modal-card attachment-modal" onMouseDown={(event) => event.stopPropagation()}><div className="panel-heading"><div><span className="eyebrow">采购单附件</span><h2>{attachmentOrder.number}</h2></div><button className="icon-button" onClick={() => setAttachmentOrder(null)}>×</button></div><AttachmentPanel entityType="purchase_order" entityId={attachmentOrder.id} entityLabel={attachmentOrder.number} /></section></div>}
   </>;
 }

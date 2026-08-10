@@ -13,6 +13,7 @@ import type {
   ConfigurableProductInput,
 } from "./domain";
 import { CurrencySelect, formatMoney } from "./currencies";
+import { nextDatedNumber } from "./numbering";
 
 interface ComponentLibraryProps {
   components: ConfigComponent[];
@@ -298,18 +299,20 @@ function convertedComponentPrice(component: ConfigComponent, currency: string, e
 
 function ConfigurationEditor({
   record,
+  existingCodes,
   components,
   options,
   onClose,
   onSave,
 }: {
   record: ConfigurableProduct | null;
+  existingCodes: string[];
   components: ConfigComponent[];
   options: ComponentOption[];
   onClose: () => void;
   onSave: (input: ConfigurableProductInput) => Promise<void>;
 }) {
-  const [code, setCode] = useState(record?.code ?? "");
+  const [code, setCode] = useState(record?.code ?? nextDatedNumber(existingCodes, "CFG"));
   const [name, setName] = useState(record?.name ?? "");
   const [model, setModel] = useState(record?.model ?? "");
   const [currency, setCurrency] = useState(record?.currency ?? "CNY");
@@ -512,6 +515,6 @@ export function ConfigurableProductLibrary({
     {message && <div className="document-message">{message}</div>}
     <div className="table-wrap"><table><thead><tr><th>配置编号</th><th>产品</th><th>型号</th><th>组件数</th><th>币种/汇率</th><th>配置总价</th><th>说明</th><th>操作</th></tr></thead><tbody>{filtered.map((item) => <tr key={item.id}><td>{item.code}</td><td><strong>{item.name}</strong></td><td>{item.model || "—"}</td><td>{item.lines.length}</td><td><strong>{item.currency}</strong>{item.currency !== "CNY" && <small className="table-subtitle">1 CNY = {item.exchangeRate} {item.currency}<br />{item.exchangeRateDate || "待确认日期"}</small>}</td><td><strong>{formatMoney(item.totalAmountMinor, item.currency)}</strong></td><td>{item.notes || "—"}</td><td><div className="row-actions configuration-actions"><button onClick={() => setEditing(item)}>配置/查看</button><button disabled={!!busy} onClick={() => void output(item, "pdf")}>{busy === `${item.id}-pdf` ? "导出中…" : "PDF"}</button><button disabled={!!busy} onClick={() => void output(item, "csv")}>{busy === `${item.id}-csv` ? "导出中…" : "CSV"}</button><button disabled={!!busy} onClick={() => void output(item, "print")}>{busy === `${item.id}-print` ? "打开中…" : "打印"}</button><button className="danger-link" onClick={() => void archive(item)}>停用</button></div></td></tr>)}</tbody></table></div>
     {!filtered.length && <div className="empty-table">{configurations.length ? "没有符合条件的配置" : "还没有自选配置产品"}</div>}
-    {editing && <ConfigurationEditor record={editing === "new" ? null : editing} components={components} options={options} onClose={() => setEditing(null)} onSave={onSave} />}
+    {editing && <ConfigurationEditor record={editing === "new" ? null : editing} existingCodes={configurations.map((item) => item.code)} components={components} options={options} onClose={() => setEditing(null)} onSave={onSave} />}
   </>;
 }

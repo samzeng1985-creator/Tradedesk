@@ -9,6 +9,8 @@ import type {
   Product,
 } from "./domain";
 import { CurrencySelect, formatMoney } from "./currencies";
+import { AttachmentPanel } from "./AttachmentPanel";
+import { nextDatedNumber } from "./numbering";
 
 interface BusinessCaseCenterProps {
   cases: BusinessCase[];
@@ -36,11 +38,6 @@ const stageLabels: Record<PipelineStage, string> = {
   documents: "制单中",
 };
 
-function nextNumber(cases: BusinessCase[]) {
-  const year = new Date().getFullYear();
-  return `TD-${year}-${String(cases.length + 1).padStart(4, "0")}`;
-}
-
 function CaseEditor({
   record,
   cases,
@@ -58,7 +55,7 @@ function CaseEditor({
   onClose: () => void;
   onSave: (input: BusinessCaseInput) => Promise<void>;
 }) {
-  const [number, setNumber] = useState(record?.number ?? nextNumber(cases));
+  const [number, setNumber] = useState(record?.number ?? nextDatedNumber(cases.map((item) => item.number), "TD"));
   const [customerId, setCustomerId] = useState(record?.customerId ?? "");
   const [stage, setStage] = useState<PipelineStage>(record?.stage ?? "quotation");
   const [currency, setCurrency] = useState(record?.currency ?? "USD");
@@ -205,6 +202,7 @@ function CaseEditor({
 export function BusinessCaseCenter({ cases, customers, products, configurableProducts, onSave, onArchive }: BusinessCaseCenterProps) {
   const [editing, setEditing] = useState<BusinessCase | "new" | null>(null);
   const [query, setQuery] = useState("");
+  const [attachmentCase, setAttachmentCase] = useState<BusinessCase | null>(null);
   const normalizedQuery = query.trim().toLocaleLowerCase();
   const filteredCases = cases.filter((item) =>
     [item.number, item.customerName, item.currency, item.incoterm].some((value) =>
@@ -222,9 +220,10 @@ export function BusinessCaseCenter({ cases, customers, products, configurablePro
       <div className="panel-heading"><div><h2>业务单中心</h2><p>客户和产品只选择一次，后续采购与单证复用同一业务快照</p></div><button className="button button-primary" disabled={!customers.length || (!products.length && !configurableProducts.length)} onClick={() => setEditing("new")}>新建业务单</button></div>
       {(!customers.length || (!products.length && !configurableProducts.length)) && <div className="empty-callout">请先在“主数据”中录入客户，以及至少一个标准产品或已完成自选配置。</div>}
       <div className="table-toolbar"><label><span className="sr-only">搜索业务单</span><input placeholder="按单号、客户、币种或贸易术语搜索" value={query} onChange={(event) => setQuery(event.target.value)} /></label><span className="record-count">{filteredCases.length} 条业务单</span></div>
-      <div className="table-wrap"><table><thead><tr><th>业务单号</th><th>客户</th><th>状态</th><th>贸易术语</th><th>计划发货</th><th>金额</th><th>操作</th></tr></thead><tbody>{filteredCases.map((item) => <tr key={item.id}><td><strong>{item.number}</strong><small className="table-subtitle">{item.lines.length} 个产品行</small></td><td>{item.customerName}</td><td><span className="case-stage">{stageLabels[item.stage]}</span></td><td>{item.incoterm || "—"}</td><td>{item.shipmentDate || "—"}</td><td>{formatMoney(item.totalAmountMinor, item.currency)}</td><td><div className="row-actions"><button onClick={() => setEditing(item)}>编辑</button><button onClick={() => archive(item)}>归档</button></div></td></tr>)}</tbody></table></div>
+      <div className="table-wrap"><table><thead><tr><th>业务单号</th><th>客户</th><th>状态</th><th>贸易术语</th><th>计划发货</th><th>金额</th><th>操作</th></tr></thead><tbody>{filteredCases.map((item) => <tr key={item.id}><td><strong>{item.number}</strong><small className="table-subtitle">{item.lines.length} 个产品行</small></td><td>{item.customerName}</td><td><span className="case-stage">{stageLabels[item.stage]}</span></td><td>{item.incoterm || "—"}</td><td>{item.shipmentDate || "—"}</td><td>{formatMoney(item.totalAmountMinor, item.currency)}</td><td><div className="row-actions"><button onClick={() => setEditing(item)}>编辑</button><button onClick={() => setAttachmentCase(item)}>附件</button><button onClick={() => archive(item)}>归档</button></div></td></tr>)}</tbody></table></div>
       {!filteredCases.length && <div className="empty-table">{cases.length ? "没有符合条件的业务单" : "还没有业务单，请从第一笔真实订单开始"}</div>}
     </section>
     {editing && <CaseEditor record={editing === "new" ? null : editing} cases={cases} customers={customers} products={products} configurableProducts={configurableProducts} onClose={() => setEditing(null)} onSave={onSave} />}
+    {attachmentCase && <div className="modal-backdrop" onMouseDown={() => setAttachmentCase(null)}><section className="modal-card attachment-modal" onMouseDown={(event) => event.stopPropagation()}><div className="panel-heading"><div><span className="eyebrow">业务单附件</span><h2>{attachmentCase.number}</h2></div><button className="icon-button" onClick={() => setAttachmentCase(null)}>×</button></div><AttachmentPanel entityType="business_case" entityId={attachmentCase.id} entityLabel={attachmentCase.number} /></section></div>}
   </>;
 }

@@ -172,6 +172,7 @@ export interface AttachmentRecord {
   id: string;
   entityType: string;
   entityId: string;
+  entityLabel: string;
   fileName: string;
   mimeType: string;
   sizeBytes: number;
@@ -182,6 +183,7 @@ export interface AttachmentRecord {
 export interface AttachmentInput {
   entityType: string;
   entityId: string;
+  entityLabel: string;
   fileName: string;
   mimeType: string;
   bytes: number[];
@@ -344,6 +346,95 @@ export interface BusinessCaseInput {
   shipmentDate: string;
   notes: string;
   lines: BusinessCaseLineInput[];
+}
+
+export type PartnerType = "freight_forwarder" | "customs_broker" | "insurer" | "inspection" | "other";
+
+export interface Partner {
+  id: string;
+  code: string;
+  legalName: string;
+  partnerType: PartnerType;
+  contact: string;
+  address: string;
+  active: boolean;
+}
+
+export type PartnerInput = Omit<Partner, "id" | "active"> & { id?: string };
+
+export type ShipmentStatus = "planned" | "booked" | "shipped" | "delivered" | "cancelled";
+
+export interface ShipmentLine {
+  id: string;
+  businessCaseLineId: string;
+  sku: string;
+  productName: string;
+  quantity: number;
+  unit: string;
+}
+
+export interface ShipmentLineInput {
+  businessCaseLineId: string;
+  quantity: number;
+}
+
+export interface ShipmentBatch {
+  id: string;
+  number: string;
+  businessCaseId: string;
+  businessCaseNumber: string;
+  partnerId: string;
+  partnerName: string;
+  status: ShipmentStatus;
+  plannedDate: string;
+  actualDate: string;
+  trackingNumber: string;
+  notes: string;
+  lines: ShipmentLine[];
+}
+
+export interface ShipmentBatchInput {
+  id?: string;
+  number: string;
+  businessCaseId: string;
+  partnerId: string;
+  status: ShipmentStatus;
+  plannedDate: string;
+  actualDate: string;
+  trackingNumber: string;
+  notes: string;
+  lines: ShipmentLineInput[];
+}
+
+export type PaymentStatus = "planned" | "partial" | "received" | "cancelled";
+export type PaymentType = "deposit" | "balance" | "installment" | "other";
+
+export interface PaymentPlan {
+  id: string;
+  number: string;
+  businessCaseId: string;
+  businessCaseNumber: string;
+  paymentType: PaymentType;
+  dueDate: string;
+  currency: string;
+  amountMinor: number;
+  receivedAmountMinor: number;
+  receivedDate: string;
+  status: PaymentStatus;
+  notes: string;
+}
+
+export interface PaymentPlanInput {
+  id?: string;
+  number: string;
+  businessCaseId: string;
+  paymentType: PaymentType;
+  dueDate: string;
+  amountMinor: number;
+  receivedAmountMinor: number;
+  receivedDate: string;
+  status: PaymentStatus;
+  notes: string;
 }
 
 export type DocumentType =
