@@ -291,7 +291,7 @@ export default function App() {
           <span className="brand-mark">TD</span>
           <span>
             <strong>TradeDesk</strong>
-            <small>Local · 0.6.0</small>
+            <small>Local · 0.6.1</small>
           </span>
         </div>
 
