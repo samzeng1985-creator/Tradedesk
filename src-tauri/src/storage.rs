@@ -12,7 +12,7 @@ use crate::domain::{
     SaveDocumentInput, Supplier, SupplierInput, TradeDocument, WorkspaceSummary,
 };
 
-const SCHEMA_VERSION: i64 = 5;
+const SCHEMA_VERSION: i64 = 6;
 
 const MILESTONE_STAGES: [(&str, &str); 6] = [
     ("raw_material", "原料准备"),
@@ -124,6 +124,23 @@ impl EncryptedDatabase {
             "payment_terms",
             "TEXT NOT NULL DEFAULT ''",
         )?;
+        for column in [
+            "address",
+            "shipping_address",
+            "billing_address",
+            "purchase_intent",
+            "customer_analysis",
+            "strengths",
+            "weaknesses",
+            "contacts",
+        ] {
+            ensure_column(
+                &transaction,
+                "customers",
+                column,
+                "TEXT NOT NULL DEFAULT ''",
+            )?;
+        }
         ensure_column(
             &transaction,
             "suppliers",
@@ -370,22 +387,12 @@ impl EncryptedDatabase {
 
     pub fn list_customers(&self) -> rusqlite::Result<Vec<Customer>> {
         let mut statement = self.connection.prepare(
-            "SELECT id, code, legal_name, market, currency, payment_terms, active
+            "SELECT id, code, legal_name, market, currency, payment_terms, address,
+                    shipping_address, billing_address, purchase_intent, customer_analysis,
+                    strengths, weaknesses, contacts, active
              FROM customers WHERE active = 1 ORDER BY code COLLATE NOCASE",
         )?;
-        statement
-            .query_map([], |row| {
-                Ok(Customer {
-                    id: row.get(0)?,
-                    code: row.get(1)?,
-                    legal_name: row.get(2)?,
-                    market: row.get(3)?,
-                    currency: row.get(4)?,
-                    payment_terms: row.get(5)?,
-                    active: row.get::<_, i64>(6)? != 0,
-                })
-            })?
-            .collect()
+        statement.query_map([], customer_from_row)?.collect()
     }
 
     pub fn save_customer(&self, input: CustomerInput) -> rusqlite::Result<Customer> {
@@ -394,27 +401,43 @@ impl EncryptedDatabase {
         require_text(&input.currency)?;
         let id = input.id.unwrap_or_else(|| Uuid::new_v4().to_string());
         self.connection.execute(
-            "INSERT INTO customers(id, code, legal_name, market, currency, payment_terms, active)
-             VALUES(?1, ?2, ?3, ?4, ?5, ?6, 1)
+            "INSERT INTO customers(
+                id, code, legal_name, market, currency, payment_terms, address,
+                shipping_address, billing_address, purchase_intent, customer_analysis,
+                strengths, weaknesses, contacts, active
+             ) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, 1)
              ON CONFLICT(id) DO UPDATE SET code = excluded.code, legal_name = excluded.legal_name,
                 market = excluded.market, currency = excluded.currency,
-                payment_terms = excluded.payment_terms, active = 1",
+                payment_terms = excluded.payment_terms, address = excluded.address,
+                shipping_address = excluded.shipping_address, billing_address = excluded.billing_address,
+                purchase_intent = excluded.purchase_intent, customer_analysis = excluded.customer_analysis,
+                strengths = excluded.strengths, weaknesses = excluded.weaknesses,
+                contacts = excluded.contacts, active = 1",
             params![
                 id,
                 input.code.trim(),
                 input.legal_name.trim(),
                 input.market.trim(),
                 input.currency.trim().to_uppercase(),
-                input.payment_terms.trim()
+                input.payment_terms.trim(),
+                input.address.trim(),
+                input.shipping_address.trim(),
+                input.billing_address.trim(),
+                input.purchase_intent.trim(),
+                input.customer_analysis.trim(),
+                input.strengths.trim(),
+                input.weaknesses.trim(),
+                input.contacts.trim()
             ],
         )?;
         self.audit("customer", &id, "save")?;
         self.connection.query_row(
-            "SELECT id, code, legal_name, market, currency, payment_terms, active FROM customers WHERE id = ?1",
+            "SELECT id, code, legal_name, market, currency, payment_terms, address,
+                    shipping_address, billing_address, purchase_intent, customer_analysis,
+                    strengths, weaknesses, contacts, active
+             FROM customers WHERE id = ?1",
             params![id],
-            |row| Ok(Customer { id: row.get(0)?, code: row.get(1)?, legal_name: row.get(2)?,
-                market: row.get(3)?, currency: row.get(4)?, payment_terms: row.get(5)?,
-                active: row.get::<_, i64>(6)? != 0 }),
+            customer_from_row,
         )
     }
 
@@ -1140,11 +1163,30 @@ impl EncryptedDatabase {
             )
             .optional()?
             .unwrap_or_else(|| "Local Exporter".to_owned());
-        let destination_country = self.connection.query_row(
-            "SELECT market FROM customers WHERE id = ?1",
-            params![business_case.customer_id],
-            |row| row.get::<_, String>(0),
-        )?;
+        let (destination_country, customer_address, shipping_address, billing_address) =
+            self.connection.query_row(
+                "SELECT market, address, shipping_address, billing_address
+                 FROM customers WHERE id = ?1",
+                params![business_case.customer_id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                    ))
+                },
+            )?;
+        let preferred_buyer_address = match &input.document_type {
+            DocumentType::PackingList => &shipping_address,
+            DocumentType::CommercialInvoice | DocumentType::ProformaInvoice => &billing_address,
+            _ => &customer_address,
+        };
+        let buyer_address = if preferred_buyer_address.trim().is_empty() {
+            customer_address
+        } else {
+            preferred_buyer_address.clone()
+        };
         let valid_until = self.connection.query_row(
             "SELECT date(?1, '+30 days')",
             params![input.issue_date.trim()],
@@ -1188,7 +1230,7 @@ impl EncryptedDatabase {
             seller: company_name,
             seller_address: String::new(),
             buyer: business_case.customer_name.clone(),
-            buyer_address: String::new(),
+            buyer_address,
             origin_country: "China".to_owned(),
             destination_country,
             port_of_loading: String::new(),
@@ -1598,6 +1640,26 @@ fn require_text(value: &str) -> rusqlite::Result<()> {
     }
 }
 
+fn customer_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Customer> {
+    Ok(Customer {
+        id: row.get(0)?,
+        code: row.get(1)?,
+        legal_name: row.get(2)?,
+        market: row.get(3)?,
+        currency: row.get(4)?,
+        payment_terms: row.get(5)?,
+        address: row.get(6)?,
+        shipping_address: row.get(7)?,
+        billing_address: row.get(8)?,
+        purchase_intent: row.get(9)?,
+        customer_analysis: row.get(10)?,
+        strengths: row.get(11)?,
+        weaknesses: row.get(12)?,
+        contacts: row.get(13)?,
+        active: row.get::<_, i64>(14)? != 0,
+    })
+}
+
 fn validate_language(value: &str) -> rusqlite::Result<()> {
     if matches!(value.trim(), "en" | "zh_en" | "ru") {
         Ok(())
@@ -1641,8 +1703,17 @@ mod tests {
                     market: "US".into(),
                     currency: "USD".into(),
                     payment_terms: "30% deposit".into(),
+                    address: "Seattle, USA".into(),
+                    shipping_address: "Port of Seattle".into(),
+                    billing_address: "Seattle, USA".into(),
+                    purchase_intent: "Annual container orders".into(),
+                    customer_analysis: "Growing regional importer".into(),
+                    strengths: "Stable channel".into(),
+                    weaknesses: "Long approval cycle".into(),
+                    contacts: "Jane Smith | Purchasing | jane@example.com".into(),
                 })
                 .unwrap();
+            assert_eq!(customer.shipping_address, "Port of Seattle");
             let supplier = database
                 .save_supplier(SupplierInput {
                     id: None,
@@ -1682,6 +1753,7 @@ mod tests {
                 })
                 .unwrap();
             assert_eq!(quote.payload.valid_until, "2026-09-05");
+            assert_eq!(quote.payload.buyer_address, "Seattle, USA");
             let mut quote_payload = quote.payload.clone();
             quote_payload.seller_address = "Shenzhen, China".into();
             quote_payload.buyer_address = "Seattle, USA".into();
@@ -1887,6 +1959,51 @@ mod tests {
         assert!(
             EncryptedDatabase::open(&path, Zeroizing::new("wrong-password".to_owned())).is_err()
         );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn migrates_customer_profiles_from_schema_v5() {
+        let path = std::env::temp_dir().join(format!("tradedesk-v5-{}.db", Uuid::new_v4()));
+        {
+            let connection = Connection::open(&path).unwrap();
+            connection
+                .pragma_update(None, "key", "test-password")
+                .unwrap();
+            connection
+                .execute_batch(
+                    "CREATE TABLE workspace_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+                     INSERT INTO workspace_meta(key, value) VALUES('schema_version', '5');
+                     CREATE TABLE customers (
+                        id TEXT PRIMARY KEY, code TEXT NOT NULL UNIQUE, legal_name TEXT NOT NULL,
+                        market TEXT NOT NULL DEFAULT '', currency TEXT NOT NULL DEFAULT 'USD',
+                        payment_terms TEXT NOT NULL DEFAULT '', active INTEGER NOT NULL DEFAULT 1
+                     );
+                     INSERT INTO customers(id, code, legal_name, market, currency, payment_terms, active)
+                     VALUES('customer-1', 'CUS-1', 'Legacy Customer', 'US', 'USD', 'T/T', 1);",
+                )
+                .unwrap();
+        }
+
+        let database =
+            EncryptedDatabase::open(&path, Zeroizing::new("test-password".to_owned())).unwrap();
+        let customers = database.list_customers().unwrap();
+        assert_eq!(customers.len(), 1);
+        assert_eq!(customers[0].legal_name, "Legacy Customer");
+        assert!(customers[0].shipping_address.is_empty());
+        assert!(customers[0].contacts.is_empty());
+        assert_eq!(
+            database
+                .connection
+                .query_row(
+                    "SELECT value FROM workspace_meta WHERE key = 'schema_version'",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .unwrap(),
+            "6"
+        );
+        drop(database);
         let _ = std::fs::remove_file(&path);
     }
 }

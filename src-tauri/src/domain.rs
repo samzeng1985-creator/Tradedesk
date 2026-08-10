@@ -261,6 +261,14 @@ pub struct Customer {
     pub market: String,
     pub currency: String,
     pub payment_terms: String,
+    pub address: String,
+    pub shipping_address: String,
+    pub billing_address: String,
+    pub purchase_intent: String,
+    pub customer_analysis: String,
+    pub strengths: String,
+    pub weaknesses: String,
+    pub contacts: String,
     pub active: bool,
 }
 
@@ -273,6 +281,22 @@ pub struct CustomerInput {
     pub market: String,
     pub currency: String,
     pub payment_terms: String,
+    #[serde(default)]
+    pub address: String,
+    #[serde(default)]
+    pub shipping_address: String,
+    #[serde(default)]
+    pub billing_address: String,
+    #[serde(default)]
+    pub purchase_intent: String,
+    #[serde(default)]
+    pub customer_analysis: String,
+    #[serde(default)]
+    pub strengths: String,
+    #[serde(default)]
+    pub weaknesses: String,
+    #[serde(default)]
+    pub contacts: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

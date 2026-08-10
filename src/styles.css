@@ -20,9 +20,10 @@ button:disabled { cursor: wait; opacity: .65; }
 .unlock-card > small { display: block; color: #64748b; line-height: 1.5; margin-top: 18px; }
 .unlock-form { display: grid; gap: 15px; }
 .unlock-form label, .editor-form label { display: grid; gap: 7px; color: #475569; font-size: 12px; font-weight: 650; }
-.unlock-form input, .editor-form input { width: 100%; border: 1px solid #cfd7e3; border-radius: 8px; padding: 10px 11px; color: #18202b; background: white; }
+.unlock-form input, .editor-form input, .editor-form textarea { width: 100%; border: 1px solid #cfd7e3; border-radius: 8px; padding: 10px 11px; color: #18202b; background: white; }
+.editor-form textarea { resize: vertical; line-height: 1.5; }
 .editor-form select, .line-row select, .line-row input { width: 100%; border: 1px solid #cfd7e3; border-radius: 8px; padding: 10px 11px; color: #18202b; background: white; }
-.unlock-form input:focus, .editor-form input:focus, .editor-form select:focus, .line-row select:focus, .line-row input:focus, .table-toolbar input:focus { outline: 3px solid rgba(124, 58, 237, .16); border-color: #8b5cf6; }
+.unlock-form input:focus, .editor-form input:focus, .editor-form textarea:focus, .editor-form select:focus, .line-row select:focus, .line-row input:focus, .table-toolbar input:focus { outline: 3px solid rgba(124, 58, 237, .16); border-color: #8b5cf6; }
 .form-error { color: #b91c1c; background: #fef2f2; border: 1px solid #fecaca; border-radius: 8px; padding: 10px 12px; font-size: 13px; }
 
 .app-shell { min-height: 100vh; display: grid; grid-template-columns: 224px 1fr; }
@@ -127,11 +128,16 @@ tbody tr:hover { background: #fafbfc; }
 
 .modal-backdrop { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; padding: 24px; background: rgba(15, 23, 42, .48); }
 .modal-card { width: min(680px, 100%); max-height: calc(100vh - 48px); overflow-y: auto; background: white; border-radius: 14px; padding: 24px; box-shadow: 0 24px 70px rgba(15, 23, 42, .25); }
+.customer-editor { width: min(920px, 100%); }
 .modal-card .panel-heading { align-items: flex-start; }
 .modal-card h2 { margin: 5px 0 0; }
 .icon-button { border: 0; background: #f1f5f9; color: #475569; width: 34px; height: 34px; border-radius: 8px; font-size: 22px; line-height: 1; }
 .editor-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-top: 22px; }
 .field-wide { grid-column: 1 / -1; }
+.editor-section-heading { padding-top: 18px; border-top: 1px solid #e5e7eb; }
+.editor-section-heading:first-child { padding-top: 0; border-top: 0; }
+.editor-section-heading h3 { margin: 0; font-size: 15px; }
+.editor-section-heading p { margin: 4px 0 0; color: #64748b; font-size: 12px; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 10px; padding-top: 4px; }
 
 .business-case-panel { min-height: 430px; }

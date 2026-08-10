@@ -29,6 +29,14 @@ export interface Customer {
   market: string;
   currency: string;
   paymentTerms: string;
+  address: string;
+  shippingAddress: string;
+  billingAddress: string;
+  purchaseIntent: string;
+  customerAnalysis: string;
+  strengths: string;
+  weaknesses: string;
+  contacts: string;
   active: boolean;
 }
 

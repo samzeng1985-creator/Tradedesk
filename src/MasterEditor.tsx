@@ -35,7 +35,11 @@ function initialValues(tab: MasterTab, record: MasterRecord | null): Record<stri
     return {
       id: item?.id ?? "", code: item?.code ?? "", legalName: item?.legalName ?? "",
       market: item?.market ?? "", currency: item?.currency ?? "USD",
-      paymentTerms: item?.paymentTerms ?? "",
+      paymentTerms: item?.paymentTerms ?? "", address: item?.address ?? "",
+      shippingAddress: item?.shippingAddress ?? "", billingAddress: item?.billingAddress ?? "",
+      purchaseIntent: item?.purchaseIntent ?? "", customerAnalysis: item?.customerAnalysis ?? "",
+      strengths: item?.strengths ?? "", weaknesses: item?.weaknesses ?? "",
+      contacts: item?.contacts ?? "",
     };
   }
   const item = record as Supplier | null;
@@ -64,6 +68,10 @@ export function MasterEditor({ tab, record, saving, onClose, onSave }: MasterEdi
         await onSave({
           id: values.id || undefined, code: values.code, legalName: values.legalName,
           market: values.market, currency: values.currency, paymentTerms: values.paymentTerms,
+          address: values.address, shippingAddress: values.shippingAddress,
+          billingAddress: values.billingAddress, purchaseIntent: values.purchaseIntent,
+          customerAnalysis: values.customerAnalysis, strengths: values.strengths,
+          weaknesses: values.weaknesses, contacts: values.contacts,
         });
       } else {
         await onSave({
@@ -78,7 +86,7 @@ export function MasterEditor({ tab, record, saving, onClose, onSave }: MasterEdi
 
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
-      <section className="modal-card" role="dialog" aria-modal="true" aria-labelledby="editor-title" onMouseDown={(event) => event.stopPropagation()}>
+      <section className={`modal-card ${tab === "customers" ? "customer-editor" : ""}`} role="dialog" aria-modal="true" aria-labelledby="editor-title" onMouseDown={(event) => event.stopPropagation()}>
         <div className="panel-heading">
           <div><span className="eyebrow">主数据</span><h2 id="editor-title">{record ? "编辑" : "新建"}{tab === "products" ? "产品" : tab === "customers" ? "客户" : "供应商"}</h2></div>
           <button className="icon-button" onClick={onClose} aria-label="关闭">×</button>
@@ -94,11 +102,28 @@ export function MasterEditor({ tab, record, saving, onClose, onSave }: MasterEdi
             <label>单件毛重（kg）<input type="number" min="0" step="0.001" value={values.grossWeightKg} onChange={(event) => set("grossWeightKg", event.target.value)} /></label>
           </>}
           {tab === "customers" && <>
+            <div className="editor-section-heading field-wide"><h3>基本信息</h3><p>用于报价、订单和后续单证复用</p></div>
             <label>客户编码 *<input required value={values.code} onChange={(event) => set("code", event.target.value)} autoFocus /></label>
             <label>客户法定名称 *<input required value={values.legalName} onChange={(event) => set("legalName", event.target.value)} /></label>
             <label>国家/市场<input value={values.market} onChange={(event) => set("market", event.target.value)} placeholder="例如：美国" /></label>
             <label>默认币种 *<input required maxLength={3} value={values.currency} onChange={(event) => set("currency", event.target.value.toUpperCase())} /></label>
             <label className="field-wide">默认付款条款<input value={values.paymentTerms} onChange={(event) => set("paymentTerms", event.target.value)} /></label>
+            <label className="field-wide">客户地址<textarea rows={2} value={values.address} onChange={(event) => set("address", event.target.value)} placeholder="公司注册地址或主要办公地址" /></label>
+            <label>收货地址<textarea rows={3} value={values.shippingAddress} onChange={(event) => set("shippingAddress", event.target.value)} placeholder="货物实际送达地址、仓库或港口信息" /></label>
+            <label>账单地址<textarea rows={3} value={values.billingAddress} onChange={(event) => set("billingAddress", event.target.value)} placeholder="发票和账单使用的地址" /></label>
+
+            <div className="editor-section-heading field-wide"><h3>购买意向</h3><p>记录客户关注的产品、采购计划和合作偏好</p></div>
+            <label className="field-wide">购买意向<textarea rows={4} value={values.purchaseIntent} onChange={(event) => set("purchaseIntent", event.target.value)} placeholder="目标产品、规格、预计数量、预算、采购频率、期望交期等" /></label>
+
+            <div className="editor-section-heading field-wide"><h3>客户分析</h3><p>沉淀客户背景、决策方式、成交条件和风险判断</p></div>
+            <label className="field-wide">客户分析<textarea rows={4} value={values.customerAnalysis} onChange={(event) => set("customerAnalysis", event.target.value)} placeholder="业务规模、销售渠道、决策流程、信用情况、合作阶段和跟进建议" /></label>
+
+            <div className="editor-section-heading field-wide"><h3>优劣势分析</h3><p>用于判断合作价值和需要提前控制的风险</p></div>
+            <label>优势<textarea rows={4} value={values.strengths} onChange={(event) => set("strengths", event.target.value)} placeholder="渠道、规模、付款能力、增长潜力等" /></label>
+            <label>劣势与风险<textarea rows={4} value={values.weaknesses} onChange={(event) => set("weaknesses", event.target.value)} placeholder="价格敏感、账期、认证要求、沟通或交付风险等" /></label>
+
+            <div className="editor-section-heading field-wide"><h3>主要人员和联系方式</h3><p>每位联系人一行，便于快速复制和查找</p></div>
+            <label className="field-wide">联系人<textarea rows={5} value={values.contacts} onChange={(event) => set("contacts", event.target.value)} placeholder={"姓名｜职务｜邮箱｜电话｜WhatsApp/微信\n例如：Jane Smith｜采购经理｜jane@example.com｜+1 206 555 0100｜WhatsApp 同号"} /></label>
           </>}
           {tab === "suppliers" && <>
             <label>供应商编码 *<input required value={values.code} onChange={(event) => set("code", event.target.value)} autoFocus /></label>

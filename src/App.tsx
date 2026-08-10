@@ -266,7 +266,11 @@ export default function App() {
     ),
   );
   const filteredCustomers = customers.filter((item) =>
-    [item.code, item.legalName, item.market, item.currency].some((value) =>
+    [
+      item.code, item.legalName, item.market, item.currency, item.address,
+      item.shippingAddress, item.billingAddress, item.purchaseIntent,
+      item.customerAnalysis, item.contacts,
+    ].some((value) =>
       value.toLocaleLowerCase().includes(normalizedQuery),
     ),
   );
@@ -291,7 +295,7 @@ export default function App() {
           <span className="brand-mark">TD</span>
           <span>
             <strong>TradeDesk</strong>
-            <small>Local · 0.6.2</small>
+            <small>Local · 0.7.0</small>
           </span>
         </div>
 
@@ -461,7 +465,7 @@ export default function App() {
               <label>
                 <span className="sr-only">搜索主数据</span>
                 <input
-                  placeholder="按编号、名称或 HS 编码搜索"
+                  placeholder={masterTab === "customers" ? "搜索客户、地址、联系人或购买意向" : "按编号、名称或 HS 编码搜索"}
                   value={masterQuery}
                   onChange={(event) => setMasterQuery(event.target.value)}
                 />
