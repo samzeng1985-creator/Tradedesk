@@ -1,14 +1,20 @@
 mod document;
 mod domain;
+mod security;
 mod spreadsheet;
 mod storage;
 
-use std::{path::PathBuf, sync::Mutex};
+use std::{
+    path::PathBuf,
+    sync::Mutex,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use domain::{
-    BusinessCase, BusinessCaseInput, CompanyRegistry, ComponentOption, ComponentOptionInput,
-    ComponentOptionTranslationInput, ConfigComponent, ConfigComponentInput, ConfigurableProduct,
-    ConfigurableProductInput, ConvertDocumentInput, CreateDocumentInput, Customer, CustomerInput,
+    AttachmentInput, AttachmentRecord, BackupResult, BusinessCase, BusinessCaseInput,
+    CompanyRegistry, ComponentOption, ComponentOptionInput, ComponentOptionTranslationInput,
+    ConfigComponent, ConfigComponentInput, ConfigurableProduct, ConfigurableProductInput,
+    ConvertDocumentInput, CreateDocumentInput, Customer, CustomerInput, DocumentDraft,
     DocumentExportResult, Product, ProductInput, ProductionMilestone, ProductionMilestoneInput,
     PurchaseOrder, PurchaseOrderInput, PurchaseStatus, SaveDocumentInput, Supplier, SupplierInput,
     TradeDocument, WorkspaceSummary,
@@ -20,6 +26,10 @@ use zeroize::Zeroizing;
 
 struct AppState {
     database_path: PathBuf,
+    recovery_path: PathBuf,
+    backup_dir: PathBuf,
+    backup_cache_dir: PathBuf,
+    attachment_export_dir: PathBuf,
     export_dir: PathBuf,
     render_cache_dir: PathBuf,
     typst_path: Option<PathBuf>,
@@ -68,11 +78,10 @@ fn workspace_exists(state: State<'_, AppState>) -> bool {
     state.database_path.exists()
 }
 
-#[tauri::command]
-fn unlock_workspace(
-    password: String,
+fn open_workspace(
+    password: Zeroizing<String>,
     company_name: Option<String>,
-    state: State<'_, AppState>,
+    state: &State<'_, AppState>,
 ) -> Result<WorkspaceSummary, String> {
     if password.chars().count() < 8 {
         return Err("工作区密码至少需要 8 个字符。".to_owned());
@@ -80,18 +89,46 @@ fn unlock_workspace(
     if let Some(parent) = state.database_path.parent() {
         std::fs::create_dir_all(parent).map_err(|_| "无法创建本地数据目录。")?;
     }
-    let database = EncryptedDatabase::open(&state.database_path, Zeroizing::new(password))
-        .map_err(database_error)?;
+    let database =
+        EncryptedDatabase::open(&state.database_path, password).map_err(database_error)?;
     if let Some(name) = company_name {
         database.initialize_company(&name).map_err(database_error)?;
     }
-    let summary = database.summary().map_err(database_error)?;
+    let mut summary = database.summary().map_err(database_error)?;
+    if security::recovery_vault_exists(&state.recovery_path) {
+        summary.recovery_ready = true;
+    } else {
+        summary.recovery_key = security::create_recovery_vault(
+            &state.recovery_path,
+            database.recovery_secret().as_str(),
+        )?;
+        summary.recovery_ready = true;
+    }
+    security::commit_restored_workspace(&state.database_path, &state.recovery_path)?;
     let mut guard = state
         .database
         .lock()
         .map_err(|_| "工作区状态异常，请重启软件。")?;
     *guard = Some(database);
     Ok(summary)
+}
+
+#[tauri::command]
+fn unlock_workspace(
+    password: String,
+    company_name: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<WorkspaceSummary, String> {
+    open_workspace(Zeroizing::new(password), company_name, &state)
+}
+
+#[tauri::command]
+fn unlock_workspace_with_recovery(
+    recovery_key: String,
+    state: State<'_, AppState>,
+) -> Result<WorkspaceSummary, String> {
+    let password = security::recover_password(&state.recovery_path, Zeroizing::new(recovery_key))?;
+    open_workspace(password, None, &state)
 }
 
 #[tauri::command]
@@ -106,7 +143,150 @@ fn lock_workspace(state: State<'_, AppState>) -> Result<(), String> {
 
 #[tauri::command]
 fn workspace_summary(state: State<'_, AppState>) -> Result<WorkspaceSummary, String> {
-    with_database(state, EncryptedDatabase::summary)
+    let mut summary = with_database(state.clone(), EncryptedDatabase::summary)?;
+    summary.recovery_ready = security::recovery_vault_exists(&state.recovery_path);
+    Ok(summary)
+}
+
+#[tauri::command]
+fn rotate_recovery_key(state: State<'_, AppState>) -> Result<String, String> {
+    let password = with_database(state.clone(), |database| Ok(database.recovery_secret()))?;
+    security::create_recovery_vault(&state.recovery_path, password.as_str())
+}
+
+#[tauri::command]
+fn create_workspace_backup(state: State<'_, AppState>) -> Result<BackupResult, String> {
+    std::fs::create_dir_all(&state.backup_dir)
+        .map_err(|error| format!("无法创建备份目录：{error}"))?;
+    std::fs::create_dir_all(&state.backup_cache_dir)
+        .map_err(|error| format!("无法创建备份缓存目录：{error}"))?;
+    if !security::recovery_vault_exists(&state.recovery_path) {
+        return Err("请先生成恢复密钥，再创建备份。".to_owned());
+    }
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| "系统时间无效，无法创建备份。".to_owned())?
+        .as_secs();
+    let database_backup = state
+        .backup_cache_dir
+        .join(format!("workspace-{stamp}.tdesk"));
+    let output = state
+        .backup_dir
+        .join(format!("TradeDesk-backup-{stamp}.tdbackup"));
+    with_database(state.clone(), |database| {
+        database.backup_to(&database_backup)
+    })?;
+    let size_bytes =
+        security::create_backup_package(&database_backup, &state.recovery_path, &output);
+    let _ = std::fs::remove_file(&database_backup);
+    Ok(BackupResult {
+        path: output.to_string_lossy().into_owned(),
+        size_bytes: size_bytes?,
+        created_at: stamp.to_string(),
+    })
+}
+
+#[tauri::command]
+fn restore_workspace_backup(bytes: Vec<u8>, state: State<'_, AppState>) -> Result<(), String> {
+    let guard = state
+        .database
+        .lock()
+        .map_err(|_| "工作区状态异常，请重启软件。")?;
+    if guard.is_some() {
+        return Err("恢复备份前请先锁定工作区。".to_owned());
+    }
+    drop(guard);
+    security::restore_backup_package(&bytes, &state.database_path, &state.recovery_path)
+}
+
+#[tauri::command]
+fn workspace_restore_pending(state: State<'_, AppState>) -> bool {
+    security::restore_pending(&state.database_path)
+}
+
+#[tauri::command]
+fn rollback_workspace_restore(state: State<'_, AppState>) -> Result<(), String> {
+    let guard = state
+        .database
+        .lock()
+        .map_err(|_| "工作区状态异常，请重启软件。")?;
+    if guard.is_some() {
+        return Err("撤销恢复前请先锁定工作区。".to_owned());
+    }
+    drop(guard);
+    security::rollback_restored_workspace(&state.database_path, &state.recovery_path)
+}
+
+#[tauri::command]
+fn list_attachments(state: State<'_, AppState>) -> Result<Vec<AttachmentRecord>, String> {
+    with_database(state, EncryptedDatabase::list_attachments)
+}
+
+#[tauri::command]
+fn save_attachment(
+    input: AttachmentInput,
+    state: State<'_, AppState>,
+) -> Result<AttachmentRecord, String> {
+    with_database(state, |database| database.save_attachment(input))
+}
+
+fn safe_file_name(value: &str) -> String {
+    value
+        .chars()
+        .map(|character| {
+            if matches!(
+                character,
+                '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*'
+            ) {
+                '_'
+            } else {
+                character
+            }
+        })
+        .collect::<String>()
+        .trim()
+        .to_owned()
+}
+
+#[tauri::command]
+fn export_attachment(id: String, state: State<'_, AppState>) -> Result<String, String> {
+    let (file_name, bytes) =
+        with_database(state.clone(), |database| database.attachment_content(&id))?;
+    std::fs::create_dir_all(&state.attachment_export_dir)
+        .map_err(|error| format!("无法创建附件导出目录：{error}"))?;
+    let safe_name = safe_file_name(&file_name);
+    let prefix = id.get(..8).unwrap_or(&id);
+    let output = state
+        .attachment_export_dir
+        .join(format!("{prefix}-{safe_name}"));
+    std::fs::write(&output, bytes).map_err(|error| format!("无法导出附件：{error}"))?;
+    Ok(output.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
+fn delete_attachment(id: String, state: State<'_, AppState>) -> Result<(), String> {
+    with_database(state, |database| database.delete_attachment(&id))
+}
+
+#[tauri::command]
+fn save_document_draft(
+    input: SaveDocumentInput,
+    state: State<'_, AppState>,
+) -> Result<DocumentDraft, String> {
+    with_database(state, |database| database.save_document_draft(input))
+}
+
+#[tauri::command]
+fn load_document_draft(
+    id: String,
+    state: State<'_, AppState>,
+) -> Result<Option<DocumentDraft>, String> {
+    with_database(state, |database| database.load_document_draft(&id))
+}
+
+#[tauri::command]
+fn delete_document_draft(id: String, state: State<'_, AppState>) -> Result<(), String> {
+    with_database(state, |database| database.delete_document_draft(&id))
 }
 
 #[tauri::command]
@@ -586,18 +766,34 @@ pub fn run() {
         .setup(|app| {
             let app_data_dir = app.path().app_data_dir()?;
             let database_path = app_data_dir.join("workspace.tdesk");
+            let recovery_path = app_data_dir.join("workspace.recovery.tdesk");
             let export_dir = app
                 .path()
                 .document_dir()
                 .unwrap_or_else(|_| app_data_dir.clone())
                 .join("TradeDesk Exports");
             let render_cache_dir = app.path().app_cache_dir()?.join("document-render");
+            let backup_cache_dir = app.path().app_cache_dir()?.join("backup");
+            let backup_dir = app
+                .path()
+                .document_dir()
+                .unwrap_or_else(|_| app_data_dir.clone())
+                .join("TradeDesk Backups");
+            let attachment_export_dir = app
+                .path()
+                .document_dir()
+                .unwrap_or_else(|_| app_data_dir.clone())
+                .join("TradeDesk Attachments");
             let executable_dir = std::env::current_exe()?
                 .parent()
                 .map(PathBuf::from)
                 .unwrap_or_else(|| app_data_dir.clone());
             app.manage(AppState {
                 database_path,
+                recovery_path,
+                backup_dir,
+                backup_cache_dir,
+                attachment_export_dir,
                 export_dir,
                 render_cache_dir,
                 typst_path: document::find_typst(&executable_dir),
@@ -608,8 +804,21 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             workspace_exists,
             unlock_workspace,
+            unlock_workspace_with_recovery,
             lock_workspace,
             workspace_summary,
+            rotate_recovery_key,
+            create_workspace_backup,
+            restore_workspace_backup,
+            workspace_restore_pending,
+            rollback_workspace_restore,
+            list_attachments,
+            save_attachment,
+            export_attachment,
+            delete_attachment,
+            save_document_draft,
+            load_document_draft,
+            delete_document_draft,
             get_company_registry,
             save_company_registry,
             list_products,

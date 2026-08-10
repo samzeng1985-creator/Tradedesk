@@ -158,6 +158,33 @@ export interface WorkspaceSummary {
   purchaseOrders: number;
   productionRisks: number;
   documents: number;
+  recoveryKey: string;
+  recoveryReady: boolean;
+}
+
+export interface BackupResult {
+  path: string;
+  sizeBytes: number;
+  createdAt: string;
+}
+
+export interface AttachmentRecord {
+  id: string;
+  entityType: string;
+  entityId: string;
+  fileName: string;
+  mimeType: string;
+  sizeBytes: number;
+  sha256: string;
+  createdAt: string;
+}
+
+export interface AttachmentInput {
+  entityType: string;
+  entityId: string;
+  fileName: string;
+  mimeType: string;
+  bytes: number[];
 }
 
 export interface CompanySigningAsset {
@@ -418,6 +445,11 @@ export interface SaveDocumentInput {
   language: string;
   issueDate: string;
   payload: DocumentPayload;
+}
+
+export interface DocumentDraft {
+  input: SaveDocumentInput;
+  updatedAt: string;
 }
 
 export interface DocumentExportResult {

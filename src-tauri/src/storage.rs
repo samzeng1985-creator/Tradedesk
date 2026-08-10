@@ -1,21 +1,23 @@
-use std::path::Path;
+use std::{path::Path, time::Duration};
 
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
 use crate::domain::{
-    BusinessCase, BusinessCaseInput, BusinessCaseLine, CompanyProfile, CompanyRecord,
-    CompanyRegistry, CompanySigningAsset, ComponentOption, ComponentOptionInput,
-    ComponentOptionTranslationInput, ConfigComponent, ConfigComponentInput, ConfigurableProduct,
-    ConfigurableProductInput, ConfigurableProductLine, ConvertDocumentInput, CreateDocumentInput,
-    Customer, CustomerInput, DocumentLineSnapshot, DocumentPayload, DocumentStatus, DocumentType,
-    MilestoneStatus, PipelineStage, Product, ProductInput, ProductionMilestone,
-    ProductionMilestoneInput, PurchaseOrder, PurchaseOrderInput, PurchaseOrderLine, PurchaseStatus,
-    SaveDocumentInput, Supplier, SupplierInput, TradeDocument, WorkspaceSummary,
+    AttachmentInput, AttachmentRecord, BusinessCase, BusinessCaseInput, BusinessCaseLine,
+    CompanyProfile, CompanyRecord, CompanyRegistry, CompanySigningAsset, ComponentOption,
+    ComponentOptionInput, ComponentOptionTranslationInput, ConfigComponent, ConfigComponentInput,
+    ConfigurableProduct, ConfigurableProductInput, ConfigurableProductLine, ConvertDocumentInput,
+    CreateDocumentInput, Customer, CustomerInput, DocumentDraft, DocumentLineSnapshot,
+    DocumentPayload, DocumentStatus, DocumentType, MilestoneStatus, PipelineStage, Product,
+    ProductInput, ProductionMilestone, ProductionMilestoneInput, PurchaseOrder, PurchaseOrderInput,
+    PurchaseOrderLine, PurchaseStatus, SaveDocumentInput, Supplier, SupplierInput, TradeDocument,
+    WorkspaceSummary,
 };
 
-const SCHEMA_VERSION: i64 = 10;
+const SCHEMA_VERSION: i64 = 11;
 
 const MILESTONE_STAGES: [(&str, &str); 6] = [
     ("raw_material", "原料准备"),
@@ -28,6 +30,7 @@ const MILESTONE_STAGES: [(&str, &str); 6] = [
 
 pub struct EncryptedDatabase {
     connection: Connection,
+    key: Zeroizing<String>,
 }
 
 impl EncryptedDatabase {
@@ -49,9 +52,13 @@ impl EncryptedDatabase {
             row.get::<_, i64>(0)
         })?;
 
-        let database = Self { connection };
+        let database = Self { connection, key };
         database.migrate()?;
         Ok(database)
+    }
+
+    pub fn recovery_secret(&self) -> Zeroizing<String> {
+        Zeroizing::new(self.key.to_string())
     }
 
     fn migrate(&self) -> rusqlite::Result<()> {
@@ -172,6 +179,26 @@ impl EncryptedDatabase {
                 action TEXT NOT NULL,
                 payload_json TEXT NOT NULL,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+             );
+
+             CREATE TABLE IF NOT EXISTS attachments (
+                id TEXT PRIMARY KEY,
+                entity_type TEXT NOT NULL,
+                entity_id TEXT NOT NULL DEFAULT '',
+                file_name TEXT NOT NULL,
+                mime_type TEXT NOT NULL DEFAULT 'application/octet-stream',
+                content BLOB NOT NULL,
+                size_bytes INTEGER NOT NULL,
+                sha256 TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+             );
+             CREATE INDEX IF NOT EXISTS idx_attachments_entity
+                ON attachments(entity_type, entity_id, created_at DESC);
+
+             CREATE TABLE IF NOT EXISTS drafts (
+                draft_key TEXT PRIMARY KEY,
+                payload_json TEXT NOT NULL,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
              );",
         )?;
 
@@ -570,6 +597,8 @@ impl EncryptedDatabase {
             purchase_orders: self.count("purchase_orders")?,
             production_risks: self.count("production_risks")?,
             documents: self.count("documents")?,
+            recovery_key: String::new(),
+            recovery_ready: false,
         })
     }
 
@@ -2236,6 +2265,147 @@ impl EncryptedDatabase {
         self.get_document(id)
     }
 
+    pub fn backup_to(&self, path: &Path) -> rusqlite::Result<()> {
+        let mut destination = Connection::open(path)?;
+        destination.pragma_update(None, "key", self.key.as_str())?;
+        destination.execute_batch(
+            "PRAGMA foreign_keys = ON;
+             PRAGMA journal_mode = DELETE;
+             PRAGMA synchronous = FULL;",
+        )?;
+        let backup = rusqlite::backup::Backup::new(&self.connection, &mut destination)?;
+        backup.run_to_completion(128, Duration::from_millis(10), None)?;
+        drop(backup);
+        destination
+            .query_row("PRAGMA integrity_check", [], |row| row.get::<_, String>(0))
+            .and_then(|result| {
+                if result == "ok" {
+                    Ok(())
+                } else {
+                    Err(rusqlite::Error::InvalidQuery)
+                }
+            })
+    }
+
+    pub fn save_attachment(&self, input: AttachmentInput) -> rusqlite::Result<AttachmentRecord> {
+        let entity_type = input.entity_type.trim();
+        let file_name = input.file_name.trim();
+        if entity_type.is_empty()
+            || file_name.is_empty()
+            || input.bytes.is_empty()
+            || input.bytes.len() > 20 * 1024 * 1024
+        {
+            return Err(rusqlite::Error::InvalidQuery);
+        }
+        let id = Uuid::new_v4().to_string();
+        let size_bytes = input.bytes.len() as i64;
+        let sha256 = format!("{:x}", Sha256::digest(&input.bytes));
+        self.connection.execute(
+            "INSERT INTO attachments(
+                id, entity_type, entity_id, file_name, mime_type, content, size_bytes, sha256
+             ) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                id,
+                entity_type,
+                input.entity_id.trim(),
+                file_name,
+                if input.mime_type.trim().is_empty() {
+                    "application/octet-stream"
+                } else {
+                    input.mime_type.trim()
+                },
+                input.bytes,
+                size_bytes,
+                sha256,
+            ],
+        )?;
+        self.audit("attachment", &id, "create")?;
+        self.get_attachment(&id)
+    }
+
+    pub fn list_attachments(&self) -> rusqlite::Result<Vec<AttachmentRecord>> {
+        let mut statement = self.connection.prepare(
+            "SELECT id, entity_type, entity_id, file_name, mime_type, size_bytes, sha256, created_at
+             FROM attachments ORDER BY created_at DESC, id DESC",
+        )?;
+        statement.query_map([], map_attachment)?.collect()
+    }
+
+    pub fn get_attachment(&self, id: &str) -> rusqlite::Result<AttachmentRecord> {
+        self.connection.query_row(
+            "SELECT id, entity_type, entity_id, file_name, mime_type, size_bytes, sha256, created_at
+             FROM attachments WHERE id = ?1",
+            params![id],
+            map_attachment,
+        )
+    }
+
+    pub fn attachment_content(&self, id: &str) -> rusqlite::Result<(String, Vec<u8>)> {
+        self.connection.query_row(
+            "SELECT file_name, content FROM attachments WHERE id = ?1",
+            params![id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+    }
+
+    pub fn delete_attachment(&self, id: &str) -> rusqlite::Result<()> {
+        let changed = self
+            .connection
+            .execute("DELETE FROM attachments WHERE id = ?1", params![id])?;
+        if changed == 0 {
+            return Err(rusqlite::Error::QueryReturnedNoRows);
+        }
+        self.audit("attachment", id, "delete")
+    }
+
+    pub fn save_document_draft(&self, input: SaveDocumentInput) -> rusqlite::Result<DocumentDraft> {
+        let document = self.get_document(&input.id)?;
+        if document.status != DocumentStatus::Draft {
+            return Err(rusqlite::Error::InvalidQuery);
+        }
+        let draft_key = format!("document:{}", input.id);
+        let payload_json = serde_json::to_string(&input).map_err(json_error)?;
+        self.connection.execute(
+            "INSERT INTO drafts(draft_key, payload_json, updated_at)
+             VALUES(?1, ?2, CURRENT_TIMESTAMP)
+             ON CONFLICT(draft_key) DO UPDATE SET
+                payload_json = excluded.payload_json,
+                updated_at = CURRENT_TIMESTAMP",
+            params![draft_key, payload_json],
+        )?;
+        self.load_document_draft(&input.id)?
+            .ok_or(rusqlite::Error::QueryReturnedNoRows)
+    }
+
+    pub fn load_document_draft(
+        &self,
+        document_id: &str,
+    ) -> rusqlite::Result<Option<DocumentDraft>> {
+        let draft_key = format!("document:{document_id}");
+        self.connection
+            .query_row(
+                "SELECT payload_json, updated_at FROM drafts WHERE draft_key = ?1",
+                params![draft_key],
+                |row| {
+                    let payload_json: String = row.get(0)?;
+                    Ok(DocumentDraft {
+                        input: serde_json::from_str(&payload_json).map_err(json_error)?,
+                        updated_at: row.get(1)?,
+                    })
+                },
+            )
+            .optional()
+    }
+
+    pub fn delete_document_draft(&self, document_id: &str) -> rusqlite::Result<()> {
+        let draft_key = format!("document:{document_id}");
+        self.connection.execute(
+            "DELETE FROM drafts WHERE draft_key = ?1",
+            params![draft_key],
+        )?;
+        Ok(())
+    }
+
     fn audit(&self, entity: &str, id: &str, action: &str) -> rusqlite::Result<()> {
         self.connection.execute(
             "INSERT INTO audit_events(entity_type, entity_id, action, payload_json)
@@ -2270,6 +2440,19 @@ impl EncryptedDatabase {
             .query_row(query, [], |row| row.get::<_, i64>(0))?;
         Ok(count as u64)
     }
+}
+
+fn map_attachment(row: &rusqlite::Row<'_>) -> rusqlite::Result<AttachmentRecord> {
+    Ok(AttachmentRecord {
+        id: row.get(0)?,
+        entity_type: row.get(1)?,
+        entity_id: row.get(2)?,
+        file_name: row.get(3)?,
+        mime_type: row.get(4)?,
+        size_bytes: row.get::<_, i64>(5)? as u64,
+        sha256: row.get(6)?,
+        created_at: row.get(7)?,
+    })
 }
 
 fn map_config_component(row: &rusqlite::Row<'_>) -> rusqlite::Result<ConfigComponent> {
@@ -2469,6 +2652,51 @@ fn json_error(error: serde_json::Error) -> rusqlite::Error {
 mod tests {
     use super::*;
     use crate::domain::{BusinessCaseLineInput, ConfigurableProductLineInput};
+
+    #[test]
+    fn encrypted_attachments_and_online_backup_round_trip() {
+        let root = std::env::temp_dir().join(format!("tradedesk-attachment-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("workspace.tdesk");
+        let backup_path = root.join("backup.tdesk");
+        let secret_bytes = b"confidential purchase confirmation".to_vec();
+        let attachment_id;
+        {
+            let database =
+                EncryptedDatabase::open(&path, Zeroizing::new("test-password".to_owned())).unwrap();
+            let saved = database
+                .save_attachment(AttachmentInput {
+                    entity_type: "purchase_order".into(),
+                    entity_id: "PO-2026-0001".into(),
+                    file_name: "confirmation.txt".into(),
+                    mime_type: "text/plain".into(),
+                    bytes: secret_bytes.clone(),
+                })
+                .unwrap();
+            attachment_id = saved.id;
+            assert_eq!(saved.size_bytes, secret_bytes.len() as u64);
+            assert_eq!(
+                database.attachment_content(&attachment_id).unwrap().1,
+                secret_bytes
+            );
+            database.backup_to(&backup_path).unwrap();
+        }
+        let raw_database = std::fs::read(&path).unwrap();
+        assert!(
+            !raw_database
+                .windows(secret_bytes.len())
+                .any(|window| window == secret_bytes)
+        );
+        let backup =
+            EncryptedDatabase::open(&backup_path, Zeroizing::new("test-password".to_owned()))
+                .unwrap();
+        assert_eq!(
+            backup.attachment_content(&attachment_id).unwrap().1,
+            secret_bytes
+        );
+        drop(backup);
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn encrypted_database_persists_business_workflow() {
@@ -2806,15 +3034,19 @@ mod tests {
             let mut payload = draft.payload.clone();
             payload.seller_address = "Shenzhen, China".into();
             payload.buyer_address = "Seattle, USA".into();
-            let saved = database
-                .save_document(SaveDocumentInput {
-                    id: draft.id.clone(),
-                    number: draft.number.clone(),
-                    language: draft.language.clone(),
-                    issue_date: draft.issue_date.clone(),
-                    payload: payload.clone(),
-                })
-                .unwrap();
+            let draft_input = SaveDocumentInput {
+                id: draft.id.clone(),
+                number: draft.number.clone(),
+                language: draft.language.clone(),
+                issue_date: draft.issue_date.clone(),
+                payload: payload.clone(),
+            };
+            database.save_document_draft(draft_input.clone()).unwrap();
+            let recovered_draft = database.load_document_draft(&draft.id).unwrap().unwrap();
+            assert_eq!(recovered_draft.input.payload.buyer_address, "Seattle, USA");
+            database.delete_document_draft(&draft.id).unwrap();
+            assert!(database.load_document_draft(&draft.id).unwrap().is_none());
+            let saved = database.save_document(draft_input).unwrap();
             assert!(
                 saved
                     .validation_issues
@@ -2979,7 +3211,7 @@ mod tests {
                     |row| row.get::<_, String>(0),
                 )
                 .unwrap(),
-            "10"
+            "11"
         );
         drop(database);
         let _ = std::fs::remove_file(&path);
@@ -3034,7 +3266,7 @@ mod tests {
                     |row| row.get::<_, String>(0),
                 )
                 .unwrap(),
-            "10"
+            "11"
         );
         drop(database);
         let _ = std::fs::remove_file(&path);

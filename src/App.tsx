@@ -3,6 +3,7 @@ import { businessCaseApi, documentApi, fulfillmentApi, masterApi, workspaceApi }
 import { BusinessCaseCenter } from "./BusinessCaseCenter";
 import { CompanySettings } from "./CompanySettings";
 import { ComponentLibrary, ConfigurableProductLibrary } from "./ConfigurableProductCenter";
+import { DataSecurityCenter, RecoveryKeyNotice } from "./DataSecurityCenter";
 import { DocumentCenter } from "./DocumentCenter";
 import { FulfillmentCenter } from "./FulfillmentCenter";
 import { MasterEditor } from "./MasterEditor";
@@ -37,7 +38,7 @@ import type {
   WorkspaceSummary,
 } from "./domain";
 
-type View = "overview" | "cases" | "masters" | "fulfillment" | "documents" | "settings";
+type View = "overview" | "cases" | "masters" | "fulfillment" | "documents" | "settings" | "security";
 
 const pipeline: Array<{ key: PipelineStage; label: string }> = [
   { key: "quotation", label: "报价" },
@@ -55,6 +56,7 @@ const viewTitles: Record<View, { title: string; subtitle: string }> = {
   fulfillment: { title: "采购与生产", subtitle: "只跟踪关键里程碑，不做复杂排产" },
   documents: { title: "单证中心", subtitle: "版本、状态与跨单证一致性" },
   settings: { title: "企业设置", subtitle: "统一配置公司名称、Logo 和电子签名" },
+  security: { title: "数据与安全", subtitle: "恢复密钥、加密备份与附件保护" },
 };
 
 const statusText: Record<RecordStatus, string> = {
@@ -126,10 +128,12 @@ export default function App() {
   const [saving, setSaving] = useState(false);
   const [masterTransferBusy, setMasterTransferBusy] = useState(false);
   const [masterTransferMessage, setMasterTransferMessage] = useState("");
+  const [recoveryKeyNotice, setRecoveryKeyNotice] = useState("");
+  const [restorePending, setRestorePending] = useState(false);
 
   useEffect(() => {
-    workspaceApi.exists()
-      .then(setWorkspaceExists)
+    Promise.all([workspaceApi.exists(), workspaceApi.restorePending()])
+      .then(([exists, pending]) => { setWorkspaceExists(exists); setRestorePending(pending); })
       .finally(() => setWorkspaceChecking(false));
   }, []);
 
@@ -159,10 +163,32 @@ export default function App() {
   }
 
   async function unlock(password: string, companyName?: string) {
-    await workspaceApi.unlock(password, companyName);
+    const summary = await workspaceApi.unlock(password, companyName);
+    if (summary.recoveryKey) setRecoveryKeyNotice(summary.recoveryKey);
     await loadMasterData();
     setCompanyRegistry(await workspaceApi.companyRegistry());
     setWorkspaceExists(true);
+    setRestorePending(false);
+  }
+
+  async function recover(recoveryKey: string) {
+    await workspaceApi.unlockWithRecovery(recoveryKey);
+    await loadMasterData();
+    setCompanyRegistry(await workspaceApi.companyRegistry());
+    setWorkspaceExists(true);
+    setRestorePending(false);
+  }
+
+  async function restoreBackup(bytes: number[]) {
+    await workspaceApi.restoreBackup(bytes);
+    setWorkspaceExists(true);
+    setRestorePending(await workspaceApi.restorePending());
+  }
+
+  async function rollbackRestore() {
+    await workspaceApi.rollbackRestore();
+    setRestorePending(false);
+    setWorkspaceExists(await workspaceApi.exists());
   }
 
   async function lock() {
@@ -385,7 +411,7 @@ export default function App() {
   }
 
   if (!workspace) {
-    return <UnlockScreen checking={workspaceChecking} existing={workspaceExists} onUnlock={unlock} />;
+    return <UnlockScreen checking={workspaceChecking} existing={workspaceExists} restorePending={restorePending} onUnlock={unlock} onRecover={recover} onRestore={restoreBackup} onRollbackRestore={rollbackRestore} />;
   }
 
   return (
@@ -395,7 +421,7 @@ export default function App() {
           <span className="brand-mark">TD</span>
           <span>
             <strong>TradeDesk</strong>
-            <small>Local · 0.13.0</small>
+            <small>Local · 0.14.0</small>
           </span>
         </div>
 
@@ -420,6 +446,9 @@ export default function App() {
           </button>
           <button className={view === "settings" ? "selected" : ""} onClick={() => setView("settings")}>
             企业设置
+          </button>
+          <button className={view === "security" ? "selected" : ""} onClick={() => setView("security")}>
+            数据与安全
           </button>
         </nav>
 
@@ -660,8 +689,12 @@ export default function App() {
         {view === "settings" && companyRegistry && (
           <CompanySettings registry={companyRegistry} onSave={saveCompanyRegistry} />
         )}
+        {view === "security" && (
+          <DataSecurityCenter recoveryReady={workspace.recoveryReady} onRecoveryKey={setRecoveryKeyNotice} />
+        )}
       </main>
       {editorOpen && (masterTab === "products" || masterTab === "customers" || masterTab === "suppliers") && <MasterEditor tab={masterTab} record={editingRecord} saving={saving} onClose={() => setEditorOpen(false)} onSave={saveMaster} />}
+      {recoveryKeyNotice && <RecoveryKeyNotice recoveryKey={recoveryKeyNotice} onClose={() => setRecoveryKeyNotice("")} />}
     </div>
   );
 }

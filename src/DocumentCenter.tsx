@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { documentDraftApi } from "./api";
 import type {
   BusinessCase,
   CompanyRecord,
@@ -237,6 +238,11 @@ function DocumentEditor({ initial, companyRegistry, onClose, onSave, onIssue, on
   const [message, setMessage] = useState("");
   const [companyId, setCompanyId] = useState(companyRegistry?.defaultCompanyId ?? "");
   const [signingAssetId, setSigningAssetId] = useState("");
+  const [draftReady, setDraftReady] = useState(false);
+  const [autosaveState, setAutosaveState] = useState("");
+  const lastDraftSignature = useRef(JSON.stringify({ id: initial.id, number: initial.number, issueDate: initial.issueDate, language: initial.language, payload: initial.payload }));
+  const autosaveTimer = useRef<number | null>(null);
+  const autosavePromise = useRef<Promise<unknown> | null>(null);
   const selectedCompany = companyRegistry?.companies.find((item) => item.id === companyId) ?? companyRegistry?.companies[0];
   const selectedAsset = selectedCompany?.signingAssets.find((item) => item.id === signingAssetId);
   const editable = document.status === "draft";
@@ -244,11 +250,66 @@ function DocumentEditor({ initial, companyRegistry, onClose, onSave, onIssue, on
   const quotation = document.documentType === "commercial_quotation";
   const invoiceLike = document.documentType === "commercial_invoice" || document.documentType === "proforma_invoice";
   const setPayloadField = (patch: Partial<DocumentPayload>) => setPayload((current) => ({ ...current, ...patch }));
+  const draftInput = (): SaveDocumentInput => ({ id: document.id, number, issueDate, language, payload });
+
+  useEffect(() => {
+    if (!editable) { setDraftReady(true); return; }
+    let cancelled = false;
+    documentDraftApi.load(document.id).then((draft) => {
+      if (cancelled || !draft) return;
+      setNumber(draft.input.number);
+      setIssueDate(draft.input.issueDate);
+      setLanguage(draft.input.language);
+      setPayload(structuredClone(draft.input.payload));
+      lastDraftSignature.current = JSON.stringify(draft.input);
+      setMessage(`已恢复 ${draft.updatedAt} 自动保存的编辑内容`);
+    }).catch((reason) => {
+      if (!cancelled) setMessage(`读取自动草稿失败：${String(reason)}`);
+    }).finally(() => {
+      if (!cancelled) setDraftReady(true);
+    });
+    return () => { cancelled = true; };
+  }, [document.id, editable]);
+
+  useEffect(() => {
+    if (!editable || !draftReady) return;
+    const input = draftInput();
+    const signature = JSON.stringify(input);
+    if (signature === lastDraftSignature.current) return;
+    setAutosaveState("等待自动保存");
+    autosaveTimer.current = window.setTimeout(() => {
+      setAutosaveState("自动保存中…");
+      const pending = documentDraftApi.save(input).then((draft) => {
+        lastDraftSignature.current = JSON.stringify(draft.input);
+        setAutosaveState(`已自动保存 ${draft.updatedAt}`);
+      }).catch((reason) => setAutosaveState(`自动保存失败：${String(reason)}`));
+      autosavePromise.current = pending;
+      void pending.finally(() => {
+        if (autosavePromise.current === pending) autosavePromise.current = null;
+      });
+    }, 900);
+    return () => {
+      if (autosaveTimer.current !== null) window.clearTimeout(autosaveTimer.current);
+      autosaveTimer.current = null;
+    };
+  }, [document.id, draftReady, editable, issueDate, language, number, payload]);
+
+  async function finishPendingAutosave() {
+    if (autosaveTimer.current !== null) {
+      window.clearTimeout(autosaveTimer.current);
+      autosaveTimer.current = null;
+    }
+    if (autosavePromise.current) await autosavePromise.current;
+  }
 
   async function save() {
     setBusy("save"); setMessage("");
     try {
-      const updated = await onSave({ id: document.id, number, issueDate, language, payload });
+      await finishPendingAutosave();
+      const input = draftInput();
+      const updated = await onSave(input);
+      await documentDraftApi.delete(document.id);
+      lastDraftSignature.current = JSON.stringify(input);
       setDocument(updated); setPayload(structuredClone(updated.payload)); setMessage("草稿已保存");
       return updated;
     } catch (reason) { setMessage(String(reason)); throw reason; } finally { setBusy(""); }
@@ -257,10 +318,29 @@ function DocumentEditor({ initial, companyRegistry, onClose, onSave, onIssue, on
   async function issue() {
     setBusy("issue"); setMessage("");
     try {
+      await finishPendingAutosave();
       const saved = await onSave({ id: document.id, number, issueDate, language, payload });
       const updated = await onIssue(saved.id);
+      await documentDraftApi.delete(document.id);
       setDocument(updated); setPayload(structuredClone(updated.payload)); setMessage("已签发并冻结为只读版本");
     } catch (reason) { setMessage(String(reason)); } finally { setBusy(""); }
+  }
+
+  async function closeEditor() {
+    if (editable && draftReady) {
+      const input = draftInput();
+      const signature = JSON.stringify(input);
+      if (signature !== lastDraftSignature.current) {
+        try {
+          await finishPendingAutosave();
+          await documentDraftApi.save(input);
+        } catch (reason) {
+          setMessage(`关闭前自动保存失败：${String(reason)}`);
+          return;
+        }
+      }
+    }
+    onClose();
   }
 
   async function output(action: "pdf" | "csv" | "print") {
@@ -273,7 +353,7 @@ function DocumentEditor({ initial, companyRegistry, onClose, onSave, onIssue, on
   }
 
   return <div className="document-editor-shell">
-    <header className="document-editor-toolbar"><div><span className="eyebrow">{typeLabels[document.documentType]} · V{document.version}</span><h2>{document.number}</h2></div><div className="document-toolbar-actions">{editable && <button className="button button-secondary" disabled={!!busy} onClick={() => void save().catch(() => undefined)}>保存草稿</button>}{editable && <button className="button button-primary" disabled={!!busy} onClick={() => void issue()}>签发冻结</button>}<button className="button button-secondary" disabled={!!busy} onClick={() => void output("pdf")}>PDF</button><button className="button button-secondary" disabled={!!busy} onClick={() => void output("csv")}>CSV</button><button className="button button-secondary" disabled={!!busy} onClick={() => void output("print")}>打印</button><button className="icon-button" onClick={onClose}>×</button></div></header>
+    <header className="document-editor-toolbar"><div><span className="eyebrow">{typeLabels[document.documentType]} · V{document.version}</span><h2>{document.number}</h2>{editable && autosaveState && <small className="autosave-state">{autosaveState}</small>}</div><div className="document-toolbar-actions">{editable && <button className="button button-secondary" disabled={!!busy} onClick={() => void save().catch(() => undefined)}>保存草稿</button>}{editable && <button className="button button-primary" disabled={!!busy} onClick={() => void issue()}>签发冻结</button>}<button className="button button-secondary" disabled={!!busy} onClick={() => void output("pdf")}>PDF</button><button className="button button-secondary" disabled={!!busy} onClick={() => void output("csv")}>CSV</button><button className="button button-secondary" disabled={!!busy} onClick={() => void output("print")}>打印</button><button className="icon-button" onClick={() => void closeEditor()}>×</button></div></header>
     {message && <div className="document-message">{message}</div>}
     <div className="document-editor-layout">
       <div className="document-form-panel">

@@ -48,6 +48,48 @@ pub struct WorkspaceSummary {
     pub purchase_orders: u64,
     pub production_risks: u64,
     pub documents: u64,
+    #[serde(default)]
+    pub recovery_key: String,
+    #[serde(default)]
+    pub recovery_ready: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BackupResult {
+    pub path: String,
+    pub size_bytes: u64,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AttachmentRecord {
+    pub id: String,
+    pub entity_type: String,
+    pub entity_id: String,
+    pub file_name: String,
+    pub mime_type: String,
+    pub size_bytes: u64,
+    pub sha256: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AttachmentInput {
+    pub entity_type: String,
+    pub entity_id: String,
+    pub file_name: String,
+    pub mime_type: String,
+    pub bytes: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DocumentDraft {
+    pub input: SaveDocumentInput,
+    pub updated_at: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

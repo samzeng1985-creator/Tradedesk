@@ -2,6 +2,9 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   BusinessCase,
   BusinessCaseInput,
+  AttachmentInput,
+  AttachmentRecord,
+  BackupResult,
   CompanyRegistry,
   CompanyRegistryInput,
   ComponentOption,
@@ -17,6 +20,7 @@ import type {
   Customer,
   CustomerInput,
   DocumentExportResult,
+  DocumentDraft,
   MasterImportResult,
   Product,
   ProductInput,
@@ -36,11 +40,25 @@ export const workspaceApi = {
   exists: () => invoke<boolean>("workspace_exists"),
   unlock: (password: string, companyName?: string) =>
     invoke<WorkspaceSummary>("unlock_workspace", { password, companyName }),
+  unlockWithRecovery: (recoveryKey: string) =>
+    invoke<WorkspaceSummary>("unlock_workspace_with_recovery", { recoveryKey }),
   lock: () => invoke<void>("lock_workspace"),
   summary: () => invoke<WorkspaceSummary>("workspace_summary"),
   companyRegistry: () => invoke<CompanyRegistry>("get_company_registry"),
   saveCompanyRegistry: (input: CompanyRegistryInput) =>
     invoke<CompanyRegistry>("save_company_registry", { input }),
+  rotateRecoveryKey: () => invoke<string>("rotate_recovery_key"),
+  createBackup: () => invoke<BackupResult>("create_workspace_backup"),
+  restoreBackup: (bytes: number[]) => invoke<void>("restore_workspace_backup", { bytes }),
+  restorePending: () => invoke<boolean>("workspace_restore_pending"),
+  rollbackRestore: () => invoke<void>("rollback_workspace_restore"),
+};
+
+export const attachmentApi = {
+  list: () => invoke<AttachmentRecord[]>("list_attachments"),
+  save: (input: AttachmentInput) => invoke<AttachmentRecord>("save_attachment", { input }),
+  export: (id: string) => invoke<string>("export_attachment", { id }),
+  delete: (id: string) => invoke<void>("delete_attachment", { id }),
 };
 
 export const documentApi = {
@@ -61,6 +79,12 @@ export const documentApi = {
   exportCsv: (id: string) => invoke<string>("export_document_csv", { id }),
   print: (id: string, companyId: string, signingAssetId: string) => invoke<DocumentExportResult>("print_document", { id, companyId, signingAssetId }),
   openPdf: (id: string) => invoke<void>("open_document_pdf", { id }),
+};
+
+export const documentDraftApi = {
+  save: (input: SaveDocumentInput) => invoke<DocumentDraft>("save_document_draft", { input }),
+  load: (id: string) => invoke<DocumentDraft | null>("load_document_draft", { id }),
+  delete: (id: string) => invoke<void>("delete_document_draft", { id }),
 };
 
 export const masterApi = {
