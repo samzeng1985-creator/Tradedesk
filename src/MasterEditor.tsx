@@ -8,6 +8,7 @@ import type {
   Supplier,
   SupplierInput,
 } from "./domain";
+import { CurrencySelect } from "./currencies";
 
 export type MasterTab = "products" | "configurable" | "components" | "customers" | "suppliers";
 export type MasterRecord = Product | Customer | Supplier;
@@ -106,7 +107,7 @@ export function MasterEditor({ tab, record, saving, onClose, onSave }: MasterEdi
             <label>客户编码 *<input required value={values.code} onChange={(event) => set("code", event.target.value)} autoFocus /></label>
             <label>客户法定名称 *<input required value={values.legalName} onChange={(event) => set("legalName", event.target.value)} /></label>
             <label>国家/市场<input value={values.market} onChange={(event) => set("market", event.target.value)} placeholder="例如：美国" /></label>
-            <label>默认币种 *<input required maxLength={3} value={values.currency} onChange={(event) => set("currency", event.target.value.toUpperCase())} /></label>
+            <label>默认币种 *<CurrencySelect value={values.currency} onChange={(value) => set("currency", value)} /></label>
             <label className="field-wide">默认付款条款<input value={values.paymentTerms} onChange={(event) => set("paymentTerms", event.target.value)} /></label>
             <label className="field-wide">客户地址<textarea rows={2} value={values.address} onChange={(event) => set("address", event.target.value)} placeholder="公司注册地址或主要办公地址" /></label>
             <label>收货地址<textarea rows={3} value={values.shippingAddress} onChange={(event) => set("shippingAddress", event.target.value)} placeholder="货物实际送达地址、仓库或港口信息" /></label>

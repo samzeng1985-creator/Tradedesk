@@ -10,7 +10,7 @@
 body { margin: 0; min-width: 320px; min-height: 100vh; }
 button, input, select, textarea { font: inherit; }
 button { cursor: pointer; }
-button:disabled { cursor: wait; opacity: .65; }
+button:disabled { cursor: not-allowed; opacity: .65; }
 
 .unlock-screen { min-height: 100vh; display: grid; place-items: center; padding: 28px; background: radial-gradient(circle at top, #ede9fe 0, #f5f7fa 42%); }
 .unlock-card { width: min(440px, 100%); background: white; border: 1px solid #e1e6ed; border-radius: 16px; padding: 32px; box-shadow: 0 18px 50px rgba(30, 41, 59, .11); }
@@ -25,6 +25,8 @@ button:disabled { cursor: wait; opacity: .65; }
 .editor-form select, .line-row select, .line-row input { width: 100%; border: 1px solid #cfd7e3; border-radius: 8px; padding: 10px 11px; color: #18202b; background: white; }
 .unlock-form input:focus, .editor-form input:focus, .editor-form textarea:focus, .editor-form select:focus, .line-row select:focus, .line-row input:focus, .table-toolbar input:focus { outline: 3px solid rgba(124, 58, 237, .16); border-color: #8b5cf6; }
 .form-error { color: #b91c1c; background: #fef2f2; border: 1px solid #fecaca; border-radius: 8px; padding: 10px 12px; font-size: 13px; }
+.field-hint { color: #64748b; font-size: 10px; font-weight: 500; line-height: 1.4; }
+.editor-form input:disabled, .editor-form select:disabled { color: #64748b; background: #f1f5f9; }
 
 .app-shell { min-height: 100vh; display: grid; grid-template-columns: 224px 1fr; }
 .sidebar { background: #172132; color: #e8edf4; padding: 24px 16px; display: flex; flex-direction: column; gap: 32px; }
@@ -126,7 +128,7 @@ tbody tr:hover { background: #fafbfc; }
 .row-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
 .row-actions button { border: 0; background: transparent; color: #6d28d9; padding: 3px 0; font-size: 12px; }
 .row-actions button:last-child { color: #64748b; }
-.row-actions button:disabled { opacity: .55; cursor: wait; }
+.row-actions button:disabled { opacity: .55; cursor: not-allowed; }
 .row-actions .danger-link { color: #b91c1c; }
 
 .modal-backdrop { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; padding: 24px; background: rgba(15, 23, 42, .48); }
@@ -172,12 +174,24 @@ tbody tr:hover { background: #fafbfc; }
 .configuration-line-heading h3 { margin: 0; font-size: 16px; }
 .configuration-line-heading p { margin: 4px 0 0; color: #64748b; font-size: 12px; }
 .configuration-line-table { margin-top: 14px; border: 1px solid #e5e9ef; border-radius: 10px; }
-.configuration-line-table table { min-width: 1220px; }
+.configuration-line-table table { width: 100%; min-width: 1080px; table-layout: fixed; }
 .configuration-line-table th, .configuration-line-table td { padding: 10px; vertical-align: top; }
-.configuration-line-table select, .configuration-line-table input { width: 100%; min-width: 88px; border: 1px solid #cfd7e3; border-radius: 7px; padding: 7px 8px; background: white; }
-.configuration-line-table td:nth-child(2) { min-width: 230px; }
-.configuration-line-table td:nth-child(3) { min-width: 190px; }
-.configuration-line-table td:nth-child(9) { min-width: 150px; }
+.configuration-line-table select, .configuration-line-table input { width: 100%; min-width: 0; border: 1px solid #cfd7e3; border-radius: 7px; padding: 7px 8px; background: white; }
+.config-col-action { width: 64px; }
+.config-col-component { width: 205px; }
+.config-col-spec { width: 175px; }
+.config-col-quantity { width: 92px; }
+.config-col-unit { width: 64px; }
+.config-col-price { width: 120px; }
+.config-col-total { width: 130px; }
+.config-col-brand { width: 100px; }
+.config-col-notes { width: 150px; }
+.configuration-line-table th:first-child, .config-line-action { position: sticky; left: 0; z-index: 2; background: white; text-align: center; }
+.configuration-line-table th:first-child { z-index: 3; background: #f7f8fa; }
+.config-line-action strong, .config-line-action button { display: block; margin: 0 auto; }
+.config-line-action button { margin-top: 8px; }
+.compact-number { max-width: 120px; font-variant-numeric: tabular-nums; }
+.config-line-total { overflow-wrap: anywhere; font-variant-numeric: tabular-nums; font-weight: 650; }
 .configuration-line-table td > strong { display: block; margin-top: 6px; font-size: 12px; }
 .component-category { display: block; color: #7c3aed; margin-bottom: 5px; font-weight: 700; }
 .wrap-cell { white-space: normal; line-height: 1.45; }

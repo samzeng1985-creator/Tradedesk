@@ -72,10 +72,14 @@ function nextNumber(documents: TradeDocument[], type: DocumentType) {
 }
 
 function money(value: number, currency: string) {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: currency || "USD",
-  }).format(value / 100);
+  try {
+    return new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: currency || "USD",
+    }).format(value / 100);
+  } catch {
+    return `${currency || "USD"} ${(value / 100).toFixed(2)}`;
+  }
 }
 
 function numberValue(value: string) {

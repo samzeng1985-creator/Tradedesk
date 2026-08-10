@@ -8,6 +8,7 @@ import type {
   PipelineStage,
   Product,
 } from "./domain";
+import { CurrencySelect, formatMoney } from "./currencies";
 
 interface BusinessCaseCenterProps {
   cases: BusinessCase[];
@@ -34,17 +35,6 @@ const stageLabels: Record<PipelineStage, string> = {
   shipment: "待发货",
   documents: "制单中",
 };
-
-function formatMoney(minor: number, currency: string) {
-  try {
-    return new Intl.NumberFormat("zh-CN", {
-      style: "currency",
-      currency: currency || "USD",
-    }).format(minor / 100);
-  } catch {
-    return `${currency || "USD"} ${(minor / 100).toFixed(2)}`;
-  }
-}
 
 function nextNumber(cases: BusinessCase[]) {
   const year = new Date().getFullYear();
@@ -181,7 +171,7 @@ function CaseEditor({
             <label>业务单号 *<input required value={number} onChange={(event) => setNumber(event.target.value)} autoFocus /></label>
             <label>客户 *<select required value={customerId} onChange={(event) => selectCustomer(event.target.value)}><option value="">请选择客户</option>{customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.code} · {customer.legalName}</option>)}</select></label>
             <label>状态<select value={stage} onChange={(event) => setStage(event.target.value as PipelineStage)}>{Object.entries(stageLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>
-            <label>币种 *<input required maxLength={3} value={currency} onChange={(event) => setCurrency(event.target.value.toUpperCase())} /></label>
+            <label>币种 *<CurrencySelect value={currency} onChange={setCurrency} /></label>
             <label>贸易术语<input value={incoterm} onChange={(event) => setIncoterm(event.target.value.toUpperCase())} placeholder="FOB / CIF / EXW" /></label>
             <label>计划发货日<input type="date" value={shipmentDate} onChange={(event) => setShipmentDate(event.target.value)} /></label>
             <label className="field-wide">付款条款<input value={paymentTerms} onChange={(event) => setPaymentTerms(event.target.value)} /></label>

@@ -14,7 +14,7 @@ use crate::domain::{
     SaveDocumentInput, Supplier, SupplierInput, TradeDocument, WorkspaceSummary,
 };
 
-const SCHEMA_VERSION: i64 = 9;
+const SCHEMA_VERSION: i64 = 10;
 
 const MILESTONE_STAGES: [(&str, &str); 6] = [
     ("raw_material", "原料准备"),
@@ -128,6 +128,8 @@ impl EncryptedDatabase {
                 name TEXT NOT NULL,
                 model TEXT NOT NULL DEFAULT '',
                 currency TEXT NOT NULL DEFAULT 'CNY',
+                exchange_rate REAL NOT NULL DEFAULT 1,
+                exchange_rate_date TEXT NOT NULL DEFAULT '',
                 notes TEXT NOT NULL DEFAULT '',
                 total_amount_minor INTEGER NOT NULL DEFAULT 0,
                 active INTEGER NOT NULL DEFAULT 1
@@ -189,6 +191,18 @@ impl EncryptedDatabase {
             "products",
             "record_type",
             "TEXT NOT NULL DEFAULT 'standard'",
+        )?;
+        ensure_column(
+            &transaction,
+            "configurable_products",
+            "exchange_rate",
+            "REAL NOT NULL DEFAULT 1",
+        )?;
+        ensure_column(
+            &transaction,
+            "configurable_products",
+            "exchange_rate_date",
+            "TEXT NOT NULL DEFAULT ''",
         )?;
         ensure_column(
             &transaction,
@@ -678,7 +692,8 @@ impl EncryptedDatabase {
 
     pub fn get_configurable_product(&self, id: &str) -> rusqlite::Result<ConfigurableProduct> {
         let mut product = self.connection.query_row(
-            "SELECT id, code, name, model, currency, notes, total_amount_minor, active
+            "SELECT id, code, name, model, currency, exchange_rate, exchange_rate_date,
+                    notes, total_amount_minor, active
              FROM configurable_products WHERE id = ?1",
             params![id],
             |row| {
@@ -688,9 +703,11 @@ impl EncryptedDatabase {
                     name: row.get(2)?,
                     model: row.get(3)?,
                     currency: row.get(4)?,
-                    notes: row.get(5)?,
-                    total_amount_minor: row.get(6)?,
-                    active: row.get::<_, i64>(7)? != 0,
+                    exchange_rate: row.get(5)?,
+                    exchange_rate_date: row.get(6)?,
+                    notes: row.get(7)?,
+                    total_amount_minor: row.get(8)?,
+                    active: row.get::<_, i64>(9)? != 0,
                     lines: Vec::new(),
                 })
             },
@@ -767,13 +784,31 @@ impl EncryptedDatabase {
         }
         let id = input.id.unwrap_or_else(|| Uuid::new_v4().to_string());
         let currency = input.currency.trim().to_uppercase();
+        let exchange_rate = if currency == "CNY" {
+            1.0
+        } else {
+            input.exchange_rate
+        };
+        let exchange_rate_date = if currency == "CNY" {
+            String::new()
+        } else {
+            require_text(&input.exchange_rate_date)?;
+            input.exchange_rate_date.trim().to_owned()
+        };
+        if !exchange_rate.is_finite() || exchange_rate <= 0.0 {
+            return Err(rusqlite::Error::InvalidQuery);
+        }
         let transaction = self.connection.unchecked_transaction()?;
         transaction.execute(
             "INSERT INTO configurable_products(
-                id, code, name, model, currency, notes, total_amount_minor, active
-             ) VALUES(?1, ?2, ?3, ?4, ?5, ?6, 0, 1)
+                id, code, name, model, currency, exchange_rate, exchange_rate_date,
+                notes, total_amount_minor, active
+             ) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, 1)
              ON CONFLICT(id) DO UPDATE SET code = excluded.code, name = excluded.name,
-                model = excluded.model, currency = excluded.currency, notes = excluded.notes,
+                model = excluded.model, currency = excluded.currency,
+                exchange_rate = excluded.exchange_rate,
+                exchange_rate_date = excluded.exchange_rate_date,
+                notes = excluded.notes,
                 active = 1",
             params![
                 id,
@@ -781,6 +816,8 @@ impl EncryptedDatabase {
                 input.name.trim(),
                 input.model.trim(),
                 currency,
+                exchange_rate,
+                exchange_rate_date,
                 input.notes.trim(),
             ],
         )?;
@@ -827,7 +864,7 @@ impl EncryptedDatabase {
                         ))
                     },
                 )?;
-            if component_currency != currency {
+            if component_currency != currency && component_currency != "CNY" {
                 return Err(rusqlite::Error::InvalidQuery);
             }
             let amount_minor = (line.quantity * line.unit_price_minor as f64).round() as i64;
@@ -2363,6 +2400,8 @@ mod tests {
                     name: "600KW天然气发电机组".into(),
                     model: "K38N-G6".into(),
                     currency: "CNY".into(),
+                    exchange_rate: 1.0,
+                    exchange_rate_date: String::new(),
                     notes: "配置报价测试".into(),
                     lines: vec![
                         ConfigurableProductLineInput {
@@ -2771,7 +2810,7 @@ mod tests {
                     |row| row.get::<_, String>(0),
                 )
                 .unwrap(),
-            "9"
+            "10"
         );
         drop(database);
         let _ = std::fs::remove_file(&path);
@@ -2826,7 +2865,7 @@ mod tests {
                     |row| row.get::<_, String>(0),
                 )
                 .unwrap(),
-            "9"
+            "10"
         );
         drop(database);
         let _ = std::fs::remove_file(&path);
@@ -2859,6 +2898,8 @@ mod tests {
                 name: "天然气发电机组".into(),
                 model: "K38N-G6".into(),
                 currency: "USD".into(),
+                exchange_rate: 0.14,
+                exchange_rate_date: "2026-08-10".into(),
                 notes: String::new(),
                 lines: vec![ConfigurableProductLineInput {
                     component_id: component.id,
@@ -2915,6 +2956,51 @@ mod tests {
                 .get("en"),
             Some(&"Natural Gas Engine".to_owned())
         );
+        drop(database);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn stores_manual_exchange_rate_for_foreign_configuration() {
+        let path = std::env::temp_dir().join(format!("tradedesk-rate-{}.db", Uuid::new_v4()));
+        let database =
+            EncryptedDatabase::open(&path, Zeroizing::new("test-password".to_owned())).unwrap();
+        let component = database
+            .save_config_component(ConfigComponentInput {
+                id: None,
+                code: "COMP-CNY-01".into(),
+                category: "Power".into(),
+                name: "Engine".into(),
+                specification: "K38".into(),
+                default_quantity: 1.0,
+                unit: "set".into(),
+                unit_price_minor: 100_000,
+                currency: "CNY".into(),
+                brand: "ACME".into(),
+                notes: String::new(),
+            })
+            .unwrap();
+        let configuration = database
+            .save_configurable_product(ConfigurableProductInput {
+                id: None,
+                code: "CFG-USD-01".into(),
+                name: "USD Quote".into(),
+                model: "K38".into(),
+                currency: "USD".into(),
+                exchange_rate: 0.14,
+                exchange_rate_date: "2026-08-10".into(),
+                notes: String::new(),
+                lines: vec![ConfigurableProductLineInput {
+                    component_id: component.id,
+                    quantity: 2.0,
+                    unit_price_minor: 14_000,
+                }],
+            })
+            .unwrap();
+        assert_eq!(configuration.currency, "USD");
+        assert_eq!(configuration.exchange_rate, 0.14);
+        assert_eq!(configuration.exchange_rate_date, "2026-08-10");
+        assert_eq!(configuration.total_amount_minor, 28_000);
         drop(database);
         let _ = std::fs::remove_file(&path);
     }

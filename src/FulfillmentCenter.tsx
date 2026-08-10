@@ -10,6 +10,7 @@ import type {
   PurchaseStatus,
   Supplier,
 } from "./domain";
+import { CurrencySelect, formatMoney } from "./currencies";
 
 interface FulfillmentCenterProps {
   orders: PurchaseOrder[];
@@ -36,14 +37,6 @@ const milestoneStatusLabels: Record<MilestoneStatus, string> = {
   completed: "已完成",
   blocked: "异常",
 };
-
-function formatMoney(minor: number, currency: string) {
-  try {
-    return new Intl.NumberFormat("zh-CN", { style: "currency", currency }).format(minor / 100);
-  } catch {
-    return `${currency} ${(minor / 100).toFixed(2)}`;
-  }
-}
 
 function nextNumber(orders: PurchaseOrder[]) {
   const year = new Date().getFullYear();
@@ -173,7 +166,7 @@ function PurchaseEditor({ orders, cases, suppliers, onClose, onCreate }: {
           <label>采购单号 *<input required value={number} onChange={(event) => setNumber(event.target.value)} autoFocus /></label>
           <label>来源业务单 *<select required value={caseId} onChange={(event) => selectCase(event.target.value)}><option value="">请选择业务单</option>{cases.map((item) => <option value={item.id} key={item.id}>{item.number} · {item.customerName}</option>)}</select></label>
           <label>供应商 *<select required value={supplierId} onChange={(event) => setSupplierId(event.target.value)}><option value="">请选择供应商</option>{suppliers.map((item) => <option value={item.id} key={item.id}>{item.code} · {item.legalName}</option>)}</select></label>
-          <label>采购币种 *<input required maxLength={3} value={currency} onChange={(event) => setCurrency(event.target.value.toUpperCase())} /></label>
+          <label>采购币种 *<CurrencySelect value={currency} onChange={setCurrency} /></label>
           <label>预计交货日<input type="date" value={expectedDate} onChange={(event) => setExpectedDate(event.target.value)} /></label>
           <label>备注<input value={notes} onChange={(event) => setNotes(event.target.value)} /></label>
         </div>

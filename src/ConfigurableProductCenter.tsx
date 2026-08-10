@@ -11,14 +11,7 @@ import type {
   ConfigurableProduct,
   ConfigurableProductInput,
 } from "./domain";
-
-function formatMoney(valueMinor: number, currency: string) {
-  return new Intl.NumberFormat("zh-CN", {
-    style: "currency",
-    currency,
-    minimumFractionDigits: 2,
-  }).format(valueMinor / 100);
-}
+import { CurrencySelect, formatMoney } from "./currencies";
 
 interface ComponentLibraryProps {
   components: ConfigComponent[];
@@ -242,7 +235,7 @@ function ComponentEditor({
           <label>默认数量 *<input required type="number" min="0.001" step="0.001" value={values.defaultQuantity} onChange={(event) => set("defaultQuantity", event.target.value)} /></label>
           <label>单位 *<input required value={values.unit} onChange={(event) => set("unit", event.target.value)} /></label>
           <label>单价 *<input required type="number" min="0" step="0.01" value={values.unitPrice} onChange={(event) => set("unitPrice", event.target.value)} /></label>
-          <label>币种 *<input required maxLength={3} value={values.currency} onChange={(event) => set("currency", event.target.value.toUpperCase())} /></label>
+          <label>币种 *<CurrencySelect value={values.currency} onChange={(value) => set("currency", value)} /></label>
           <label className="field-wide">备注<textarea rows={3} value={values.notes} onChange={(event) => set("notes", event.target.value)} placeholder="例如：含在机组报价中、业主现场采购、不包含" /></label>
           {error && <div className="form-error field-wide">{error}</div>}
           <div className="modal-actions field-wide"><button type="button" className="button button-secondary" onClick={onClose}>取消</button><button className="button button-primary" disabled={saving}>{saving ? "保存中…" : "保存组件"}</button></div>
@@ -283,6 +276,25 @@ interface DraftLine {
   snapshot?: ConfigurableProduct["lines"][number];
 }
 
+function localDate() {
+  const date = new Date();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${date.getFullYear()}-${month}-${day}`;
+}
+
+function componentCanQuote(component: ConfigComponent, currency: string) {
+  return component.currency === currency || component.currency === "CNY";
+}
+
+function convertedComponentPrice(component: ConfigComponent, currency: string, exchangeRate: number) {
+  if (component.currency === currency) return component.unitPriceMinor / 100;
+  if (component.currency === "CNY" && currency !== "CNY" && exchangeRate > 0) {
+    return component.unitPriceMinor * exchangeRate / 100;
+  }
+  return null;
+}
+
 function ConfigurationEditor({
   record,
   components,
@@ -300,6 +312,10 @@ function ConfigurationEditor({
   const [name, setName] = useState(record?.name ?? "");
   const [model, setModel] = useState(record?.model ?? "");
   const [currency, setCurrency] = useState(record?.currency ?? "CNY");
+  const [exchangeRate, setExchangeRate] = useState(
+    record && record.currency !== "CNY" && !record.exchangeRateDate ? "" : String(record?.exchangeRate ?? 1),
+  );
+  const [exchangeRateDate, setExchangeRateDate] = useState(record ? record.exchangeRateDate : localDate());
   const [notes, setNotes] = useState(record?.notes ?? "");
   const [lines, setLines] = useState<DraftLine[]>(() => record?.lines.map((line) => ({ componentId: line.componentId, quantity: String(line.quantity), unitPrice: String(line.unitPriceMinor / 100), snapshot: line })) ?? []);
   const [saving, setSaving] = useState(false);
@@ -307,12 +323,44 @@ function ConfigurationEditor({
 
   const totalMinor = useMemo(() => lines.reduce((sum, line) => sum + Math.round(Number(line.quantity || 0) * Number(line.unitPrice || 0) * 100), 0), [lines]);
   const componentFor = (line: DraftLine) => components.find((item) => item.id === line.componentId);
+  const numericRate = currency === "CNY" ? 1 : Number(exchangeRate);
+  const rateReady = currency === "CNY" || (Number.isFinite(numericRate) && numericRate > 0);
+  const selectedIds = new Set(lines.map((line) => line.componentId));
+  const hasAvailableComponent = components.some((item) => componentCanQuote(item, currency) && !selectedIds.has(item.id));
+
+  function repriceLines(targetCurrency: string, rate: number) {
+    setLines((current) => current.map((line) => {
+      const component = components.find((item) => item.id === line.componentId);
+      if (!component) return line;
+      const converted = convertedComponentPrice(component, targetCurrency, rate);
+      return converted === null ? line : { ...line, unitPrice: converted.toFixed(2) };
+    }));
+  }
+
+  function changeCurrency(nextCurrency: string) {
+    setCurrency(nextCurrency);
+    if (nextCurrency === "CNY") {
+      setExchangeRate("1");
+      repriceLines(nextCurrency, 1);
+    } else {
+      setExchangeRate("");
+      setExchangeRateDate(localDate());
+      setLines((current) => current.map((line) => ({ ...line, unitPrice: "0.00" })));
+    }
+  }
+
+  function changeExchangeRate(value: string) {
+    setExchangeRate(value);
+    const rate = Number(value);
+    if (Number.isFinite(rate) && rate > 0) repriceLines(currency, rate);
+  }
 
   function addLine() {
-    const selected = new Set(lines.map((line) => line.componentId));
-    const component = components.find((item) => item.currency === currency && !selected.has(item.id));
+    const component = components.find((item) => componentCanQuote(item, currency) && !selectedIds.has(item.id));
     if (!component) return;
-    setLines((current) => [...current, { componentId: component.id, quantity: String(component.defaultQuantity), unitPrice: String(component.unitPriceMinor / 100) }]);
+    const converted = convertedComponentPrice(component, currency, numericRate);
+    if (converted === null) return;
+    setLines((current) => [...current, { componentId: component.id, quantity: String(component.defaultQuantity), unitPrice: converted.toFixed(2) }]);
   }
 
   function updateLine(index: number, patch: Partial<DraftLine>) {
@@ -322,11 +370,17 @@ function ConfigurationEditor({
   function selectComponent(index: number, componentId: string) {
     const component = components.find((item) => item.id === componentId);
     if (!component) return;
-    updateLine(index, { componentId, quantity: String(component.defaultQuantity), unitPrice: String(component.unitPriceMinor / 100), snapshot: undefined });
+    const converted = convertedComponentPrice(component, currency, numericRate);
+    if (converted === null) return;
+    updateLine(index, { componentId, quantity: String(component.defaultQuantity), unitPrice: converted.toFixed(2), snapshot: undefined });
   }
 
   async function submit(event: FormEvent) {
     event.preventDefault();
+    if (!rateReady || (currency !== "CNY" && !exchangeRateDate)) {
+      setError("非人民币报价需要填写有效的当日汇率和汇率日期。");
+      return;
+    }
     setSaving(true);
     setError("");
     try {
@@ -336,6 +390,8 @@ function ConfigurationEditor({
         name,
         model,
         currency,
+        exchangeRate: numericRate,
+        exchangeRateDate: currency === "CNY" ? "" : exchangeRateDate,
         notes,
         lines: lines.map((line) => ({ componentId: line.componentId, quantity: Number(line.quantity), unitPriceMinor: Math.round(Number(line.unitPrice) * 100) })),
       });
@@ -356,11 +412,41 @@ function ConfigurationEditor({
             <label>配置编号 *<input required value={code} onChange={(event) => setCode(event.target.value)} autoFocus /></label>
             <RememberedInput label="产品名称" required value={name} suggestions={options.filter((item) => item.kind === "product_name").map((item) => item.value)} onChange={setName} placeholder="搜索已记忆的配置产品名称" />
             <label>型号<input value={model} onChange={(event) => setModel(event.target.value)} /></label>
-            <label>币种 *<input required maxLength={3} value={currency} onChange={(event) => setCurrency(event.target.value.toUpperCase())} /></label>
+            <label>报价币种 *<CurrencySelect value={currency} onChange={changeCurrency} /></label>
+            <label>人民币换算汇率 *<input required type="number" min="0.000001" step="0.000001" value={currency === "CNY" ? "1" : exchangeRate} disabled={currency === "CNY"} onChange={(event) => changeExchangeRate(event.target.value)} /><small className="field-hint">1 CNY = {exchangeRate || "—"} {currency}</small></label>
+            <label>汇率日期 *<input required={currency !== "CNY"} type="date" value={exchangeRateDate} disabled={currency === "CNY"} onChange={(event) => setExchangeRateDate(event.target.value)} /><small className="field-hint">手工录入当天银行牌价，保存后冻结</small></label>
             <label className="field-wide">报价说明<textarea rows={2} value={notes} onChange={(event) => setNotes(event.target.value)} /></label>
           </div>
-          <div className="configuration-line-heading"><div><h3>产品配置报价清单</h3><p>同一组件只能选择一次；单价可按本次配置调整并冻结</p></div><button type="button" className="button button-secondary" onClick={addLine} disabled={!components.some((item) => item.currency === currency && !lines.some((line) => line.componentId === item.id))}>添加组件</button></div>
-          <div className="table-wrap configuration-line-table"><table><thead><tr><th>序号</th><th>组件</th><th>型号/规格/材质</th><th>数量</th><th>单位</th><th>单价</th><th>总价</th><th>品牌</th><th>备注</th><th></th></tr></thead><tbody>{lines.map((line, index) => { const component = componentFor(line); const snapshot = line.snapshot; const category = component?.category ?? snapshot?.category ?? "历史组件"; const itemName = component?.name ?? snapshot?.name ?? "已停用组件"; const specification = component?.specification ?? snapshot?.specification ?? ""; const unit = component?.unit ?? snapshot?.unit ?? ""; const brand = component?.brand ?? snapshot?.brand ?? ""; const lineNotes = component?.notes ?? snapshot?.notes ?? ""; const amountMinor = Math.round(Number(line.quantity || 0) * Number(line.unitPrice || 0) * 100); return <tr key={`${line.componentId}-${index}`}><td>{index + 1}</td><td><small className="component-category">{category}</small><select value={line.componentId} onChange={(event) => selectComponent(index, event.target.value)}>{snapshot && !component && <option value={snapshot.componentId}>{snapshot.name}（历史）</option>}{components.filter((item) => item.currency === currency && (item.id === line.componentId || !lines.some((current) => current.componentId === item.id))).map((item) => <option value={item.id} key={item.id}>{item.code} · {item.name}</option>)}</select><strong>{itemName}</strong></td><td className="wrap-cell">{specification || "—"}</td><td><input type="number" min="0.001" step="0.001" value={line.quantity} onChange={(event) => updateLine(index, { quantity: event.target.value })} /></td><td>{unit}</td><td><input type="number" min="0" step="0.01" value={line.unitPrice} onChange={(event) => updateLine(index, { unitPrice: event.target.value })} /></td><td>{formatMoney(amountMinor, currency)}</td><td>{brand || "—"}</td><td className="wrap-cell">{lineNotes || "—"}</td><td><button type="button" className="danger-link" onClick={() => setLines((current) => current.filter((_, lineIndex) => lineIndex !== index))}>移除</button></td></tr>; })}</tbody></table></div>
+          <div className="configuration-line-heading"><div><h3>产品配置报价清单</h3><p>组件库价格按 CNY 维护；选择外币并填写汇率后自动换算，仍可调整本次单价</p></div><button type="button" className="button button-secondary" onClick={addLine} disabled={!rateReady || !hasAvailableComponent} title={!rateReady ? "请先填写有效汇率" : !hasAvailableComponent ? "全部可用组件均已添加" : "添加下一个组件"}>{hasAvailableComponent ? "添加组件" : "已添加全部组件"}</button></div>
+          {!rateReady && <div className="empty-callout">请先填写“1 CNY 等于多少 {currency}”的当日汇率，系统随后自动换算组件价格。</div>}
+          <div className="table-wrap configuration-line-table">
+            <table>
+              <colgroup><col className="config-col-action" /><col className="config-col-component" /><col className="config-col-spec" /><col className="config-col-quantity" /><col className="config-col-unit" /><col className="config-col-price" /><col className="config-col-total" /><col className="config-col-brand" /><col className="config-col-notes" /></colgroup>
+              <thead><tr><th>序号/操作</th><th>组件</th><th>型号/规格/材质</th><th>数量</th><th>单位</th><th>单价</th><th>总价</th><th>品牌</th><th>备注</th></tr></thead>
+              <tbody>{lines.map((line, index) => {
+                const component = componentFor(line);
+                const snapshot = line.snapshot;
+                const category = component?.category ?? snapshot?.category ?? "历史组件";
+                const itemName = component?.name ?? snapshot?.name ?? "已停用组件";
+                const specification = component?.specification ?? snapshot?.specification ?? "";
+                const unit = component?.unit ?? snapshot?.unit ?? "";
+                const brand = component?.brand ?? snapshot?.brand ?? "";
+                const lineNotes = component?.notes ?? snapshot?.notes ?? "";
+                const amountMinor = Math.round(Number(line.quantity || 0) * Number(line.unitPrice || 0) * 100);
+                return <tr key={`${line.componentId}-${index}`}>
+                  <td className="config-line-action"><strong>{index + 1}</strong><button type="button" className="danger-link" onClick={() => setLines((current) => current.filter((_, lineIndex) => lineIndex !== index))}>移除</button></td>
+                  <td><small className="component-category">{category}</small><select value={line.componentId} onChange={(event) => selectComponent(index, event.target.value)}>{snapshot && !component && <option value={snapshot.componentId}>{snapshot.name}（历史）</option>}{components.filter((item) => item.id === line.componentId || (componentCanQuote(item, currency) && !lines.some((current) => current.componentId === item.id))).map((item) => <option value={item.id} key={item.id}>{item.code} · {item.name}</option>)}</select><strong>{itemName}</strong></td>
+                  <td className="wrap-cell">{specification || "—"}</td>
+                  <td><input className="compact-number" type="number" min="0.001" step="0.001" value={line.quantity} onChange={(event) => updateLine(index, { quantity: event.target.value })} /></td>
+                  <td>{unit}</td>
+                  <td><input className="compact-number" type="number" min="0" step="0.01" value={line.unitPrice} onChange={(event) => updateLine(index, { unitPrice: event.target.value })} /></td>
+                  <td className="config-line-total">{formatMoney(amountMinor, currency)}</td>
+                  <td>{brand || "—"}</td>
+                  <td className="wrap-cell">{lineNotes || "—"}</td>
+                </tr>;
+              })}</tbody>
+            </table>
+          </div>
           {!lines.length && <div className="empty-callout">请至少添加一个组件。组件需先在“组件库”中录入。</div>}
           <div className="configuration-footer"><div><span>配置总价</span><strong>{formatMoney(totalMinor, currency)}</strong></div>{error && <div className="form-error">{error}</div>}<div className="modal-actions"><button type="button" className="button button-secondary" onClick={onClose}>取消</button><button className="button button-primary" disabled={saving || !lines.length}>{saving ? "保存中…" : "保存配置清单"}</button></div></div>
         </form>
@@ -418,7 +504,7 @@ export function ConfigurableProductLibrary({
     <div className="table-toolbar"><label><span className="sr-only">搜索配置</span><input placeholder="搜索配置编号、产品、型号或组件" value={query} onChange={(event) => setQuery(event.target.value)} /></label><div className="toolbar-buttons"><label className="export-language">导出语种<select value={language} onChange={(event) => setLanguage(event.target.value as ConfigurationLanguage)}>{Object.entries(configurationLanguageLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label><button className="button button-primary" disabled={!components.length} onClick={() => setEditing("new")}>新建自选配置</button></div></div>
     {!components.length && <div className="empty-callout">请先进入“组件库”，录入至少一个可选组件。</div>}
     {message && <div className="document-message">{message}</div>}
-    <div className="table-wrap"><table><thead><tr><th>配置编号</th><th>产品</th><th>型号</th><th>组件数</th><th>币种</th><th>配置总价</th><th>说明</th><th>操作</th></tr></thead><tbody>{filtered.map((item) => <tr key={item.id}><td>{item.code}</td><td><strong>{item.name}</strong></td><td>{item.model || "—"}</td><td>{item.lines.length}</td><td>{item.currency}</td><td><strong>{formatMoney(item.totalAmountMinor, item.currency)}</strong></td><td>{item.notes || "—"}</td><td><div className="row-actions configuration-actions"><button onClick={() => setEditing(item)}>配置/查看</button><button disabled={!!busy} onClick={() => void output(item, "pdf")}>{busy === `${item.id}-pdf` ? "导出中…" : "PDF"}</button><button disabled={!!busy} onClick={() => void output(item, "csv")}>{busy === `${item.id}-csv` ? "导出中…" : "CSV"}</button><button disabled={!!busy} onClick={() => void output(item, "print")}>{busy === `${item.id}-print` ? "打开中…" : "打印"}</button><button className="danger-link" onClick={() => void archive(item)}>停用</button></div></td></tr>)}</tbody></table></div>
+    <div className="table-wrap"><table><thead><tr><th>配置编号</th><th>产品</th><th>型号</th><th>组件数</th><th>币种/汇率</th><th>配置总价</th><th>说明</th><th>操作</th></tr></thead><tbody>{filtered.map((item) => <tr key={item.id}><td>{item.code}</td><td><strong>{item.name}</strong></td><td>{item.model || "—"}</td><td>{item.lines.length}</td><td><strong>{item.currency}</strong>{item.currency !== "CNY" && <small className="table-subtitle">1 CNY = {item.exchangeRate} {item.currency}<br />{item.exchangeRateDate || "待确认日期"}</small>}</td><td><strong>{formatMoney(item.totalAmountMinor, item.currency)}</strong></td><td>{item.notes || "—"}</td><td><div className="row-actions configuration-actions"><button onClick={() => setEditing(item)}>配置/查看</button><button disabled={!!busy} onClick={() => void output(item, "pdf")}>{busy === `${item.id}-pdf` ? "导出中…" : "PDF"}</button><button disabled={!!busy} onClick={() => void output(item, "csv")}>{busy === `${item.id}-csv` ? "导出中…" : "CSV"}</button><button disabled={!!busy} onClick={() => void output(item, "print")}>{busy === `${item.id}-print` ? "打开中…" : "打印"}</button><button className="danger-link" onClick={() => void archive(item)}>停用</button></div></td></tr>)}</tbody></table></div>
     {!filtered.length && <div className="empty-table">{configurations.length ? "没有符合条件的配置" : "还没有自选配置产品"}</div>}
     {editing && <ConfigurationEditor record={editing === "new" ? null : editing} components={components} options={options} onClose={() => setEditing(null)} onSave={onSave} />}
   </>;

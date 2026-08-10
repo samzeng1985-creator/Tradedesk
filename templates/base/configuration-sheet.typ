@@ -34,6 +34,13 @@
   [*#labels.componentCount*], [#configuration.lines.len()], [*#labels.configurationTotal*], [*#configuration.currency #money(configuration.totalAmountMinor)*],
 )
 
+#if configuration.currency != "CNY" [
+  #v(4pt)
+  #align(right)[
+    #text(size: 7.5pt)[*#labels.exchangeRate:* 1 CNY = #configuration.exchangeRate #configuration.currency  ·  *#labels.rateDate:* #configuration.exchangeRateDate]
+  ]
+]
+
 #v(6pt)
 #table(
   columns: (8mm, 28mm, 1.35fr, 17mm, 14mm, 25mm, 27mm, 24mm, .85fr),

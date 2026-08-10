@@ -61,11 +61,15 @@ const statusText: Record<RecordStatus, string> = {
 };
 
 function money(value: number, currency: string) {
-  return new Intl.NumberFormat("zh-CN", {
-    style: "currency",
-    currency,
-    maximumFractionDigits: 0,
-  }).format(value / 100);
+  try {
+    return new Intl.NumberFormat("zh-CN", {
+      style: "currency",
+      currency,
+      maximumFractionDigits: 0,
+    }).format(value / 100);
+  } catch {
+    return `${currency || "CNY"} ${(value / 100).toFixed(0)}`;
+  }
 }
 
 function milestoneRecordStatus(status: "pending" | "in_progress" | "completed" | "blocked"): RecordStatus {
@@ -357,7 +361,7 @@ export default function App() {
           <span className="brand-mark">TD</span>
           <span>
             <strong>TradeDesk</strong>
-            <small>Local · 0.10.0</small>
+            <small>Local · 0.11.0</small>
           </span>
         </div>
 

@@ -343,6 +343,8 @@ pub struct ConfigurableProduct {
     pub name: String,
     pub model: String,
     pub currency: String,
+    pub exchange_rate: f64,
+    pub exchange_rate_date: String,
     pub notes: String,
     pub total_amount_minor: i64,
     pub active: bool,
@@ -357,6 +359,8 @@ pub struct ConfigurableProductInput {
     pub name: String,
     pub model: String,
     pub currency: String,
+    pub exchange_rate: f64,
+    pub exchange_rate_date: String,
     pub notes: String,
     pub lines: Vec<ConfigurableProductLineInput>,
 }

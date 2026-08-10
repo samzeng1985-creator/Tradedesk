@@ -97,6 +97,8 @@ export interface ConfigurableProduct {
   name: string;
   model: string;
   currency: string;
+  exchangeRate: number;
+  exchangeRateDate: string;
   notes: string;
   totalAmountMinor: number;
   active: boolean;
@@ -109,6 +111,8 @@ export interface ConfigurableProductInput {
   name: string;
   model: string;
   currency: string;
+  exchangeRate: number;
+  exchangeRateDate: string;
   notes: string;
   lines: ConfigurableProductLineInput[];
 }
