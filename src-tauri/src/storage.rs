@@ -6,15 +6,15 @@ use zeroize::Zeroizing;
 
 use crate::domain::{
     BusinessCase, BusinessCaseInput, BusinessCaseLine, ComponentOption, ComponentOptionInput,
-    ConfigComponent, ConfigComponentInput, ConfigurableProduct, ConfigurableProductInput,
-    ConfigurableProductLine, ConvertDocumentInput, CreateDocumentInput, Customer, CustomerInput,
-    DocumentLineSnapshot, DocumentPayload, DocumentStatus, DocumentType, MilestoneStatus,
-    PipelineStage, Product, ProductInput, ProductionMilestone, ProductionMilestoneInput,
-    PurchaseOrder, PurchaseOrderInput, PurchaseOrderLine, PurchaseStatus, SaveDocumentInput,
-    Supplier, SupplierInput, TradeDocument, WorkspaceSummary,
+    ComponentOptionTranslationInput, ConfigComponent, ConfigComponentInput, ConfigurableProduct,
+    ConfigurableProductInput, ConfigurableProductLine, ConvertDocumentInput, CreateDocumentInput,
+    Customer, CustomerInput, DocumentLineSnapshot, DocumentPayload, DocumentStatus, DocumentType,
+    MilestoneStatus, PipelineStage, Product, ProductInput, ProductionMilestone,
+    ProductionMilestoneInput, PurchaseOrder, PurchaseOrderInput, PurchaseOrderLine, PurchaseStatus,
+    SaveDocumentInput, Supplier, SupplierInput, TradeDocument, WorkspaceSummary,
 };
 
-const SCHEMA_VERSION: i64 = 8;
+const SCHEMA_VERSION: i64 = 9;
 
 const MILESTONE_STAGES: [(&str, &str); 6] = [
     ("raw_material", "原料准备"),
@@ -115,6 +115,13 @@ impl EncryptedDatabase {
              CREATE INDEX IF NOT EXISTS idx_component_options_kind
                 ON component_options(kind, value COLLATE NOCASE);
 
+             CREATE TABLE IF NOT EXISTS component_option_translations (
+                option_id TEXT NOT NULL REFERENCES component_options(id) ON DELETE CASCADE,
+                language TEXT NOT NULL,
+                value TEXT NOT NULL,
+                PRIMARY KEY(option_id, language)
+             );
+
              CREATE TABLE IF NOT EXISTS configurable_products (
                 id TEXT PRIMARY KEY,
                 code TEXT NOT NULL UNIQUE,
@@ -176,6 +183,12 @@ impl EncryptedDatabase {
             "products",
             "gross_weight_kg",
             "REAL NOT NULL DEFAULT 0",
+        )?;
+        ensure_column(
+            &transaction,
+            "products",
+            "record_type",
+            "TEXT NOT NULL DEFAULT 'standard'",
         )?;
         ensure_column(
             &transaction,
@@ -339,6 +352,13 @@ impl EncryptedDatabase {
                 ON documents(document_type, number, version DESC);",
         )?;
 
+        ensure_column(
+            &transaction,
+            "trade_case_lines",
+            "source_type",
+            "TEXT NOT NULL DEFAULT 'product'",
+        )?;
+
         transaction.execute_batch(
             "INSERT OR IGNORE INTO component_options(id, kind, value, active)
                 SELECT lower(hex(randomblob(16))), 'category', trim(category), 1
@@ -348,7 +368,44 @@ impl EncryptedDatabase {
                 FROM config_components WHERE trim(name) <> '' GROUP BY trim(name);
              INSERT OR IGNORE INTO component_options(id, kind, value, active)
                 SELECT lower(hex(randomblob(16))), 'brand', trim(brand), 1
-                FROM config_components WHERE trim(brand) <> '' GROUP BY trim(brand);",
+                FROM config_components WHERE trim(brand) <> '' GROUP BY trim(brand);
+             INSERT OR IGNORE INTO component_options(id, kind, value, active)
+                SELECT lower(hex(randomblob(16))), 'specification', trim(specification), 1
+                FROM config_components WHERE trim(specification) <> '' GROUP BY trim(specification);
+             INSERT OR IGNORE INTO component_options(id, kind, value, active)
+                SELECT lower(hex(randomblob(16))), 'unit', trim(unit), 1
+                FROM config_components WHERE trim(unit) <> '' GROUP BY trim(unit);
+             INSERT OR IGNORE INTO component_options(id, kind, value, active)
+                SELECT lower(hex(randomblob(16))), 'notes', trim(notes), 1
+                FROM config_components WHERE trim(notes) <> '' GROUP BY trim(notes);
+             INSERT OR IGNORE INTO component_options(id, kind, value, active)
+                SELECT lower(hex(randomblob(16))), 'product_name', trim(name), 1
+                FROM configurable_products WHERE trim(name) <> '' GROUP BY trim(name);
+             INSERT OR IGNORE INTO component_options(id, kind, value, active)
+                SELECT lower(hex(randomblob(16))), 'configuration_notes', trim(notes), 1
+                FROM configurable_products WHERE trim(notes) <> '' GROUP BY trim(notes);
+             INSERT OR IGNORE INTO component_options(id, kind, value, active)
+                SELECT lower(hex(randomblob(16))), 'category', trim(category_snapshot), 1
+                FROM configurable_product_lines WHERE trim(category_snapshot) <> '' GROUP BY trim(category_snapshot);
+             INSERT OR IGNORE INTO component_options(id, kind, value, active)
+                SELECT lower(hex(randomblob(16))), 'name', trim(name_snapshot), 1
+                FROM configurable_product_lines WHERE trim(name_snapshot) <> '' GROUP BY trim(name_snapshot);
+             INSERT OR IGNORE INTO component_options(id, kind, value, active)
+                SELECT lower(hex(randomblob(16))), 'specification', trim(specification_snapshot), 1
+                FROM configurable_product_lines WHERE trim(specification_snapshot) <> '' GROUP BY trim(specification_snapshot);
+             INSERT OR IGNORE INTO component_options(id, kind, value, active)
+                SELECT lower(hex(randomblob(16))), 'unit', trim(unit_snapshot), 1
+                FROM configurable_product_lines WHERE trim(unit_snapshot) <> '' GROUP BY trim(unit_snapshot);
+             INSERT OR IGNORE INTO component_options(id, kind, value, active)
+                SELECT lower(hex(randomblob(16))), 'brand', trim(brand_snapshot), 1
+                FROM configurable_product_lines WHERE trim(brand_snapshot) <> '' GROUP BY trim(brand_snapshot);
+             INSERT OR IGNORE INTO component_options(id, kind, value, active)
+                SELECT lower(hex(randomblob(16))), 'notes', trim(notes_snapshot), 1
+                FROM configurable_product_lines WHERE trim(notes_snapshot) <> '' GROUP BY trim(notes_snapshot);
+             INSERT OR IGNORE INTO products(
+                id, sku, name_zh, name_en, model, hs_code, unit, gross_weight_kg, active, record_type
+             ) SELECT id, '@CFG:' || id, name, name, model, '', '套', 0, active, 'configurable'
+               FROM configurable_products;",
         )?;
 
         transaction.execute(
@@ -398,7 +455,8 @@ impl EncryptedDatabase {
     pub fn list_products(&self) -> rusqlite::Result<Vec<Product>> {
         let mut statement = self.connection.prepare(
             "SELECT id, sku, name_zh, name_en, model, hs_code, unit, gross_weight_kg, active
-             FROM products WHERE active = 1 ORDER BY sku COLLATE NOCASE",
+             FROM products WHERE active = 1 AND record_type = 'standard'
+             ORDER BY sku COLLATE NOCASE",
         )?;
         statement
             .query_map([], |row| {
@@ -467,20 +525,35 @@ impl EncryptedDatabase {
     }
 
     pub fn list_component_options(&self) -> rusqlite::Result<Vec<ComponentOption>> {
-        let mut statement = self.connection.prepare(
-            "SELECT id, kind, value, active FROM component_options
-             WHERE active = 1 ORDER BY kind, value COLLATE NOCASE",
-        )?;
-        statement
-            .query_map([], |row| {
-                Ok(ComponentOption {
-                    id: row.get(0)?,
-                    kind: row.get(1)?,
-                    value: row.get(2)?,
-                    active: row.get::<_, i64>(3)? != 0,
-                })
-            })?
-            .collect()
+        let mut options = {
+            let mut statement = self.connection.prepare(
+                "SELECT id, kind, value, active FROM component_options
+                 WHERE active = 1 ORDER BY kind, value COLLATE NOCASE",
+            )?;
+            statement
+                .query_map([], |row| {
+                    Ok(ComponentOption {
+                        id: row.get(0)?,
+                        kind: row.get(1)?,
+                        value: row.get(2)?,
+                        active: row.get::<_, i64>(3)? != 0,
+                        translations: std::collections::BTreeMap::new(),
+                    })
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?
+        };
+        for option in &mut options {
+            let mut statement = self.connection.prepare(
+                "SELECT language, value FROM component_option_translations
+                 WHERE option_id = ?1 ORDER BY language",
+            )?;
+            option.translations = statement
+                .query_map(params![option.id], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })?
+                .collect::<rusqlite::Result<std::collections::BTreeMap<_, _>>>()?;
+        }
+        Ok(options)
     }
 
     pub fn save_component_option(
@@ -506,11 +579,32 @@ impl EncryptedDatabase {
                     kind: row.get(1)?,
                     value: row.get(2)?,
                     active: row.get::<_, i64>(3)? != 0,
+                    translations: std::collections::BTreeMap::new(),
                 })
             },
         )?;
         self.audit("component_option", &option.id, "save")?;
         Ok(option)
+    }
+
+    pub fn save_component_option_translation(
+        &self,
+        input: ComponentOptionTranslationInput,
+    ) -> rusqlite::Result<ComponentOption> {
+        require_text(&input.option_id)?;
+        validate_configuration_language(&input.language)?;
+        require_text(&input.value)?;
+        self.connection.execute(
+            "INSERT INTO component_option_translations(option_id, language, value)
+             VALUES(?1, ?2, ?3)
+             ON CONFLICT(option_id, language) DO UPDATE SET value = excluded.value",
+            params![input.option_id, input.language, input.value.trim()],
+        )?;
+        self.audit("component_option", &input.option_id, "translate")?;
+        self.list_component_options()?
+            .into_iter()
+            .find(|option| option.id == input.option_id)
+            .ok_or(rusqlite::Error::QueryReturnedNoRows)
     }
 
     pub fn save_config_component(
@@ -555,6 +649,9 @@ impl EncryptedDatabase {
         self.remember_component_option("category", &input.category)?;
         self.remember_component_option("name", &input.name)?;
         self.remember_component_option("brand", &input.brand)?;
+        self.remember_component_option("specification", &input.specification)?;
+        self.remember_component_option("unit", &input.unit)?;
+        self.remember_component_option("notes", &input.notes)?;
         self.connection.query_row(
             "SELECT id, code, category, name, specification, default_quantity, unit,
                     unit_price_minor, currency, brand, notes, active
@@ -611,6 +708,53 @@ impl EncryptedDatabase {
         Ok(product)
     }
 
+    pub fn configuration_for_export(
+        &self,
+        id: &str,
+        language: &str,
+    ) -> rusqlite::Result<(ConfigurableProduct, Vec<String>)> {
+        validate_configuration_language(language)?;
+        let mut configuration = self.get_configurable_product(id)?;
+        let mut missing = std::collections::BTreeSet::new();
+        configuration.name = self.localized_value(
+            "product_name",
+            &configuration.name,
+            language,
+            "产品名称",
+            &mut missing,
+        )?;
+        configuration.notes = self.localized_value(
+            "configuration_notes",
+            &configuration.notes,
+            language,
+            "配置说明",
+            &mut missing,
+        )?;
+        for line in &mut configuration.lines {
+            line.category = self.localized_value(
+                "category",
+                &line.category,
+                language,
+                "组件类别",
+                &mut missing,
+            )?;
+            line.name = self.localized_value("name", &line.name, language, "品名", &mut missing)?;
+            line.specification = self.localized_value(
+                "specification",
+                &line.specification,
+                language,
+                "型号/规格/材质",
+                &mut missing,
+            )?;
+            line.unit = self.localized_value("unit", &line.unit, language, "单位", &mut missing)?;
+            line.brand =
+                self.localized_value("brand", &line.brand, language, "品牌", &mut missing)?;
+            line.notes =
+                self.localized_value("notes", &line.notes, language, "备注", &mut missing)?;
+        }
+        Ok((configuration, missing.into_iter().collect()))
+    }
+
     pub fn save_configurable_product(
         &self,
         input: ConfigurableProductInput,
@@ -638,6 +782,21 @@ impl EncryptedDatabase {
                 input.model.trim(),
                 currency,
                 input.notes.trim(),
+            ],
+        )?;
+        transaction.execute(
+            "INSERT INTO products(
+                id, sku, name_zh, name_en, model, hs_code, unit,
+                gross_weight_kg, active, record_type
+             ) VALUES(?1, ?2, ?3, ?3, ?4, '', '套', 0, 1, 'configurable')
+             ON CONFLICT(id) DO UPDATE SET name_zh = excluded.name_zh,
+                name_en = excluded.name_en, model = excluded.model,
+                active = 1, record_type = 'configurable'",
+            params![
+                id,
+                format!("@CFG:{id}"),
+                input.name.trim(),
+                input.model.trim()
             ],
         )?;
         transaction.execute(
@@ -703,6 +862,8 @@ impl EncryptedDatabase {
             params![id, total_amount_minor],
         )?;
         transaction.commit()?;
+        self.remember_component_option("product_name", &input.name)?;
+        self.remember_component_option("configuration_notes", &input.notes)?;
         self.audit("configurable_product", &id, "save")?;
         self.get_configurable_product(&id)
     }
@@ -822,6 +983,12 @@ impl EncryptedDatabase {
         if changed == 0 {
             return Err(rusqlite::Error::QueryReturnedNoRows);
         }
+        if entity == "configurable_product" {
+            self.connection.execute(
+                "UPDATE products SET active = 0 WHERE id = ?1 AND record_type = 'configurable'",
+                params![id],
+            )?;
+        }
         self.audit(entity, id, "archive")
     }
 
@@ -837,6 +1004,37 @@ impl EncryptedDatabase {
             params![Uuid::new_v4().to_string(), kind, value.trim()],
         )?;
         Ok(())
+    }
+
+    fn localized_value(
+        &self,
+        kind: &str,
+        source: &str,
+        language: &str,
+        label: &str,
+        missing: &mut std::collections::BTreeSet<String>,
+    ) -> rusqlite::Result<String> {
+        if source.trim().is_empty() || !contains_cjk(source) {
+            return Ok(source.to_owned());
+        }
+        let translated = self
+            .connection
+            .query_row(
+                "SELECT translation.value
+                 FROM component_options option
+                 JOIN component_option_translations translation ON translation.option_id = option.id
+                 WHERE option.kind = ?1 AND option.value = ?2 COLLATE NOCASE
+                   AND translation.language = ?3",
+                params![kind, source.trim(), language],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+        if let Some(value) = translated {
+            Ok(value)
+        } else {
+            missing.insert(format!("{label}：{}", source.trim()));
+            Ok(source.to_owned())
+        }
     }
 
     pub fn list_business_cases(&self) -> rusqlite::Result<Vec<BusinessCase>> {
@@ -879,7 +1077,7 @@ impl EncryptedDatabase {
             },
         )?;
         let mut statement = self.connection.prepare(
-            "SELECT id, product_id, sku_snapshot, name_zh_snapshot, name_en_snapshot,
+            "SELECT id, source_type, product_id, sku_snapshot, name_zh_snapshot, name_en_snapshot,
                     quantity, unit_snapshot, unit_price_minor, amount_minor
              FROM trade_case_lines WHERE trade_case_id = ?1 ORDER BY sort_order",
         )?;
@@ -887,14 +1085,15 @@ impl EncryptedDatabase {
             .query_map(params![id], |row| {
                 Ok(BusinessCaseLine {
                     id: row.get(0)?,
-                    product_id: row.get(1)?,
-                    sku: row.get(2)?,
-                    name_zh: row.get(3)?,
-                    name_en: row.get(4)?,
-                    quantity: row.get(5)?,
-                    unit: row.get(6)?,
-                    unit_price_minor: row.get(7)?,
-                    amount_minor: row.get(8)?,
+                    source_type: row.get(1)?,
+                    product_id: row.get(2)?,
+                    sku: row.get(3)?,
+                    name_zh: row.get(4)?,
+                    name_en: row.get(5)?,
+                    quantity: row.get(6)?,
+                    unit: row.get(7)?,
+                    unit_price_minor: row.get(8)?,
+                    amount_minor: row.get(9)?,
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -910,6 +1109,10 @@ impl EncryptedDatabase {
         }
         if input.lines.iter().any(|line| {
             line.product_id.trim().is_empty()
+                || !matches!(
+                    line.source_type.as_str(),
+                    "product" | "configurable_product"
+                )
                 || !line.quantity.is_finite()
                 || line.quantity <= 0.0
                 || line.unit_price_minor < 0
@@ -927,28 +1130,45 @@ impl EncryptedDatabase {
         let mut prepared_lines = Vec::with_capacity(input.lines.len());
         let mut total_amount_minor = 0_i64;
         for line in &input.lines {
-            let product = transaction.query_row(
-                "SELECT sku, name_zh, name_en, unit FROM products WHERE id = ?1 AND active = 1",
-                params![line.product_id],
-                |row| {
-                    Ok((
-                        row.get::<_, String>(0)?,
-                        row.get::<_, String>(1)?,
-                        row.get::<_, String>(2)?,
-                        row.get::<_, String>(3)?,
-                    ))
-                },
-            )?;
+            let product = if line.source_type == "configurable_product" {
+                transaction.query_row(
+                    "SELECT code, name, name, '套' FROM configurable_products
+                     WHERE id = ?1 AND active = 1 AND currency = ?2",
+                    params![line.product_id, input.currency.trim().to_uppercase()],
+                    |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, String>(2)?,
+                            row.get::<_, String>(3)?,
+                        ))
+                    },
+                )?
+            } else {
+                transaction.query_row(
+                    "SELECT sku, name_zh, name_en, unit FROM products
+                     WHERE id = ?1 AND active = 1 AND record_type = 'standard'",
+                    params![line.product_id],
+                    |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, String>(2)?,
+                            row.get::<_, String>(3)?,
+                        ))
+                    },
+                )?
+            };
             if let Some(existing_line_id) = &line.id {
-                let existing_product_id = transaction
+                let existing_source = transaction
                     .query_row(
-                        "SELECT product_id FROM trade_case_lines
+                        "SELECT source_type, product_id FROM trade_case_lines
                          WHERE id = ?1 AND trade_case_id = ?2",
                         params![existing_line_id, id],
-                        |row| row.get::<_, String>(0),
+                        |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
                     )
                     .optional()?;
-                if let Some(existing_product_id) = existing_product_id {
+                if let Some((existing_source_type, existing_product_id)) = existing_source {
                     let allocated = transaction.query_row(
                         "SELECT COALESCE(SUM(pol.quantity), 0)
                          FROM purchase_order_lines pol
@@ -959,7 +1179,8 @@ impl EncryptedDatabase {
                         |row| row.get::<_, f64>(0),
                     )?;
                     if allocated > 0.0
-                        && (existing_product_id != line.product_id
+                        && (existing_source_type != line.source_type
+                            || existing_product_id != line.product_id
                             || line.quantity + 0.000_001 < allocated)
                     {
                         return Err(rusqlite::Error::InvalidQuery);
@@ -1025,12 +1246,13 @@ impl EncryptedDatabase {
         for (index, (line, line_id, product, amount_minor)) in prepared_lines.iter().enumerate() {
             transaction.execute(
                 "INSERT INTO trade_case_lines(
-                    id, trade_case_id, sort_order, product_id, sku_snapshot,
+                    id, trade_case_id, sort_order, source_type, product_id, sku_snapshot,
                     name_zh_snapshot, name_en_snapshot, quantity, unit_snapshot,
                     unit_price_minor, amount_minor
-                 ) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+                 ) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
                  ON CONFLICT(id) DO UPDATE SET
                     sort_order = excluded.sort_order,
+                    source_type = excluded.source_type,
                     product_id = excluded.product_id,
                     sku_snapshot = excluded.sku_snapshot,
                     name_zh_snapshot = excluded.name_zh_snapshot,
@@ -1043,6 +1265,7 @@ impl EncryptedDatabase {
                     line_id,
                     id,
                     index as i64,
+                    line.source_type,
                     line.product_id,
                     product.0,
                     product.1,
@@ -1862,7 +2085,9 @@ impl EncryptedDatabase {
 
     fn count(&self, table: &str) -> rusqlite::Result<u64> {
         let query = match table {
-            "products" => "SELECT COUNT(*) FROM products WHERE active = 1",
+            "products" => {
+                "SELECT COUNT(*) FROM products WHERE active = 1 AND record_type = 'standard'"
+            }
             "customers" => "SELECT COUNT(*) FROM customers WHERE active = 1",
             "suppliers" => "SELECT COUNT(*) FROM suppliers WHERE active = 1",
             "trade_cases" => "SELECT COUNT(*) FROM trade_cases WHERE active = 1",
@@ -2015,11 +2240,35 @@ fn require_text(value: &str) -> rusqlite::Result<()> {
 }
 
 fn validate_component_option_kind(value: &str) -> rusqlite::Result<()> {
-    if matches!(value, "category" | "brand" | "name") {
+    if matches!(
+        value,
+        "category"
+            | "name"
+            | "brand"
+            | "specification"
+            | "unit"
+            | "notes"
+            | "product_name"
+            | "configuration_notes"
+    ) {
         Ok(())
     } else {
         Err(rusqlite::Error::InvalidQuery)
     }
+}
+
+fn validate_configuration_language(value: &str) -> rusqlite::Result<()> {
+    if matches!(value, "en" | "ru" | "fr" | "es" | "pt" | "ar") {
+        Ok(())
+    } else {
+        Err(rusqlite::Error::InvalidQuery)
+    }
+}
+
+fn contains_cjk(value: &str) -> bool {
+    value
+        .chars()
+        .any(|character| matches!(character, '\u{3400}'..='\u{4dbf}' | '\u{4e00}'..='\u{9fff}'))
 }
 
 fn customer_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Customer> {
@@ -2144,6 +2393,52 @@ mod tests {
                     .iter()
                     .any(|option| option.kind == "brand" && option.value == "康达")
             );
+            let configuration_customer = database
+                .save_customer(CustomerInput {
+                    id: None,
+                    code: "CUS-CFG".into(),
+                    legal_name: "Configuration Buyer".into(),
+                    market: "CN".into(),
+                    currency: "CNY".into(),
+                    payment_terms: "T/T".into(),
+                    address: String::new(),
+                    shipping_address: String::new(),
+                    billing_address: String::new(),
+                    purchase_intent: String::new(),
+                    customer_analysis: String::new(),
+                    strengths: String::new(),
+                    weaknesses: String::new(),
+                    contacts: String::new(),
+                })
+                .unwrap();
+            let configuration_case = database
+                .save_business_case(BusinessCaseInput {
+                    id: None,
+                    number: "TD-2026-CFG".into(),
+                    customer_id: configuration_customer.id,
+                    stage: PipelineStage::Quotation,
+                    currency: "CNY".into(),
+                    incoterm: "EXW".into(),
+                    payment_terms: "T/T".into(),
+                    shipment_date: String::new(),
+                    notes: String::new(),
+                    lines: vec![BusinessCaseLineInput {
+                        id: None,
+                        source_type: "configurable_product".into(),
+                        product_id: configured.id.clone(),
+                        quantity: 1.0,
+                        unit_price_minor: configured.total_amount_minor,
+                    }],
+                })
+                .unwrap();
+            assert_eq!(
+                configuration_case.lines[0].source_type,
+                "configurable_product"
+            );
+            assert_eq!(configuration_case.lines[0].sku, "CFG-K38-G6");
+            database
+                .archive_business_case(&configuration_case.id)
+                .unwrap();
             let customer = database
                 .save_customer(CustomerInput {
                     id: None,
@@ -2185,6 +2480,7 @@ mod tests {
                     notes: "test order".into(),
                     lines: vec![BusinessCaseLineInput {
                         id: None,
+                        source_type: "product".into(),
                         product_id: product.id,
                         quantity: 12.5,
                         unit_price_minor: 240,
@@ -2264,6 +2560,7 @@ mod tests {
                         notes: business_case.notes.clone(),
                         lines: vec![BusinessCaseLineInput {
                             id: Some(business_case.lines[0].id.clone()),
+                            source_type: "product".into(),
                             product_id: business_case.lines[0].product_id.clone(),
                             quantity: 10.0,
                             unit_price_minor: business_case.lines[0].unit_price_minor,
@@ -2356,6 +2653,7 @@ mod tests {
                 }
                 let configuration_export = crate::document::export_configuration_pdf(
                     &configured,
+                    "en",
                     &typst,
                     &work_dir,
                     &output_dir,
@@ -2366,7 +2664,8 @@ mod tests {
                     b"%PDF-"
                 );
                 let configuration_csv =
-                    crate::document::export_configuration_csv(&configured, &output_dir).unwrap();
+                    crate::document::export_configuration_csv(&configured, "en", &output_dir)
+                        .unwrap();
                 assert!(
                     std::fs::read_to_string(configuration_csv)
                         .unwrap()
@@ -2472,7 +2771,7 @@ mod tests {
                     |row| row.get::<_, String>(0),
                 )
                 .unwrap(),
-            "8"
+            "9"
         );
         drop(database);
         let _ = std::fs::remove_file(&path);
@@ -2512,7 +2811,7 @@ mod tests {
         let database =
             EncryptedDatabase::open(&path, Zeroizing::new("test-password".to_owned())).unwrap();
         let options = database.list_component_options().unwrap();
-        assert_eq!(options.len(), 3);
+        assert_eq!(options.len(), 4);
         assert!(
             options
                 .iter()
@@ -2527,7 +2826,94 @@ mod tests {
                     |row| row.get::<_, String>(0),
                 )
                 .unwrap(),
-            "8"
+            "9"
+        );
+        drop(database);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn localizes_configuration_and_reports_missing_terms() {
+        let path = std::env::temp_dir().join(format!("tradedesk-i18n-{}.db", Uuid::new_v4()));
+        let database =
+            EncryptedDatabase::open(&path, Zeroizing::new("test-password".to_owned())).unwrap();
+        let component = database
+            .save_config_component(ConfigComponentInput {
+                id: None,
+                code: "COMP-ENGINE-01".into(),
+                category: "动力系统".into(),
+                name: "天然气发动机".into(),
+                specification: "K38N-G6".into(),
+                default_quantity: 1.0,
+                unit: "set".into(),
+                unit_price_minor: 1_000_000,
+                currency: "USD".into(),
+                brand: "ACME".into(),
+                notes: String::new(),
+            })
+            .unwrap();
+        let configuration = database
+            .save_configurable_product(ConfigurableProductInput {
+                id: None,
+                code: "CFG-GEN-01".into(),
+                name: "天然气发电机组".into(),
+                model: "K38N-G6".into(),
+                currency: "USD".into(),
+                notes: String::new(),
+                lines: vec![ConfigurableProductLineInput {
+                    component_id: component.id,
+                    quantity: 1.0,
+                    unit_price_minor: 1_000_000,
+                }],
+            })
+            .unwrap();
+
+        let (_, missing) = database
+            .configuration_for_export(&configuration.id, "en")
+            .unwrap();
+        assert_eq!(missing.len(), 3);
+
+        for (kind, source, translated) in [
+            ("category", "动力系统", "Power System"),
+            ("name", "天然气发动机", "Natural Gas Engine"),
+            (
+                "product_name",
+                "天然气发电机组",
+                "Natural Gas Generator Set",
+            ),
+        ] {
+            let option = database
+                .list_component_options()
+                .unwrap()
+                .into_iter()
+                .find(|option| option.kind == kind && option.value == source)
+                .unwrap();
+            database
+                .save_component_option_translation(ComponentOptionTranslationInput {
+                    option_id: option.id,
+                    language: "en".into(),
+                    value: translated.into(),
+                })
+                .unwrap();
+        }
+
+        let (localized, missing) = database
+            .configuration_for_export(&configuration.id, "en")
+            .unwrap();
+        assert!(missing.is_empty());
+        assert_eq!(localized.name, "Natural Gas Generator Set");
+        assert_eq!(localized.lines[0].category, "Power System");
+        assert_eq!(localized.lines[0].name, "Natural Gas Engine");
+        assert_eq!(
+            database
+                .list_component_options()
+                .unwrap()
+                .into_iter()
+                .find(|option| option.kind == "name" && option.value == "天然气发动机")
+                .unwrap()
+                .translations
+                .get("en"),
+            Some(&"Natural Gas Engine".to_owned())
         );
         drop(database);
         let _ = std::fs::remove_file(&path);

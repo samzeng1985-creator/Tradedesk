@@ -5,11 +5,12 @@ mod storage;
 use std::{path::PathBuf, sync::Mutex};
 
 use domain::{
-    BusinessCase, BusinessCaseInput, ComponentOption, ComponentOptionInput, ConfigComponent,
-    ConfigComponentInput, ConfigurableProduct, ConfigurableProductInput, ConvertDocumentInput,
-    CreateDocumentInput, Customer, CustomerInput, DocumentExportResult, Product, ProductInput,
-    ProductionMilestone, ProductionMilestoneInput, PurchaseOrder, PurchaseOrderInput,
-    PurchaseStatus, SaveDocumentInput, Supplier, SupplierInput, TradeDocument, WorkspaceSummary,
+    BusinessCase, BusinessCaseInput, ComponentOption, ComponentOptionInput,
+    ComponentOptionTranslationInput, ConfigComponent, ConfigComponentInput, ConfigurableProduct,
+    ConfigurableProductInput, ConvertDocumentInput, CreateDocumentInput, Customer, CustomerInput,
+    DocumentExportResult, Product, ProductInput, ProductionMilestone, ProductionMilestoneInput,
+    PurchaseOrder, PurchaseOrderInput, PurchaseStatus, SaveDocumentInput, Supplier, SupplierInput,
+    TradeDocument, WorkspaceSummary,
 };
 use storage::EncryptedDatabase;
 use tauri::{Manager, State};
@@ -143,6 +144,16 @@ fn save_component_option(
 }
 
 #[tauri::command]
+fn save_component_option_translation(
+    input: ComponentOptionTranslationInput,
+    state: State<'_, AppState>,
+) -> Result<ComponentOption, String> {
+    with_database(state, |database| {
+        database.save_component_option_translation(input)
+    })
+}
+
+#[tauri::command]
 fn list_configurable_products(
     state: State<'_, AppState>,
 ) -> Result<Vec<ConfigurableProduct>, String> {
@@ -159,17 +170,25 @@ fn save_configurable_product(
 
 fn export_configuration_pdf_file(
     id: &str,
+    language: &str,
     state: &State<'_, AppState>,
 ) -> Result<DocumentExportResult, String> {
-    let configuration = with_database(state.clone(), |database| {
-        database.get_configurable_product(id)
+    let (configuration, missing) = with_database(state.clone(), |database| {
+        database.configuration_for_export(id, language)
     })?;
+    if !missing.is_empty() {
+        return Err(format!(
+            "请先在“组件库 → 词库设置”补齐所选语言译文：{}",
+            missing.join("；")
+        ));
+    }
     let typst_path = state
         .typst_path
         .as_ref()
         .ok_or("未找到 Typst PDF 渲染器，请重新运行开发环境安装脚本。")?;
     document::export_configuration_pdf(
         &configuration,
+        language,
         typst_path,
         &state.render_cache_dir.join("configuration").join(id),
         &state.export_dir,
@@ -179,26 +198,38 @@ fn export_configuration_pdf_file(
 #[tauri::command]
 fn export_configuration_pdf(
     id: String,
+    language: String,
     state: State<'_, AppState>,
 ) -> Result<DocumentExportResult, String> {
-    export_configuration_pdf_file(&id, &state)
+    export_configuration_pdf_file(&id, &language, &state)
 }
 
 #[tauri::command]
-fn export_configuration_csv(id: String, state: State<'_, AppState>) -> Result<String, String> {
-    let configuration = with_database(state.clone(), |database| {
-        database.get_configurable_product(&id)
+fn export_configuration_csv(
+    id: String,
+    language: String,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    let (configuration, missing) = with_database(state.clone(), |database| {
+        database.configuration_for_export(&id, &language)
     })?;
-    document::export_configuration_csv(&configuration, &state.export_dir)
+    if !missing.is_empty() {
+        return Err(format!(
+            "请先在“组件库 → 词库设置”补齐所选语言译文：{}",
+            missing.join("；")
+        ));
+    }
+    document::export_configuration_csv(&configuration, &language, &state.export_dir)
         .map(|path| path.to_string_lossy().into_owned())
 }
 
 #[tauri::command]
 fn print_configuration(
     id: String,
+    language: String,
     state: State<'_, AppState>,
 ) -> Result<DocumentExportResult, String> {
-    let result = export_configuration_pdf_file(&id, &state)?;
+    let result = export_configuration_pdf_file(&id, &language, &state)?;
     document::open_file(std::path::Path::new(&result.path))?;
     Ok(result)
 }
@@ -417,6 +448,7 @@ pub fn run() {
             save_config_component,
             list_component_options,
             save_component_option,
+            save_component_option_translation,
             list_configurable_products,
             save_configurable_product,
             export_configuration_pdf,

@@ -4,6 +4,7 @@ use std::{
     process::Command,
 };
 
+use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 use crate::domain::{
@@ -20,6 +21,29 @@ const PACKING_LIST_TEMPLATE: &str = include_str!("../../templates/base/packing-l
 const TRADE_CONTRACT_TEMPLATE: &str = include_str!("../../templates/base/trade-contract.typ");
 const CONFIGURATION_SHEET_TEMPLATE: &str =
     include_str!("../../templates/base/configuration-sheet.typ");
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ConfigurationLabels {
+    title: &'static str,
+    code: &'static str,
+    product_name: &'static str,
+    currency: &'static str,
+    model: &'static str,
+    component_count: &'static str,
+    configuration_total: &'static str,
+    number: &'static str,
+    item_name: &'static str,
+    specification: &'static str,
+    quantity: &'static str,
+    unit: &'static str,
+    unit_price: &'static str,
+    amount: &'static str,
+    brand: &'static str,
+    notes: &'static str,
+    prepared_by: &'static str,
+    snapshot_notice: &'static str,
+}
 
 pub fn validate(document: &TradeDocument) -> Vec<DocumentValidationIssue> {
     let mut issues = Vec::new();
@@ -198,6 +222,7 @@ pub fn export_csv(document: &TradeDocument, output_dir: &Path) -> Result<PathBuf
 
 pub fn export_configuration_pdf(
     configuration: &ConfigurableProduct,
+    language: &str,
     typst_path: &Path,
     work_dir: &Path,
     output_dir: &Path,
@@ -207,8 +232,13 @@ pub fn export_configuration_pdf(
     let data_path = work_dir.join("configuration.json");
     let template_path = work_dir.join("configuration.typ");
     let output_path = output_dir.join(format!("{}.pdf", configuration_stem(configuration)));
-    let payload = serde_json::to_vec_pretty(configuration)
-        .map_err(|error| format!("无法生成配置清单快照：{error}"))?;
+    let payload = serde_json::to_vec_pretty(&serde_json::json!({
+        "configuration": configuration,
+        "labels": configuration_labels(language)?,
+        "language": language,
+        "rtl": language == "ar",
+    }))
+    .map_err(|error| format!("无法生成配置清单快照：{error}"))?;
     fs::write(&data_path, payload).map_err(|error| format!("无法写入配置清单快照：{error}"))?;
     fs::write(&template_path, CONFIGURATION_SHEET_TEMPLATE)
         .map_err(|error| format!("无法写入配置单模板：{error}"))?;
@@ -239,32 +269,46 @@ pub fn export_configuration_pdf(
 
 pub fn export_configuration_csv(
     configuration: &ConfigurableProduct,
+    language: &str,
     output_dir: &Path,
 ) -> Result<PathBuf, String> {
     fs::create_dir_all(output_dir).map_err(|error| format!("无法创建配置单导出目录：{error}"))?;
     let output_path = output_dir.join(format!("{}.csv", configuration_stem(configuration)));
+    let labels = configuration_labels(language)?;
     let mut rows = vec![
         [
-            csv("配置编号"),
+            csv(labels.code),
             csv(&configuration.code),
-            csv("产品名称"),
+            csv(labels.product_name),
             csv(&configuration.name),
-            csv("型号"),
+            csv(labels.model),
             csv(&configuration.model),
-            csv("币种"),
+            csv(labels.currency),
             csv(&configuration.currency),
         ]
         .join(","),
-        [csv("配置说明"), csv(&configuration.notes)].join(","),
+        [csv(labels.notes), csv(&configuration.notes)].join(","),
         String::new(),
-        "序号,组件类别,品名,型号/规格/材质,数量,单位,单价,总价,币种,品牌,备注".to_owned(),
+        [
+            labels.number,
+            labels.item_name,
+            labels.specification,
+            labels.quantity,
+            labels.unit,
+            labels.unit_price,
+            labels.amount,
+            labels.currency,
+            labels.brand,
+            labels.notes,
+        ]
+        .map(csv)
+        .join(","),
     ];
     for (index, line) in configuration.lines.iter().enumerate() {
         rows.push(
             [
                 (index + 1).to_string(),
-                csv(&line.category),
-                csv(&line.name),
+                csv(&format!("{} / {}", line.category, line.name)),
                 csv(&line.specification),
                 line.quantity.to_string(),
                 csv(&line.unit),
@@ -281,8 +325,7 @@ pub fn export_configuration_csv(
         [
             String::new(),
             String::new(),
-            csv("配置总价"),
-            String::new(),
+            csv(labels.configuration_total),
             String::new(),
             String::new(),
             String::new(),
@@ -296,6 +339,133 @@ pub fn export_configuration_csv(
     fs::write(&output_path, format!("\u{feff}{}\r\n", rows.join("\r\n")))
         .map_err(|error| format!("无法写入配置单 CSV：{error}"))?;
     Ok(output_path)
+}
+
+fn configuration_labels(language: &str) -> Result<ConfigurationLabels, String> {
+    let labels = match language {
+        "en" => ConfigurationLabels {
+            title: "PRODUCT CONFIGURATION SHEET",
+            code: "Configuration Code",
+            product_name: "Product Name",
+            currency: "Currency",
+            model: "Model",
+            component_count: "Component Count",
+            configuration_total: "Configuration Total",
+            number: "No.",
+            item_name: "Item Name",
+            specification: "Model / Specification / Material",
+            quantity: "Quantity",
+            unit: "Unit",
+            unit_price: "Unit Price",
+            amount: "Amount",
+            brand: "Brand",
+            notes: "Notes",
+            prepared_by: "Prepared by",
+            snapshot_notice: "Prices are based on the saved configuration snapshot.",
+        },
+        "ru" => ConfigurationLabels {
+            title: "ЛИСТ КОМПЛЕКТАЦИИ ИЗДЕЛИЯ",
+            code: "Код конфигурации",
+            product_name: "Наименование изделия",
+            currency: "Валюта",
+            model: "Модель",
+            component_count: "Количество компонентов",
+            configuration_total: "Итоговая стоимость",
+            number: "№",
+            item_name: "Наименование",
+            specification: "Модель / спецификация / материал",
+            quantity: "Количество",
+            unit: "Ед.",
+            unit_price: "Цена за единицу",
+            amount: "Сумма",
+            brand: "Марка",
+            notes: "Примечания",
+            prepared_by: "Составил",
+            snapshot_notice: "Цены указаны по сохраненному снимку конфигурации.",
+        },
+        "fr" => ConfigurationLabels {
+            title: "FICHE DE CONFIGURATION DU PRODUIT",
+            code: "Référence configuration",
+            product_name: "Nom du produit",
+            currency: "Devise",
+            model: "Modèle",
+            component_count: "Nombre de composants",
+            configuration_total: "Total configuration",
+            number: "N°",
+            item_name: "Désignation",
+            specification: "Modèle / Spécification / Matériau",
+            quantity: "Quantité",
+            unit: "Unité",
+            unit_price: "Prix unitaire",
+            amount: "Montant",
+            brand: "Marque",
+            notes: "Remarques",
+            prepared_by: "Préparé par",
+            snapshot_notice: "Les prix correspondent à la configuration enregistrée.",
+        },
+        "es" => ConfigurationLabels {
+            title: "HOJA DE CONFIGURACIÓN DEL PRODUCTO",
+            code: "Código de configuración",
+            product_name: "Nombre del producto",
+            currency: "Moneda",
+            model: "Modelo",
+            component_count: "Número de componentes",
+            configuration_total: "Total de configuración",
+            number: "N.º",
+            item_name: "Nombre del artículo",
+            specification: "Modelo / Especificación / Material",
+            quantity: "Cantidad",
+            unit: "Unidad",
+            unit_price: "Precio unitario",
+            amount: "Importe",
+            brand: "Marca",
+            notes: "Observaciones",
+            prepared_by: "Preparado por",
+            snapshot_notice: "Los precios corresponden a la configuración guardada.",
+        },
+        "pt" => ConfigurationLabels {
+            title: "FICHA DE CONFIGURAÇÃO DO PRODUTO",
+            code: "Código da configuração",
+            product_name: "Nome do produto",
+            currency: "Moeda",
+            model: "Modelo",
+            component_count: "Número de componentes",
+            configuration_total: "Total da configuração",
+            number: "Nº",
+            item_name: "Nome do item",
+            specification: "Modelo / Especificação / Material",
+            quantity: "Quantidade",
+            unit: "Unidade",
+            unit_price: "Preço unitário",
+            amount: "Valor total",
+            brand: "Marca",
+            notes: "Observações",
+            prepared_by: "Preparado por",
+            snapshot_notice: "Os preços correspondem à configuração guardada.",
+        },
+        "ar" => ConfigurationLabels {
+            title: "ورقة تكوين المنتج",
+            code: "رمز التكوين",
+            product_name: "اسم المنتج",
+            currency: "العملة",
+            model: "الطراز",
+            component_count: "عدد المكونات",
+            configuration_total: "إجمالي التكوين",
+            number: "الرقم",
+            item_name: "اسم الصنف",
+            specification: "الطراز / المواصفات / المادة",
+            quantity: "الكمية",
+            unit: "الوحدة",
+            unit_price: "سعر الوحدة",
+            amount: "الإجمالي",
+            brand: "العلامة التجارية",
+            notes: "ملاحظات",
+            prepared_by: "إعداد",
+            snapshot_notice: "تعتمد الأسعار على نسخة التكوين المحفوظة.",
+        },
+        _ => return Err("不支持的配置单语言。".to_owned()),
+    };
+    Ok(labels)
 }
 
 pub fn find_typst(executable_dir: &Path) -> Option<PathBuf> {

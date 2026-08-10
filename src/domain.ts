@@ -39,18 +39,35 @@ export interface ConfigComponent {
 
 export type ConfigComponentInput = Omit<ConfigComponent, "active" | "id"> & { id?: string };
 
-export type ComponentOptionKind = "category" | "brand" | "name";
+export type ComponentOptionKind =
+  | "category"
+  | "name"
+  | "brand"
+  | "specification"
+  | "unit"
+  | "notes"
+  | "product_name"
+  | "configuration_notes";
+
+export type ConfigurationLanguage = "en" | "ru" | "fr" | "es" | "pt" | "ar";
 
 export interface ComponentOption {
   id: string;
   kind: ComponentOptionKind;
   value: string;
   active: boolean;
+  translations: Partial<Record<ConfigurationLanguage, string>>;
 }
 
 export interface ComponentOptionInput {
   id?: string;
   kind: ComponentOptionKind;
+  value: string;
+}
+
+export interface ComponentOptionTranslationInput {
+  optionId: string;
+  language: ConfigurationLanguage;
   value: string;
 }
 
@@ -141,6 +158,7 @@ export interface WorkspaceSummary {
 
 export interface BusinessCaseLine {
   id: string;
+  sourceType: "product" | "configurable_product";
   productId: string;
   sku: string;
   nameZh: string;
@@ -153,6 +171,7 @@ export interface BusinessCaseLine {
 
 export interface BusinessCaseLineInput {
   id?: string;
+  sourceType: "product" | "configurable_product";
   productId: string;
   quantity: number;
   unitPriceMinor: number;

@@ -3,6 +3,7 @@ import type { FormEvent } from "react";
 import type {
   BusinessCase,
   BusinessCaseInput,
+  ConfigurableProduct,
   Customer,
   PipelineStage,
   Product,
@@ -12,12 +13,14 @@ interface BusinessCaseCenterProps {
   cases: BusinessCase[];
   customers: Customer[];
   products: Product[];
+  configurableProducts: ConfigurableProduct[];
   onSave: (input: BusinessCaseInput) => Promise<void>;
   onArchive: (id: string) => Promise<void>;
 }
 
 interface DraftLine {
   id?: string;
+  sourceType: "product" | "configurable_product";
   productId: string;
   quantity: string;
   unitPrice: string;
@@ -53,6 +56,7 @@ function CaseEditor({
   cases,
   customers,
   products,
+  configurableProducts,
   onClose,
   onSave,
 }: {
@@ -60,6 +64,7 @@ function CaseEditor({
   cases: BusinessCase[];
   customers: Customer[];
   products: Product[];
+  configurableProducts: ConfigurableProduct[];
   onClose: () => void;
   onSave: (input: BusinessCaseInput) => Promise<void>;
 }) {
@@ -74,10 +79,11 @@ function CaseEditor({
   const [lines, setLines] = useState<DraftLine[]>(
     record?.lines.map((line) => ({
       id: line.id,
+      sourceType: line.sourceType,
       productId: line.productId,
       quantity: String(line.quantity),
       unitPrice: (line.unitPriceMinor / 100).toFixed(2),
-    })) ?? [{ productId: "", quantity: "1", unitPrice: "0.00" }],
+    })) ?? [{ sourceType: "product", productId: "", quantity: "1", unitPrice: "0.00" }],
   );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -102,7 +108,30 @@ function CaseEditor({
     if (customer) {
       setCurrency(customer.currency);
       setPaymentTerms(customer.paymentTerms);
+      setLines((current) => current.map((line) => {
+        if (line.sourceType !== "configurable_product") return line;
+        const configuration = configurableProducts.find((item) => item.id === line.productId);
+        return configuration?.currency === customer.currency ? line : { ...line, productId: "", unitPrice: "0.00" };
+      }));
     }
+  }
+
+  function selectProduct(index: number, value: string) {
+    if (!value) {
+      updateLine(index, { productId: "", unitPrice: "0.00" });
+      return;
+    }
+    const separator = value.indexOf(":");
+    const sourceType = value.slice(0, separator) as DraftLine["sourceType"];
+    const productId = value.slice(separator + 1);
+    const configuration = sourceType === "configurable_product"
+      ? configurableProducts.find((item) => item.id === productId)
+      : null;
+    updateLine(index, {
+      sourceType,
+      productId,
+      unitPrice: configuration ? (configuration.totalAmountMinor / 100).toFixed(2) : "0.00",
+    });
   }
 
   async function submit(event: FormEvent) {
@@ -126,6 +155,7 @@ function CaseEditor({
         notes,
         lines: lines.map((line) => ({
           id: line.id,
+          sourceType: line.sourceType,
           productId: line.productId,
           quantity: Number(line.quantity),
           unitPriceMinor: Math.round(Number(line.unitPrice) * 100),
@@ -157,15 +187,16 @@ function CaseEditor({
             <label className="field-wide">付款条款<input value={paymentTerms} onChange={(event) => setPaymentTerms(event.target.value)} /></label>
           </div>
 
-          <div className="line-editor-heading"><div><h3>订单产品</h3><p>保存时固化产品名称、SKU 和单位快照</p></div><button type="button" className="button button-secondary" onClick={() => setLines((current) => [...current, { productId: "", quantity: "1", unitPrice: "0.00" }])}>添加产品</button></div>
+          <div className="line-editor-heading"><div><h3>订单产品</h3><p>可选择标准产品或已完成的自选配置，保存时固化产品和价格快照</p></div><button type="button" className="button button-secondary" onClick={() => setLines((current) => [...current, { sourceType: "product", productId: "", quantity: "1", unitPrice: "0.00" }])}>添加产品</button></div>
           <div className="line-editor">
             {lines.map((line, index) => {
-              const product = products.find((item) => item.id === line.productId);
+              const product = line.sourceType === "product" ? products.find((item) => item.id === line.productId) : null;
+              const configuration = line.sourceType === "configurable_product" ? configurableProducts.find((item) => item.id === line.productId) : null;
               const amount = Math.round(Number(line.quantity) * Math.round(Number(line.unitPrice) * 100));
               return <div className="line-row" key={line.id ?? `${index}-${record?.id ?? "new"}`}>
-                <label>产品<select required value={line.productId} onChange={(event) => updateLine(index, { productId: event.target.value })}><option value="">请选择产品</option>{products.map((item) => <option value={item.id} key={item.id}>{item.sku} · {item.nameEn}</option>)}</select></label>
+                <label>产品 / 自选配置<select required value={line.productId ? `${line.sourceType}:${line.productId}` : ""} onChange={(event) => selectProduct(index, event.target.value)}><option value="">请选择产品</option><optgroup label="标准产品">{products.map((item) => <option value={`product:${item.id}`} key={item.id}>{item.sku} · {item.nameEn}</option>)}</optgroup><optgroup label={`已完成自选配置（${currency}）`}>{configurableProducts.filter((item) => item.currency === currency).map((item) => <option value={`configurable_product:${item.id}`} key={item.id}>{item.code} · {item.name} · {formatMoney(item.totalAmountMinor, item.currency)}</option>)}</optgroup></select></label>
                 <label>数量<input required type="number" min="0.001" step="0.001" value={line.quantity} onChange={(event) => updateLine(index, { quantity: event.target.value })} /></label>
-                <label>单位<input value={product?.unit ?? "—"} readOnly /></label>
+                <label>单位<input value={product?.unit ?? (configuration ? "套" : "—")} readOnly /></label>
                 <label>单价<input required type="number" min="0" step="0.01" value={line.unitPrice} onChange={(event) => updateLine(index, { unitPrice: event.target.value })} /></label>
                 <div className="line-amount"><span>金额</span><strong>{formatMoney(Number.isFinite(amount) ? amount : 0, currency)}</strong></div>
                 <button type="button" className="remove-line" disabled={lines.length === 1} onClick={() => setLines((current) => current.filter((_, currentIndex) => currentIndex !== index))}>移除</button>
@@ -181,7 +212,7 @@ function CaseEditor({
   );
 }
 
-export function BusinessCaseCenter({ cases, customers, products, onSave, onArchive }: BusinessCaseCenterProps) {
+export function BusinessCaseCenter({ cases, customers, products, configurableProducts, onSave, onArchive }: BusinessCaseCenterProps) {
   const [editing, setEditing] = useState<BusinessCase | "new" | null>(null);
   const [query, setQuery] = useState("");
   const normalizedQuery = query.trim().toLocaleLowerCase();
@@ -198,12 +229,12 @@ export function BusinessCaseCenter({ cases, customers, products, onSave, onArchi
 
   return <>
     <section className="panel business-case-panel">
-      <div className="panel-heading"><div><h2>业务单中心</h2><p>客户和产品只选择一次，后续采购与单证复用同一业务快照</p></div><button className="button button-primary" disabled={!customers.length || !products.length} onClick={() => setEditing("new")}>新建业务单</button></div>
-      {(!customers.length || !products.length) && <div className="empty-callout">请先在“主数据”中至少录入一个客户和一个产品。</div>}
+      <div className="panel-heading"><div><h2>业务单中心</h2><p>客户和产品只选择一次，后续采购与单证复用同一业务快照</p></div><button className="button button-primary" disabled={!customers.length || (!products.length && !configurableProducts.length)} onClick={() => setEditing("new")}>新建业务单</button></div>
+      {(!customers.length || (!products.length && !configurableProducts.length)) && <div className="empty-callout">请先在“主数据”中录入客户，以及至少一个标准产品或已完成自选配置。</div>}
       <div className="table-toolbar"><label><span className="sr-only">搜索业务单</span><input placeholder="按单号、客户、币种或贸易术语搜索" value={query} onChange={(event) => setQuery(event.target.value)} /></label><span className="record-count">{filteredCases.length} 条业务单</span></div>
       <div className="table-wrap"><table><thead><tr><th>业务单号</th><th>客户</th><th>状态</th><th>贸易术语</th><th>计划发货</th><th>金额</th><th>操作</th></tr></thead><tbody>{filteredCases.map((item) => <tr key={item.id}><td><strong>{item.number}</strong><small className="table-subtitle">{item.lines.length} 个产品行</small></td><td>{item.customerName}</td><td><span className="case-stage">{stageLabels[item.stage]}</span></td><td>{item.incoterm || "—"}</td><td>{item.shipmentDate || "—"}</td><td>{formatMoney(item.totalAmountMinor, item.currency)}</td><td><div className="row-actions"><button onClick={() => setEditing(item)}>编辑</button><button onClick={() => archive(item)}>归档</button></div></td></tr>)}</tbody></table></div>
       {!filteredCases.length && <div className="empty-table">{cases.length ? "没有符合条件的业务单" : "还没有业务单，请从第一笔真实订单开始"}</div>}
     </section>
-    {editing && <CaseEditor record={editing === "new" ? null : editing} cases={cases} customers={customers} products={products} onClose={() => setEditing(null)} onSave={onSave} />}
+    {editing && <CaseEditor record={editing === "new" ? null : editing} cases={cases} customers={customers} products={products} configurableProducts={configurableProducts} onClose={() => setEditing(null)} onSave={onSave} />}
   </>;
 }

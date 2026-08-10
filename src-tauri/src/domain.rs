@@ -292,6 +292,7 @@ pub struct ComponentOption {
     pub kind: String,
     pub value: String,
     pub active: bool,
+    pub translations: std::collections::BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -299,6 +300,14 @@ pub struct ComponentOption {
 pub struct ComponentOptionInput {
     pub id: Option<String>,
     pub kind: String,
+    pub value: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ComponentOptionTranslationInput {
+    pub option_id: String,
+    pub language: String,
     pub value: String,
 }
 
@@ -424,6 +433,7 @@ pub struct SupplierInput {
 #[serde(rename_all = "camelCase")]
 pub struct BusinessCaseLine {
     pub id: String,
+    pub source_type: String,
     pub product_id: String,
     pub sku: String,
     pub name_zh: String,
@@ -438,9 +448,15 @@ pub struct BusinessCaseLine {
 #[serde(rename_all = "camelCase")]
 pub struct BusinessCaseLineInput {
     pub id: Option<String>,
+    #[serde(default = "default_business_line_source")]
+    pub source_type: String,
     pub product_id: String,
     pub quantity: f64,
     pub unit_price_minor: i64,
+}
+
+fn default_business_line_source() -> String {
+    "product".to_owned()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

@@ -12,6 +12,8 @@ import type {
   BusinessCaseInput,
   ComponentOption,
   ComponentOptionInput,
+  ComponentOptionTranslationInput,
+  ConfigurationLanguage,
   ConfigComponent,
   ConfigComponentInput,
   ConfigurableProduct,
@@ -201,17 +203,22 @@ export default function App() {
     await loadMasterData();
   }
 
-  async function exportConfigurationPdf(id: string) {
-    const result = await masterApi.exportConfigurationPdf(id);
+  async function saveComponentOptionTranslation(input: ComponentOptionTranslationInput) {
+    await masterApi.saveComponentOptionTranslation(input);
+    await loadMasterData();
+  }
+
+  async function exportConfigurationPdf(id: string, language: ConfigurationLanguage) {
+    const result = await masterApi.exportConfigurationPdf(id, language);
     return result.path;
   }
 
-  async function exportConfigurationCsv(id: string) {
-    return masterApi.exportConfigurationCsv(id);
+  async function exportConfigurationCsv(id: string, language: ConfigurationLanguage) {
+    return masterApi.exportConfigurationCsv(id, language);
   }
 
-  async function printConfiguration(id: string) {
-    const result = await masterApi.printConfiguration(id);
+  async function printConfiguration(id: string, language: ConfigurationLanguage) {
+    const result = await masterApi.printConfiguration(id, language);
     return result.path;
   }
 
@@ -350,7 +357,7 @@ export default function App() {
           <span className="brand-mark">TD</span>
           <span>
             <strong>TradeDesk</strong>
-            <small>Local · 0.9.0</small>
+            <small>Local · 0.10.0</small>
           </span>
         </div>
 
@@ -497,6 +504,7 @@ export default function App() {
             cases={businessCases}
             customers={customers}
             products={products}
+            configurableProducts={configurableProducts}
             onSave={saveBusinessCase}
             onArchive={archiveBusinessCase}
           />
@@ -572,8 +580,8 @@ export default function App() {
                 </table>
               )}
             </div>}
-            {masterTab === "configurable" && <ConfigurableProductLibrary configurations={configurableProducts} components={configComponents} onSave={saveConfigurableProduct} onArchive={(id) => archiveConfigMaster("configurable_product", id)} onExportPdf={exportConfigurationPdf} onExportCsv={exportConfigurationCsv} onPrint={printConfiguration} />}
-            {masterTab === "components" && <ComponentLibrary components={configComponents} options={componentOptions} onSave={saveConfigComponent} onArchive={(id) => archiveConfigMaster("config_component", id)} onSaveOption={saveComponentOption} onArchiveOption={archiveComponentOption} />}
+            {masterTab === "configurable" && <ConfigurableProductLibrary configurations={configurableProducts} components={configComponents} options={componentOptions} onSave={saveConfigurableProduct} onArchive={(id) => archiveConfigMaster("configurable_product", id)} onExportPdf={exportConfigurationPdf} onExportCsv={exportConfigurationCsv} onPrint={printConfiguration} />}
+            {masterTab === "components" && <ComponentLibrary components={configComponents} options={componentOptions} onSave={saveConfigComponent} onArchive={(id) => archiveConfigMaster("config_component", id)} onSaveOption={saveComponentOption} onSaveOptionTranslation={saveComponentOptionTranslation} onArchiveOption={archiveComponentOption} />}
           </section>
         )}
 

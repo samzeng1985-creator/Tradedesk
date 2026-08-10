@@ -149,7 +149,10 @@ tbody tr:hover { background: #fafbfc; }
 .remembered-suggestions button { display: block; width: 100%; border: 0; border-radius: 6px; padding: 8px 9px; color: #334155; background: transparent; text-align: left; font-size: 12px; }
 .remembered-suggestions button:hover { color: #5b21b6; background: #f5f3ff; }
 .option-manager { width: min(700px, 100%); }
-.option-kind-tabs { display: flex; gap: 7px; margin: 18px 0 12px; }
+.option-language, .export-language { display: flex; align-items: center; gap: 8px; color: #64748b; font-size: 11px; font-weight: 650; }
+.option-language { margin-top: 16px; }
+.option-language select, .export-language select { border: 1px solid #cfd7e3; border-radius: 8px; padding: 8px 9px; color: #334155; background: white; }
+.option-kind-tabs { display: flex; flex-wrap: wrap; gap: 7px; margin: 18px 0 12px; }
 .option-kind-tabs button { border: 1px solid #d8dee7; border-radius: 999px; padding: 7px 12px; color: #64748b; background: white; font-size: 12px; font-weight: 650; }
 .option-kind-tabs button.selected { border-color: #c4b5fd; color: #6d28d9; background: #f5f3ff; }
 .option-add-form { display: grid; grid-template-columns: 1fr auto; gap: 9px; }
@@ -158,6 +161,10 @@ tbody tr:hover { background: #fafbfc; }
 .option-list { max-height: 330px; overflow-y: auto; margin-top: 12px; border: 1px solid #e2e8f0; border-radius: 9px; }
 .option-list > div { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 9px 11px; border-top: 1px solid #edf0f4; }
 .option-list > div:first-child { border-top: 0; }
+.option-translation-list { max-height: 390px; }
+.option-translation-row { display: grid !important; grid-template-columns: minmax(125px, .8fr) minmax(230px, 1.5fr) auto auto; align-items: center; }
+.option-translation-row > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 650; }
+.option-translation-row input { width: 100%; border: 1px solid #cfd7e3; border-radius: 7px; padding: 8px 9px; }
 .configuration-actions { min-width: 185px; }
 .configuration-editor { width: min(1380px, 100%); }
 .configuration-header-fields { margin-bottom: 24px; }

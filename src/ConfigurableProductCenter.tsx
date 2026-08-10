@@ -4,6 +4,8 @@ import type {
   ComponentOption,
   ComponentOptionInput,
   ComponentOptionKind,
+  ComponentOptionTranslationInput,
+  ConfigurationLanguage,
   ConfigComponent,
   ConfigComponentInput,
   ConfigurableProduct,
@@ -24,6 +26,7 @@ interface ComponentLibraryProps {
   onSave: (input: ConfigComponentInput) => Promise<void>;
   onArchive: (id: string) => Promise<void>;
   onSaveOption: (input: ComponentOptionInput) => Promise<void>;
+  onSaveOptionTranslation: (input: ComponentOptionTranslationInput) => Promise<void>;
   onArchiveOption: (id: string) => Promise<void>;
 }
 
@@ -31,7 +34,53 @@ const optionLabels: Record<ComponentOptionKind, string> = {
   category: "组件类别",
   name: "品名",
   brand: "品牌",
+  specification: "规格/材质",
+  unit: "单位",
+  notes: "组件备注",
+  product_name: "配置产品名",
+  configuration_notes: "配置说明",
 };
+
+export const configurationLanguageLabels: Record<ConfigurationLanguage, string> = {
+  en: "English · 英语",
+  ru: "Русский · 俄语",
+  fr: "Français · 法语",
+  es: "Español · 西班牙语",
+  pt: "Português · 葡萄牙语",
+  ar: "العربية · 阿拉伯语",
+};
+
+function OptionTranslationRow({
+  option,
+  language,
+  onSave,
+  onArchive,
+}: {
+  option: ComponentOption;
+  language: ConfigurationLanguage;
+  onSave: (input: ComponentOptionTranslationInput) => Promise<void>;
+  onArchive: (option: ComponentOption) => Promise<void>;
+}) {
+  const [value, setValue] = useState(option.translations[language] ?? "");
+  const [busy, setBusy] = useState(false);
+
+  async function save() {
+    if (!value.trim()) return;
+    setBusy(true);
+    try {
+      await onSave({ optionId: option.id, language, value });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return <div className="option-translation-row">
+    <span title={option.value}>{option.value}</span>
+    <input value={value} onChange={(event) => setValue(event.target.value)} placeholder={`${configurationLanguageLabels[language]}译文`} dir={language === "ar" ? "rtl" : "ltr"} />
+    <button type="button" className="text-button" disabled={busy || !value.trim()} onClick={() => void save()}>{busy ? "保存中…" : "保存译文"}</button>
+    <button type="button" className="danger-link" onClick={() => void onArchive(option)}>停用</button>
+  </div>;
+}
 
 function RememberedInput({
   label,
@@ -74,14 +123,17 @@ function ComponentOptionManager({
   options,
   onClose,
   onSave,
+  onSaveTranslation,
   onArchive,
 }: {
   options: ComponentOption[];
   onClose: () => void;
   onSave: (input: ComponentOptionInput) => Promise<void>;
+  onSaveTranslation: (input: ComponentOptionTranslationInput) => Promise<void>;
   onArchive: (id: string) => Promise<void>;
 }) {
   const [kind, setKind] = useState<ComponentOptionKind>("category");
+  const [language, setLanguage] = useState<ConfigurationLanguage>("en");
   const [value, setValue] = useState("");
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState(false);
@@ -110,12 +162,13 @@ function ComponentOptionManager({
 
   return <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
     <section className="modal-card option-manager" role="dialog" aria-modal="true" onMouseDown={(event) => event.stopPropagation()}>
-      <div className="panel-heading"><div><span className="eyebrow">组件录入词库</span><h2>类别、品名与品牌设置</h2><p>保存组件时，新内容也会自动加入词库。</p></div><button className="icon-button" onClick={onClose} aria-label="关闭">×</button></div>
+      <div className="panel-heading"><div><span className="eyebrow">多语录入词库</span><h2>组件与配置术语设置</h2><p>先选择输出语种，再为中文基础词录入经过确认的专业译文。</p></div><button className="icon-button" onClick={onClose} aria-label="关闭">×</button></div>
+      <label className="option-language">译文语种<select value={language} onChange={(event) => setLanguage(event.target.value as ConfigurationLanguage)}>{Object.entries(configurationLanguageLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>
       <div className="option-kind-tabs">{(Object.keys(optionLabels) as ComponentOptionKind[]).map((item) => <button type="button" className={kind === item ? "selected" : ""} key={item} onClick={() => { setKind(item); setQuery(""); }}>{optionLabels[item]} {options.filter((option) => option.kind === item).length}</button>)}</div>
       <form className="option-add-form" onSubmit={submit}><input required value={value} onChange={(event) => setValue(event.target.value)} placeholder={`新增${optionLabels[kind]}`} /><button className="button button-primary" disabled={busy}>{busy ? "保存中…" : "加入词库"}</button></form>
       <input className="option-search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder={`模糊搜索${optionLabels[kind]}`} />
       {error && <div className="form-error">{error}</div>}
-      <div className="option-list">{filtered.map((option) => <div key={option.id}><span>{option.value}</span><button type="button" className="danger-link" onClick={() => void archive(option)}>停用</button></div>)}</div>
+      <div className="option-list option-translation-list">{filtered.map((option) => <OptionTranslationRow key={`${option.id}-${language}-${option.translations[language] ?? ""}`} option={option} language={language} onSave={onSaveTranslation} onArchive={archive} />)}</div>
       {!filtered.length && <div className="empty-table">暂无符合条件的选项</div>}
     </section>
   </div>;
@@ -199,7 +252,7 @@ function ComponentEditor({
   );
 }
 
-export function ComponentLibrary({ components, options, onSave, onArchive, onSaveOption, onArchiveOption }: ComponentLibraryProps) {
+export function ComponentLibrary({ components, options, onSave, onArchive, onSaveOption, onSaveOptionTranslation, onArchiveOption }: ComponentLibraryProps) {
   const [query, setQuery] = useState("");
   const [editing, setEditing] = useState<ConfigComponent | "new" | null>(null);
   const [managingOptions, setManagingOptions] = useState(false);
@@ -219,7 +272,7 @@ export function ComponentLibrary({ components, options, onSave, onArchive, onSav
     <div className="table-wrap"><table><thead><tr><th>组件编号</th><th>类别</th><th>品名</th><th>型号/规格/材质</th><th>默认数量</th><th>单价</th><th>品牌</th><th>备注</th><th>操作</th></tr></thead><tbody>{filtered.map((item) => <tr key={item.id}><td>{item.code}</td><td>{item.category}</td><td><strong>{item.name}</strong></td><td>{item.specification || "—"}</td><td>{item.defaultQuantity} {item.unit}</td><td>{formatMoney(item.unitPriceMinor, item.currency)}</td><td>{item.brand || "—"}</td><td>{item.notes || "—"}</td><td><div className="row-actions"><button onClick={() => setEditing(item)}>编辑</button><button onClick={() => void archive(item)}>停用</button></div></td></tr>)}</tbody></table></div>
     {!filtered.length && <div className="empty-table">{components.length ? "没有符合条件的组件" : "还没有组件，请先录入可选组件和价格"}</div>}
     {editing && <ComponentEditor record={editing === "new" ? null : editing} options={options} onClose={() => setEditing(null)} onSave={onSave} />}
-    {managingOptions && <ComponentOptionManager options={options} onClose={() => setManagingOptions(false)} onSave={onSaveOption} onArchive={onArchiveOption} />}
+    {managingOptions && <ComponentOptionManager options={options} onClose={() => setManagingOptions(false)} onSave={onSaveOption} onSaveTranslation={onSaveOptionTranslation} onArchive={onArchiveOption} />}
   </>;
 }
 
@@ -233,11 +286,13 @@ interface DraftLine {
 function ConfigurationEditor({
   record,
   components,
+  options,
   onClose,
   onSave,
 }: {
   record: ConfigurableProduct | null;
   components: ConfigComponent[];
+  options: ComponentOption[];
   onClose: () => void;
   onSave: (input: ConfigurableProductInput) => Promise<void>;
 }) {
@@ -299,7 +354,7 @@ function ConfigurationEditor({
         <form onSubmit={submit}>
           <div className="editor-form configuration-header-fields">
             <label>配置编号 *<input required value={code} onChange={(event) => setCode(event.target.value)} autoFocus /></label>
-            <label>产品名称 *<input required value={name} onChange={(event) => setName(event.target.value)} /></label>
+            <RememberedInput label="产品名称" required value={name} suggestions={options.filter((item) => item.kind === "product_name").map((item) => item.value)} onChange={setName} placeholder="搜索已记忆的配置产品名称" />
             <label>型号<input value={model} onChange={(event) => setModel(event.target.value)} /></label>
             <label>币种 *<input required maxLength={3} value={currency} onChange={(event) => setCurrency(event.target.value.toUpperCase())} /></label>
             <label className="field-wide">报价说明<textarea rows={2} value={notes} onChange={(event) => setNotes(event.target.value)} /></label>
@@ -317,6 +372,7 @@ function ConfigurationEditor({
 export function ConfigurableProductLibrary({
   configurations,
   components,
+  options,
   onSave,
   onArchive,
   onExportPdf,
@@ -325,16 +381,18 @@ export function ConfigurableProductLibrary({
 }: {
   configurations: ConfigurableProduct[];
   components: ConfigComponent[];
+  options: ComponentOption[];
   onSave: (input: ConfigurableProductInput) => Promise<void>;
   onArchive: (id: string) => Promise<void>;
-  onExportPdf: (id: string) => Promise<string>;
-  onExportCsv: (id: string) => Promise<string>;
-  onPrint: (id: string) => Promise<string>;
+  onExportPdf: (id: string, language: ConfigurationLanguage) => Promise<string>;
+  onExportCsv: (id: string, language: ConfigurationLanguage) => Promise<string>;
+  onPrint: (id: string, language: ConfigurationLanguage) => Promise<string>;
 }) {
   const [query, setQuery] = useState("");
   const [editing, setEditing] = useState<ConfigurableProduct | "new" | null>(null);
   const [busy, setBusy] = useState("");
   const [message, setMessage] = useState("");
+  const [language, setLanguage] = useState<ConfigurationLanguage>("en");
   const normalized = query.trim().toLocaleLowerCase();
   const filtered = configurations.filter((item) => [item.code, item.name, item.model, item.notes, ...item.lines.flatMap((line) => [line.category, line.name, line.specification, line.brand])].some((value) => value.toLocaleLowerCase().includes(normalized)));
 
@@ -347,7 +405,7 @@ export function ConfigurableProductLibrary({
     setBusy(`${item.id}-${action}`);
     setMessage("");
     try {
-      const path = action === "pdf" ? await onExportPdf(item.id) : action === "csv" ? await onExportCsv(item.id) : await onPrint(item.id);
+      const path = action === "pdf" ? await onExportPdf(item.id, language) : action === "csv" ? await onExportCsv(item.id, language) : await onPrint(item.id, language);
       setMessage(`${action === "print" ? "已打开打印用 PDF" : "已导出配置单"}：${path}`);
     } catch (reason) {
       setMessage(`导出失败：${String(reason)}`);
@@ -357,11 +415,11 @@ export function ConfigurableProductLibrary({
   }
 
   return <>
-    <div className="table-toolbar"><label><span className="sr-only">搜索配置</span><input placeholder="搜索配置编号、产品、型号或组件" value={query} onChange={(event) => setQuery(event.target.value)} /></label><button className="button button-primary" disabled={!components.length} onClick={() => setEditing("new")}>新建自选配置</button></div>
+    <div className="table-toolbar"><label><span className="sr-only">搜索配置</span><input placeholder="搜索配置编号、产品、型号或组件" value={query} onChange={(event) => setQuery(event.target.value)} /></label><div className="toolbar-buttons"><label className="export-language">导出语种<select value={language} onChange={(event) => setLanguage(event.target.value as ConfigurationLanguage)}>{Object.entries(configurationLanguageLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label><button className="button button-primary" disabled={!components.length} onClick={() => setEditing("new")}>新建自选配置</button></div></div>
     {!components.length && <div className="empty-callout">请先进入“组件库”，录入至少一个可选组件。</div>}
     {message && <div className="document-message">{message}</div>}
     <div className="table-wrap"><table><thead><tr><th>配置编号</th><th>产品</th><th>型号</th><th>组件数</th><th>币种</th><th>配置总价</th><th>说明</th><th>操作</th></tr></thead><tbody>{filtered.map((item) => <tr key={item.id}><td>{item.code}</td><td><strong>{item.name}</strong></td><td>{item.model || "—"}</td><td>{item.lines.length}</td><td>{item.currency}</td><td><strong>{formatMoney(item.totalAmountMinor, item.currency)}</strong></td><td>{item.notes || "—"}</td><td><div className="row-actions configuration-actions"><button onClick={() => setEditing(item)}>配置/查看</button><button disabled={!!busy} onClick={() => void output(item, "pdf")}>{busy === `${item.id}-pdf` ? "导出中…" : "PDF"}</button><button disabled={!!busy} onClick={() => void output(item, "csv")}>{busy === `${item.id}-csv` ? "导出中…" : "CSV"}</button><button disabled={!!busy} onClick={() => void output(item, "print")}>{busy === `${item.id}-print` ? "打开中…" : "打印"}</button><button className="danger-link" onClick={() => void archive(item)}>停用</button></div></td></tr>)}</tbody></table></div>
     {!filtered.length && <div className="empty-table">{configurations.length ? "没有符合条件的配置" : "还没有自选配置产品"}</div>}
-    {editing && <ConfigurationEditor record={editing === "new" ? null : editing} components={components} onClose={() => setEditing(null)} onSave={onSave} />}
+    {editing && <ConfigurationEditor record={editing === "new" ? null : editing} components={components} options={options} onClose={() => setEditing(null)} onSave={onSave} />}
   </>;
 }
