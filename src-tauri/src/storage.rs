@@ -3619,6 +3619,19 @@ mod tests {
                     .unwrap();
                     assert_eq!(&std::fs::read(sales_export.path).unwrap()[..5], b"%PDF-");
                 }
+                for document_type in [DocumentType::PackingList, DocumentType::TradeContract] {
+                    let mut template_document = issued.clone();
+                    template_document.document_type = document_type;
+                    let template_export = crate::document::export_pdf(
+                        &template_document,
+                        &company_profile,
+                        &typst,
+                        &work_dir,
+                        &output_dir,
+                    )
+                    .unwrap();
+                    assert_eq!(&std::fs::read(template_export.path).unwrap()[..5], b"%PDF-");
+                }
                 for language in ["en", "ru", "fr", "es", "pt", "ar"] {
                     let configuration_export = crate::document::export_configuration_pdf(
                         &configured,
