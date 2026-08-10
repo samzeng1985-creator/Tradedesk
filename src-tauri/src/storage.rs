@@ -5,13 +5,14 @@ use uuid::Uuid;
 use zeroize::Zeroizing;
 
 use crate::domain::{
-    BusinessCase, BusinessCaseInput, BusinessCaseLine, ComponentOption, ComponentOptionInput,
-    ComponentOptionTranslationInput, ConfigComponent, ConfigComponentInput, ConfigurableProduct,
-    ConfigurableProductInput, ConfigurableProductLine, ConvertDocumentInput, CreateDocumentInput,
-    Customer, CustomerInput, DocumentLineSnapshot, DocumentPayload, DocumentStatus, DocumentType,
-    MilestoneStatus, PipelineStage, Product, ProductInput, ProductionMilestone,
-    ProductionMilestoneInput, PurchaseOrder, PurchaseOrderInput, PurchaseOrderLine, PurchaseStatus,
-    SaveDocumentInput, Supplier, SupplierInput, TradeDocument, WorkspaceSummary,
+    BusinessCase, BusinessCaseInput, BusinessCaseLine, CompanyProfile, CompanyProfileInput,
+    ComponentOption, ComponentOptionInput, ComponentOptionTranslationInput, ConfigComponent,
+    ConfigComponentInput, ConfigurableProduct, ConfigurableProductInput, ConfigurableProductLine,
+    ConvertDocumentInput, CreateDocumentInput, Customer, CustomerInput, DocumentLineSnapshot,
+    DocumentPayload, DocumentStatus, DocumentType, MilestoneStatus, PipelineStage, Product,
+    ProductInput, ProductionMilestone, ProductionMilestoneInput, PurchaseOrder, PurchaseOrderInput,
+    PurchaseOrderLine, PurchaseStatus, SaveDocumentInput, Supplier, SupplierInput, TradeDocument,
+    WorkspaceSummary,
 };
 
 const SCHEMA_VERSION: i64 = 10;
@@ -440,6 +441,55 @@ impl EncryptedDatabase {
             params![company_name.trim()],
         )?;
         Ok(())
+    }
+
+    pub fn company_profile(&self) -> rusqlite::Result<CompanyProfile> {
+        let value = |key: &str| -> rusqlite::Result<String> {
+            Ok(self
+                .connection
+                .query_row(
+                    "SELECT value FROM workspace_meta WHERE key = ?1",
+                    params![key],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()?
+                .unwrap_or_default())
+        };
+        let company_name = value("company_name")?;
+        Ok(CompanyProfile {
+            company_name: if company_name.trim().is_empty() {
+                "本地工作区".to_owned()
+            } else {
+                company_name
+            },
+            logo_data_url: value("company_logo_data_url")?,
+            signature_data_url: value("company_signature_data_url")?,
+        })
+    }
+
+    pub fn save_company_profile(
+        &self,
+        input: CompanyProfileInput,
+    ) -> rusqlite::Result<CompanyProfile> {
+        require_text(&input.company_name)?;
+        let transaction = self.connection.unchecked_transaction()?;
+        for (key, value) in [
+            ("company_name", input.company_name.trim()),
+            ("company_logo_data_url", input.logo_data_url.trim()),
+            (
+                "company_signature_data_url",
+                input.signature_data_url.trim(),
+            ),
+        ] {
+            transaction.execute(
+                "INSERT INTO workspace_meta(key, value) VALUES(?1, ?2)
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                params![key, value],
+            )?;
+        }
+        transaction.commit()?;
+        self.audit("workspace", "company_profile", "update")?;
+        self.company_profile()
     }
 
     pub fn summary(&self) -> rusqlite::Result<WorkspaceSummary> {
@@ -2351,6 +2401,14 @@ mod tests {
         {
             let database =
                 EncryptedDatabase::open(&path, Zeroizing::new("test-password".to_owned())).unwrap();
+            let company_profile = database
+                .save_company_profile(CompanyProfileInput {
+                    company_name: "Example Export Co., Ltd.".into(),
+                    logo_data_url: String::new(),
+                    signature_data_url: String::new(),
+                })
+                .unwrap();
+            assert_eq!(company_profile.company_name, "Example Export Co., Ltd.");
             let product = database
                 .save_product(ProductInput {
                     id: None,
@@ -2677,31 +2735,46 @@ mod tests {
                     std::env::temp_dir().join(format!("tradedesk-pdf-{}", Uuid::new_v4()));
                 let work_dir = render_root.join("work");
                 let output_dir = render_root.join("output");
-                let export =
-                    crate::document::export_pdf(&issued, &typst, &work_dir, &output_dir).unwrap();
+                let company_profile = database.company_profile().unwrap();
+                let export = crate::document::export_pdf(
+                    &issued,
+                    &company_profile,
+                    &typst,
+                    &work_dir,
+                    &output_dir,
+                )
+                .unwrap();
                 let pdf = std::fs::read(&export.path).unwrap();
                 assert_eq!(&pdf[..5], b"%PDF-");
                 assert_eq!(export.sha256.len(), 64);
                 let csv = crate::document::export_csv(&issued, &output_dir).unwrap();
                 assert!(std::fs::read_to_string(csv).unwrap().contains("SKU-1"));
                 for sales_document in [&issued_quote, &issued_proforma] {
-                    let sales_export =
-                        crate::document::export_pdf(sales_document, &typst, &work_dir, &output_dir)
-                            .unwrap();
+                    let sales_export = crate::document::export_pdf(
+                        sales_document,
+                        &company_profile,
+                        &typst,
+                        &work_dir,
+                        &output_dir,
+                    )
+                    .unwrap();
                     assert_eq!(&std::fs::read(sales_export.path).unwrap()[..5], b"%PDF-");
                 }
-                let configuration_export = crate::document::export_configuration_pdf(
-                    &configured,
-                    "en",
-                    &typst,
-                    &work_dir,
-                    &output_dir,
-                )
-                .unwrap();
-                assert_eq!(
-                    &std::fs::read(configuration_export.path).unwrap()[..5],
-                    b"%PDF-"
-                );
+                for language in ["en", "ru", "fr", "es", "pt", "ar"] {
+                    let configuration_export = crate::document::export_configuration_pdf(
+                        &configured,
+                        language,
+                        &company_profile,
+                        &typst,
+                        &work_dir,
+                        &output_dir,
+                    )
+                    .unwrap();
+                    assert_eq!(
+                        &std::fs::read(configuration_export.path).unwrap()[..5],
+                        b"%PDF-"
+                    );
+                }
                 let configuration_csv =
                     crate::document::export_configuration_csv(&configured, "en", &output_dir)
                         .unwrap();

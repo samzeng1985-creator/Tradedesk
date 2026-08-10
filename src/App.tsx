@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { businessCaseApi, documentApi, fulfillmentApi, masterApi, workspaceApi } from "./api";
 import { BusinessCaseCenter } from "./BusinessCaseCenter";
+import { CompanySettings } from "./CompanySettings";
 import { ComponentLibrary, ConfigurableProductLibrary } from "./ConfigurableProductCenter";
 import { DocumentCenter } from "./DocumentCenter";
 import { FulfillmentCenter } from "./FulfillmentCenter";
@@ -10,6 +11,8 @@ import { UnlockScreen } from "./UnlockScreen";
 import type {
   BusinessCase,
   BusinessCaseInput,
+  CompanyProfile,
+  CompanyProfileInput,
   ComponentOption,
   ComponentOptionInput,
   ComponentOptionTranslationInput,
@@ -34,7 +37,7 @@ import type {
   WorkspaceSummary,
 } from "./domain";
 
-type View = "overview" | "cases" | "masters" | "fulfillment" | "documents";
+type View = "overview" | "cases" | "masters" | "fulfillment" | "documents" | "settings";
 
 const pipeline: Array<{ key: PipelineStage; label: string }> = [
   { key: "quotation", label: "报价" },
@@ -51,6 +54,7 @@ const viewTitles: Record<View, { title: string; subtitle: string }> = {
   masters: { title: "主数据", subtitle: "一次建档，多处复用" },
   fulfillment: { title: "采购与生产", subtitle: "只跟踪关键里程碑，不做复杂排产" },
   documents: { title: "单证中心", subtitle: "版本、状态与跨单证一致性" },
+  settings: { title: "企业设置", subtitle: "统一配置公司名称、Logo 和电子签名" },
 };
 
 const statusText: Record<RecordStatus, string> = {
@@ -102,6 +106,7 @@ function Pipeline({ stage }: { stage: PipelineStage }) {
 
 export default function App() {
   const [workspace, setWorkspace] = useState<WorkspaceSummary | null>(null);
+  const [companyProfile, setCompanyProfile] = useState<CompanyProfile | null>(null);
   const [workspaceExists, setWorkspaceExists] = useState(false);
   const [workspaceChecking, setWorkspaceChecking] = useState(true);
   const [view, setView] = useState<View>("overview");
@@ -154,13 +159,21 @@ export default function App() {
   async function unlock(password: string, companyName?: string) {
     await workspaceApi.unlock(password, companyName);
     await loadMasterData();
+    setCompanyProfile(await workspaceApi.companyProfile());
     setWorkspaceExists(true);
   }
 
   async function lock() {
     await workspaceApi.lock();
     setWorkspace(null);
+    setCompanyProfile(null);
     setWorkspaceExists(true);
+  }
+
+  async function saveCompanyProfile(input: CompanyProfileInput) {
+    const saved = await workspaceApi.saveCompanyProfile(input);
+    setCompanyProfile(saved);
+    setWorkspace(await workspaceApi.summary());
   }
 
   function openEditor(record: MasterRecord | null = null) {
@@ -361,7 +374,7 @@ export default function App() {
           <span className="brand-mark">TD</span>
           <span>
             <strong>TradeDesk</strong>
-            <small>Local · 0.11.0</small>
+            <small>Local · 0.12.0</small>
           </span>
         </div>
 
@@ -383,6 +396,9 @@ export default function App() {
           </button>
           <button className={view === "documents" ? "selected" : ""} onClick={() => setView("documents")}>
             单证中心
+          </button>
+          <button className={view === "settings" ? "selected" : ""} onClick={() => setView("settings")}>
+            企业设置
           </button>
         </nav>
 
@@ -602,6 +618,7 @@ export default function App() {
 
         {view === "documents" && (
           <DocumentCenter
+            companyProfile={companyProfile}
             documents={documents}
             cases={businessCases}
             onCreate={createDocument}
@@ -615,6 +632,10 @@ export default function App() {
             onPrint={printDocument}
             onOpenPdf={documentApi.openPdf}
           />
+        )}
+
+        {view === "settings" && companyProfile && (
+          <CompanySettings profile={companyProfile} onSave={saveCompanyProfile} />
         )}
       </main>
       {editorOpen && (masterTab === "products" || masterTab === "customers" || masterTab === "suppliers") && <MasterEditor tab={masterTab} record={editingRecord} saving={saving} onClose={() => setEditorOpen(false)} onSave={saveMaster} />}

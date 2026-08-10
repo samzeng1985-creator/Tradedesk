@@ -2,6 +2,8 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   BusinessCase,
   BusinessCaseInput,
+  CompanyProfile,
+  CompanyProfileInput,
   ComponentOption,
   ComponentOptionInput,
   ComponentOptionTranslationInput,
@@ -35,6 +37,9 @@ export const workspaceApi = {
     invoke<WorkspaceSummary>("unlock_workspace", { password, companyName }),
   lock: () => invoke<void>("lock_workspace"),
   summary: () => invoke<WorkspaceSummary>("workspace_summary"),
+  companyProfile: () => invoke<CompanyProfile>("get_company_profile"),
+  saveCompanyProfile: (input: CompanyProfileInput) =>
+    invoke<CompanyProfile>("save_company_profile", { input }),
 };
 
 export const documentApi = {

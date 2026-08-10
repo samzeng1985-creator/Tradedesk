@@ -1,5 +1,6 @@
 #let data = json("document.json")
 #let payload = data.payload
+#let branding = data.branding
 #let money(value) = {
   let whole = calc.floor(value / 100)
   let cents = calc.abs(value - whole * 100)
@@ -13,17 +14,19 @@
   paper: "a4",
   margin: (x: 14mm, y: 13mm),
   footer: context align(center, text(size: 7pt, fill: luma(90))[
-    TradeDesk - #data.number - V#data.version - Page #counter(page).display("1 / 1")
+    #branding.companyName - #data.number - V#data.version - Page #counter(page).display("1 / 1")
   ]),
 )
 #set text(font: ("Arial", "Microsoft YaHei"), size: 8.5pt)
 #set par(leading: 0.55em)
 
-#align(center)[
-  #text(size: 18pt, weight: "bold")[PROFORMA INVOICE]
-  #linebreak()
-  #text(size: 8pt, fill: luma(90))[形式发票 / Proforma Invoice]
-]
+#grid(
+  columns: (38mm, 1fr, 38mm),
+  align: (left, center, right),
+  [#if branding.logoPath != "" [#image(branding.logoPath, width: 34mm, height: 13mm, fit: "contain")]],
+  [#text(size: 18pt, weight: "bold")[PROFORMA INVOICE]\ #text(size: 8pt, fill: luma(90))[形式发票 / Proforma Invoice]],
+  [],
+)
 #if data.status == "draft" [
   #align(right, text(size: 9pt, weight: "bold", fill: rgb("b42318"))[DRAFT / 草稿])
 ]
@@ -91,6 +94,6 @@
 #grid(
   columns: (1fr, 45mm),
   gutter: 15mm,
-  [#text(fill: luma(80))[Proforma invoice - not a tax or customs invoice.]],
-  [#line(length: 100%)\ Authorized Signature],
+  [#text(fill: luma(80))[Proforma invoice - not a tax or customs invoice.\ #branding.companyName]],
+  [#if branding.signaturePath != "" [#align(center)[#image(branding.signaturePath, width: 34mm, height: 13mm, fit: "contain")]] #line(length: 100%)\ Authorized Signature],
 )

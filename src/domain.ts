@@ -160,6 +160,14 @@ export interface WorkspaceSummary {
   documents: number;
 }
 
+export interface CompanyProfile {
+  companyName: string;
+  logoDataUrl: string;
+  signatureDataUrl: string;
+}
+
+export type CompanyProfileInput = CompanyProfile;
+
 export interface BusinessCaseLine {
   id: string;
   sourceType: "product" | "configurable_product";

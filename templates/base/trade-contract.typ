@@ -1,5 +1,6 @@
 #let data = json("document.json")
 #let payload = data.payload
+#let branding = data.branding
 #let money(value) = {
   let whole = calc.floor(value / 100)
   let cents = calc.abs(value - whole * 100)
@@ -13,17 +14,19 @@
   paper: "a4",
   margin: (x: 16mm, y: 14mm),
   footer: context align(center, text(size: 7pt, fill: luma(90))[
-    TradeDesk - #data.number - V#data.version - Page #counter(page).display("1 / 1")
+    #branding.companyName - #data.number - V#data.version - Page #counter(page).display("1 / 1")
   ]),
 )
 #set text(font: ("Arial", "Microsoft YaHei"), size: 8.5pt)
 #set par(justify: false, leading: 0.65em)
 
-#align(center)[
-  #text(size: 18pt, weight: "bold")[SALES CONTRACT]
-  #linebreak()
-  #text(size: 8pt, fill: luma(90))[外贸销售合同 / Trade Contract]
-]
+#grid(
+  columns: (38mm, 1fr, 38mm),
+  align: (left, center, right),
+  [#if branding.logoPath != "" [#image(branding.logoPath, width: 34mm, height: 13mm, fit: "contain")]],
+  [#text(size: 18pt, weight: "bold")[SALES CONTRACT]\ #text(size: 8pt, fill: luma(90))[外贸销售合同 / Trade Contract]],
+  [],
+)
 #if data.status == "draft" [
   #align(right, text(size: 9pt, weight: "bold", fill: rgb("b42318"))[DRAFT / 草稿])
 ]
@@ -85,6 +88,6 @@ Delivery term: #payload.incoterm. Port of loading: #payload.portOfLoading. Port 
 #grid(
   columns: (1fr, 1fr),
   gutter: 22mm,
-  [*FOR THE SELLER*\ #payload.seller\ #v(18mm) #line(length: 100%)\ Authorized Signature],
+  [*FOR THE SELLER*\ #payload.seller\ #if branding.signaturePath != "" [#v(4mm) #align(center)[#image(branding.signaturePath, width: 40mm, height: 14mm, fit: "contain")]] else [#v(18mm)] #line(length: 100%)\ Authorized Signature],
   [*FOR THE BUYER*\ #payload.buyer\ #v(18mm) #line(length: 100%)\ Authorized Signature],
 )

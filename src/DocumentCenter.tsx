@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import type {
   BusinessCase,
+  CompanyProfile,
   ConvertDocumentInput,
   CreateDocumentInput,
   DocumentLineSnapshot,
@@ -12,6 +13,7 @@ import type {
 } from "./domain";
 
 interface DocumentCenterProps {
+  companyProfile: CompanyProfile | null;
   documents: TradeDocument[];
   cases: BusinessCase[];
   onCreate: (input: CreateDocumentInput) => Promise<TradeDocument>;
@@ -179,7 +181,7 @@ function ConvertDocumentModal({ source, documents, onClose, onConvert }: {
   </div>;
 }
 
-function Preview({ document, payload }: { document: TradeDocument; payload: DocumentPayload }) {
+function Preview({ document, payload, companyProfile }: { document: TradeDocument; payload: DocumentPayload; companyProfile: CompanyProfile | null }) {
   const total = payload.lines.reduce((sum, line) => sum + line.amountMinor, 0);
   const payable = total - payload.discountMinor;
   const packing = document.documentType === "packing_list";
@@ -188,14 +190,14 @@ function Preview({ document, payload }: { document: TradeDocument; payload: Docu
   const proforma = document.documentType === "proforma_invoice";
   const title = contract ? "SALES CONTRACT" : packing ? "DETAILED PACKING LIST" : quotation ? "COMMERCIAL QUOTATION" : proforma ? "PROFORMA INVOICE" : "COMMERCIAL INVOICE";
   return <div className={`document-paper ${packing ? "landscape" : ""}`}>
-    <header><h2>{title}</h2><p>{typeLabels[document.documentType]} · {document.number} · V{document.version}</p>{document.status === "draft" && <strong>DRAFT / 草稿</strong>}</header>
+    <header>{companyProfile?.logoDataUrl && <img className="preview-logo" src={companyProfile.logoDataUrl} alt="公司 Logo" />}<h2>{title}</h2><p>{typeLabels[document.documentType]} · {document.number} · V{document.version}</p>{document.status === "draft" && <strong>DRAFT / 草稿</strong>}</header>
     <div className="preview-parties"><div><b>{packing ? "SHIPPER" : "SELLER / EXPORTER"}</b><span>{payload.seller}</span><small>{payload.sellerAddress}</small></div><div><b>{packing ? "CONSIGNEE" : "BUYER / CONSIGNEE"}</b><span>{payload.buyer}</span><small>{payload.buyerAddress}</small></div></div>
     <div className="preview-meta"><span><b>No.</b>{document.number}</span><span><b>Date</b>{document.issueDate}</span><span><b>Reference</b>{document.businessCaseNumber}</span><span><b>Incoterm</b>{payload.incoterm}</span>{quotation ? <span><b>Valid until</b>{payload.validUntil}</span> : <><span><b>Loading</b>{payload.portOfLoading}</span><span><b>Discharge</b>{payload.portOfDischarge}</span></>}</div>
     <table><thead><tr><th>No.</th><th>SKU / Description</th><th>Qty</th>{packing ? <><th>Packages</th><th>Net kg</th><th>Gross kg</th><th>CBM</th></> : <><th>Unit price</th><th>Amount</th></>}</tr></thead><tbody>{payload.lines.map((line, index) => <tr key={`${line.productId}-${index}`}><td>{index + 1}</td><td><b>{line.sku}</b><br />{line.description}{line.model && <small>{line.model}</small>}</td><td>{line.quantity} {line.unit}</td>{packing ? <><td>{line.packages} {line.packageType}</td><td>{line.netWeightKg}</td><td>{line.grossWeightKg}</td><td>{line.cbm}</td></> : <><td>{money(line.unitPriceMinor, document.currency)}</td><td>{money(line.amountMinor, document.currency)}</td></>}</tr>)}</tbody>{!packing && <tfoot><tr><td colSpan={4}>TOTAL</td><td>{money(payable, document.currency)}</td></tr></tfoot>}</table>
     {!packing && payload.discountMinor > 0 && <section><h3>DISCOUNT</h3><p>{money(payload.discountMinor, document.currency)} · Total after discount: {money(payable, document.currency)}</p></section>}
     {contract && <section><h3>GENERAL TERMS</h3><p>{payload.contractTerms || "General trade terms shall be confirmed in writing by both parties."}</p></section>}
     {payload.notes && <section><h3>NOTES</h3><p>{payload.notes}</p></section>}
-    <footer><span>Generated from encrypted TradeDesk snapshot</span><span>Authorized Signature</span></footer>
+    <footer><span>{companyProfile?.companyName || payload.seller} · Encrypted local snapshot</span><span className="preview-signature">{companyProfile?.signatureDataUrl && <img src={companyProfile.signatureDataUrl} alt="电子签名" />}<b>Authorized Signature</b></span></footer>
   </div>;
 }
 
@@ -214,8 +216,9 @@ function LineEditor({ line, packing, onChange }: { line: DocumentLineSnapshot; p
   </div>;
 }
 
-function DocumentEditor({ initial, onClose, onSave, onIssue, onExportPdf, onExportCsv, onPrint }: {
+function DocumentEditor({ initial, companyProfile, onClose, onSave, onIssue, onExportPdf, onExportCsv, onPrint }: {
   initial: TradeDocument;
+  companyProfile: CompanyProfile | null;
   onClose: () => void;
   onSave: (input: SaveDocumentInput) => Promise<TradeDocument>;
   onIssue: (id: string) => Promise<TradeDocument>;
@@ -279,7 +282,7 @@ function DocumentEditor({ initial, onClose, onSave, onIssue, onExportPdf, onExpo
         {document.documentType === "trade_contract" && <label>合同通用条款<textarea rows={6} value={payload.contractTerms} onChange={(event) => setPayloadField({ contractTerms: event.target.value })} /></label>}
         <label>备注<textarea rows={4} value={payload.notes} onChange={(event) => setPayloadField({ notes: event.target.value })} /></label></fieldset>
       </div>
-      <div className="document-preview-panel"><Preview document={{ ...document, number, issueDate, language }} payload={payload} /></div>
+      <div className="document-preview-panel"><Preview document={{ ...document, number, issueDate, language }} payload={payload} companyProfile={companyProfile} /></div>
     </div>
   </div>;
 }
@@ -317,7 +320,7 @@ export function DocumentCenter(props: DocumentCenterProps) {
     try { const created = await props.onNewVersion(document.id); setEditing(created); } catch (error) { setMessage(String(error)); }
   }
 
-  if (editing) return <DocumentEditor initial={editing} onClose={() => setEditing(null)} onSave={props.onSave} onIssue={props.onIssue} onExportPdf={props.onExportPdf} onExportCsv={props.onExportCsv} onPrint={props.onPrint} />;
+  if (editing) return <DocumentEditor initial={editing} companyProfile={props.companyProfile} onClose={() => setEditing(null)} onSave={props.onSave} onIssue={props.onIssue} onExportPdf={props.onExportPdf} onExportCsv={props.onExportCsv} onPrint={props.onPrint} />;
 
   return <section className="panel document-center">
     <div className="panel-heading"><div><h2>单证中心</h2><p>从报价、PI 到履约单证，复用同一份加密业务快照</p></div><button className="button button-primary" disabled={!props.cases.length} onClick={() => setCreating(true)}>新建单证</button></div>

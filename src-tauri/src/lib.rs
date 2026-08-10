@@ -5,12 +5,12 @@ mod storage;
 use std::{path::PathBuf, sync::Mutex};
 
 use domain::{
-    BusinessCase, BusinessCaseInput, ComponentOption, ComponentOptionInput,
-    ComponentOptionTranslationInput, ConfigComponent, ConfigComponentInput, ConfigurableProduct,
-    ConfigurableProductInput, ConvertDocumentInput, CreateDocumentInput, Customer, CustomerInput,
-    DocumentExportResult, Product, ProductInput, ProductionMilestone, ProductionMilestoneInput,
-    PurchaseOrder, PurchaseOrderInput, PurchaseStatus, SaveDocumentInput, Supplier, SupplierInput,
-    TradeDocument, WorkspaceSummary,
+    BusinessCase, BusinessCaseInput, CompanyProfile, CompanyProfileInput, ComponentOption,
+    ComponentOptionInput, ComponentOptionTranslationInput, ConfigComponent, ConfigComponentInput,
+    ConfigurableProduct, ConfigurableProductInput, ConvertDocumentInput, CreateDocumentInput,
+    Customer, CustomerInput, DocumentExportResult, Product, ProductInput, ProductionMilestone,
+    ProductionMilestoneInput, PurchaseOrder, PurchaseOrderInput, PurchaseStatus, SaveDocumentInput,
+    Supplier, SupplierInput, TradeDocument, WorkspaceSummary,
 };
 use storage::EncryptedDatabase;
 use tauri::{Manager, State};
@@ -108,6 +108,25 @@ fn workspace_summary(state: State<'_, AppState>) -> Result<WorkspaceSummary, Str
 }
 
 #[tauri::command]
+fn get_company_profile(state: State<'_, AppState>) -> Result<CompanyProfile, String> {
+    with_database(state, EncryptedDatabase::company_profile)
+}
+
+#[tauri::command]
+fn save_company_profile(
+    input: CompanyProfileInput,
+    state: State<'_, AppState>,
+) -> Result<CompanyProfile, String> {
+    let profile = CompanyProfile {
+        company_name: input.company_name.clone(),
+        logo_data_url: input.logo_data_url.clone(),
+        signature_data_url: input.signature_data_url.clone(),
+    };
+    document::validate_company_profile(&profile)?;
+    with_database(state, |database| database.save_company_profile(input))
+}
+
+#[tauri::command]
 fn list_products(state: State<'_, AppState>) -> Result<Vec<Product>, String> {
     with_database(state, EncryptedDatabase::list_products)
 }
@@ -173,8 +192,9 @@ fn export_configuration_pdf_file(
     language: &str,
     state: &State<'_, AppState>,
 ) -> Result<DocumentExportResult, String> {
-    let (configuration, missing) = with_database(state.clone(), |database| {
-        database.configuration_for_export(id, language)
+    let (configuration, missing, company_profile) = with_database(state.clone(), |database| {
+        let (configuration, missing) = database.configuration_for_export(id, language)?;
+        Ok((configuration, missing, database.company_profile()?))
     })?;
     if !missing.is_empty() {
         return Err(format!(
@@ -189,6 +209,7 @@ fn export_configuration_pdf_file(
     document::export_configuration_pdf(
         &configuration,
         language,
+        &company_profile,
         typst_path,
         &state.render_cache_dir.join("configuration").join(id),
         &state.export_dir,
@@ -363,13 +384,16 @@ fn create_document_version(
 }
 
 fn export_pdf(id: &str, state: &State<'_, AppState>) -> Result<DocumentExportResult, String> {
-    let document = with_database(state.clone(), |database| database.get_document(id))?;
+    let (document, company_profile) = with_database(state.clone(), |database| {
+        Ok((database.get_document(id)?, database.company_profile()?))
+    })?;
     let typst_path = state
         .typst_path
         .as_ref()
         .ok_or("未找到 Typst PDF 渲染器，请重新运行开发环境安装脚本。")?;
     let mut result = document::export_pdf(
         &document,
+        &company_profile,
         typst_path,
         &state.render_cache_dir.join(id),
         &state.export_dir,
@@ -442,6 +466,8 @@ pub fn run() {
             unlock_workspace,
             lock_workspace,
             workspace_summary,
+            get_company_profile,
+            save_company_profile,
             list_products,
             save_product,
             list_config_components,

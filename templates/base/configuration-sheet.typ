@@ -1,37 +1,45 @@
 #let data = json("configuration.json")
 #let configuration = data.configuration
 #let labels = data.labels
+#let branding = data.branding
 #let money(value) = {
   let whole = calc.floor(value / 100)
   let cents = calc.abs(value - whole * 100)
   str(whole) + "." + (if cents < 10 { "0" } else { "" }) + str(cents)
 }
 
-#set document(title: labels.title + " " + configuration.code, author: "TradeDesk")
+#set document(title: labels.title + " " + configuration.code, author: branding.companyName)
 #set page(
   paper: "a4",
   flipped: true,
   margin: (x: 10mm, y: 10mm),
   footer: context align(center, text(size: 7pt, fill: luma(90))[
-    TradeDesk - #configuration.code - #counter(page).display("1 / 1")
+    #branding.companyName - #configuration.code - #counter(page).display("1 / 1")
   ]),
 )
 #set text(font: ("Arial", "Microsoft YaHei"), size: 8pt, dir: if data.rtl { rtl } else { ltr })
 #set par(leading: 0.55em)
 
-#align(center)[
-  #text(size: 17pt, weight: "bold")[#labels.title]
-]
+#grid(
+  columns: (42mm, 1fr, 42mm),
+  align: (left, center, right),
+  [#if branding.logoPath != "" [#image(branding.logoPath, width: 36mm, height: 12mm, fit: "contain")]],
+  [#text(size: 17pt, weight: "bold")[#labels.title]],
+  [],
+)
 
 #v(5pt)
 #table(
-  columns: (24mm, 1fr, 24mm, 1fr, 20mm, 28mm),
+  columns: (34mm, 1fr, 37mm, 22mm, 41mm, 39mm),
   inset: 4pt,
   stroke: .45pt + luma(155),
   fill: (column, _) => if calc.even(column) { luma(242) },
-  [*#labels.code*], [#configuration.code], [*#labels.productName*], [#configuration.name], [*#labels.currency*], [#configuration.currency],
-  [*#labels.model*], [#if configuration.model == "" { "-" } else { configuration.model }],
-  [*#labels.componentCount*], [#configuration.lines.len()], [*#labels.configurationTotal*], [*#configuration.currency #money(configuration.totalAmountMinor)*],
+  [#box[#text(size: 7pt, weight: "bold")[#labels.code]]], [#configuration.code],
+  [#box[#text(size: 7pt, weight: "bold")[#labels.componentCount]]], [#configuration.lines.len()],
+  [#box[#text(size: 7pt, weight: "bold")[#labels.configurationTotal]]], [*#configuration.currency: #money(configuration.totalAmountMinor)*],
+  [#box[#text(size: 7pt, weight: "bold")[#labels.productName]]], [#configuration.name],
+  [#box[#text(size: 7pt, weight: "bold")[#labels.model]]], [#if configuration.model == "" { "-" } else { configuration.model }],
+  [#box[#text(size: 7pt, weight: "bold")[#labels.currency]]], [#configuration.currency],
 )
 
 #if configuration.currency != "CNY" [
@@ -63,8 +71,8 @@
     [#if line.brand == "" { "-" } else { line.brand }],
     [#if line.notes == "" { "-" } else { line.notes }],
   )).flatten(),
-  table.cell(colspan: 6, align: right, fill: luma(238))[*#labels.configurationTotal #configuration.currency*],
-  table.cell(align: right, fill: luma(238))[*#money(configuration.totalAmountMinor)*],
+  table.cell(colspan: 6, align: right, fill: luma(238))[*#labels.configurationTotal*],
+  table.cell(align: right, fill: luma(238))[*#configuration.currency: #money(configuration.totalAmountMinor)*],
   table.cell(colspan: 2, fill: luma(238))[],
 )
 
@@ -80,6 +88,6 @@
 #grid(
   columns: (1fr, 48mm),
   gutter: 15mm,
-  [#text(fill: luma(85))[#labels.snapshotNotice]],
-  [#line(length: 100%)\ #labels.preparedBy],
+  [#text(fill: luma(85))[#labels.snapshotNotice\ #branding.companyName]],
+  [#if branding.signaturePath != "" [#align(center)[#image(branding.signaturePath, width: 34mm, height: 12mm, fit: "contain")]] #line(length: 100%)\ #labels.preparedBy],
 )

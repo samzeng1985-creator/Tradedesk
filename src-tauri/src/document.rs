@@ -4,12 +4,13 @@ use std::{
     process::Command,
 };
 
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 use crate::domain::{
-    ConfigurableProduct, DocumentExportResult, DocumentType, DocumentValidationIssue,
-    TradeDocument, ValidationSeverity,
+    CompanyProfile, ConfigurableProduct, DocumentExportResult, DocumentType,
+    DocumentValidationIssue, TradeDocument, ValidationSeverity,
 };
 
 const COMMERCIAL_INVOICE_TEMPLATE: &str =
@@ -45,6 +46,86 @@ struct ConfigurationLabels {
     notes: &'static str,
     prepared_by: &'static str,
     snapshot_notice: &'static str,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BrandingPayload {
+    company_name: String,
+    logo_path: String,
+    signature_path: String,
+}
+
+const MAX_BRAND_ASSET_BYTES: usize = 3 * 1024 * 1024;
+
+fn decode_brand_asset(value: &str) -> Result<Option<(&'static str, Vec<u8>)>, String> {
+    if value.trim().is_empty() {
+        return Ok(None);
+    }
+    let (header, encoded) = value.split_once(',').ok_or("企业图片数据格式不正确")?;
+    let extension = match header {
+        "data:image/png;base64" => "png",
+        "data:image/jpeg;base64" => "jpg",
+        "data:image/webp;base64" => "webp",
+        _ => return Err("Logo 和电子签名仅支持 PNG、JPG 或 WebP 图片".to_owned()),
+    };
+    let bytes = STANDARD
+        .decode(encoded)
+        .map_err(|_| "企业图片数据无法读取".to_owned())?;
+    if bytes.len() > MAX_BRAND_ASSET_BYTES {
+        return Err("每张企业图片不能超过 3 MB".to_owned());
+    }
+    Ok(Some((extension, bytes)))
+}
+
+pub fn validate_company_profile(profile: &CompanyProfile) -> Result<(), String> {
+    if profile.company_name.trim().is_empty() {
+        return Err("公司名称不能为空".to_owned());
+    }
+    decode_brand_asset(&profile.logo_data_url)?;
+    decode_brand_asset(&profile.signature_data_url)?;
+    Ok(())
+}
+
+fn prepare_branding(profile: &CompanyProfile, work_dir: &Path) -> Result<BrandingPayload, String> {
+    validate_company_profile(profile)?;
+    let write_asset = |value: &str, stem: &str| -> Result<String, String> {
+        let Some((extension, bytes)) = decode_brand_asset(value)? else {
+            return Ok(String::new());
+        };
+        let filename = format!("{stem}.{extension}");
+        fs::write(work_dir.join(&filename), bytes)
+            .map_err(|error| format!("无法准备企业图片：{error}"))?;
+        Ok(filename)
+    };
+    Ok(BrandingPayload {
+        company_name: profile.company_name.trim().to_owned(),
+        logo_path: write_asset(&profile.logo_data_url, "company-logo")?,
+        signature_path: write_asset(&profile.signature_data_url, "company-signature")?,
+    })
+}
+
+fn cleanup_branding_assets(work_dir: &Path) {
+    let Ok(entries) = fs::read_dir(work_dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name.starts_with("company-logo.") || name.starts_with("company-signature.") {
+            let _ = fs::remove_file(entry.path());
+        }
+    }
+}
+
+fn branded_json<T: Serialize>(value: &T, branding: BrandingPayload) -> Result<Vec<u8>, String> {
+    let mut value =
+        serde_json::to_value(value).map_err(|error| format!("无法生成导出数据：{error}"))?;
+    value.as_object_mut().ok_or("无法生成导出数据")?.insert(
+        "branding".to_owned(),
+        serde_json::to_value(branding).map_err(|error| format!("无法生成企业资料：{error}"))?,
+    );
+    serde_json::to_vec_pretty(&value).map_err(|error| format!("无法生成导出数据：{error}"))
 }
 
 pub fn validate(document: &TradeDocument) -> Vec<DocumentValidationIssue> {
@@ -151,6 +232,7 @@ pub fn has_blocking_errors(document: &TradeDocument) -> bool {
 
 pub fn export_pdf(
     document: &TradeDocument,
+    company_profile: &CompanyProfile,
     typst_path: &Path,
     work_dir: &Path,
     output_dir: &Path,
@@ -160,7 +242,7 @@ pub fn export_pdf(
     let data_path = work_dir.join("document.json");
     let template_path = work_dir.join("document.typ");
     let output_path = output_dir.join(format!("{}.pdf", export_stem(document)));
-    let payload = serde_json::to_vec_pretty(document)
+    let payload = branded_json(document, prepare_branding(company_profile, work_dir)?)
         .map_err(|error| format!("无法生成单证快照：{error}"))?;
     fs::write(&data_path, payload).map_err(|error| format!("无法写入单证快照：{error}"))?;
     fs::write(&template_path, template(document))
@@ -175,6 +257,7 @@ pub fn export_pdf(
         .arg(&output_path)
         .output()
         .map_err(|error| format!("无法启动 Typst PDF 渲染器：{error}"))?;
+    cleanup_branding_assets(work_dir);
     if !output.status.success() {
         return Err(format!(
             "PDF 生成失败：{}",
@@ -225,6 +308,7 @@ pub fn export_csv(document: &TradeDocument, output_dir: &Path) -> Result<PathBuf
 pub fn export_configuration_pdf(
     configuration: &ConfigurableProduct,
     language: &str,
+    company_profile: &CompanyProfile,
     typst_path: &Path,
     work_dir: &Path,
     output_dir: &Path,
@@ -234,11 +318,13 @@ pub fn export_configuration_pdf(
     let data_path = work_dir.join("configuration.json");
     let template_path = work_dir.join("configuration.typ");
     let output_path = output_dir.join(format!("{}.pdf", configuration_stem(configuration)));
+    let branding = prepare_branding(company_profile, work_dir)?;
     let payload = serde_json::to_vec_pretty(&serde_json::json!({
         "configuration": configuration,
         "labels": configuration_labels(language)?,
         "language": language,
         "rtl": language == "ar",
+        "branding": branding,
     }))
     .map_err(|error| format!("无法生成配置清单快照：{error}"))?;
     fs::write(&data_path, payload).map_err(|error| format!("无法写入配置清单快照：{error}"))?;
@@ -254,6 +340,7 @@ pub fn export_configuration_pdf(
         .arg(&output_path)
         .output()
         .map_err(|error| format!("无法启动 Typst PDF 渲染器：{error}"))?;
+    cleanup_branding_assets(work_dir);
     if !output.status.success() {
         return Err(format!(
             "配置单 PDF 生成失败：{}",
@@ -603,10 +690,28 @@ fn minor(value: i64) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::csv;
+    use super::{csv, validate_company_profile};
+    use crate::domain::CompanyProfile;
 
     #[test]
     fn csv_escapes_quotes() {
         assert_eq!(csv("A, \"B\""), "\"A, \"\"B\"\"\"");
+    }
+
+    #[test]
+    fn validates_encrypted_company_assets() {
+        let profile = CompanyProfile {
+            company_name: "Example Export Co., Ltd.".to_owned(),
+            logo_data_url: "data:image/png;base64,iVBORw0KGgo=".to_owned(),
+            signature_data_url: String::new(),
+        };
+        assert!(validate_company_profile(&profile).is_ok());
+        assert!(
+            validate_company_profile(&CompanyProfile {
+                logo_data_url: "data:image/svg+xml;base64,PHN2Zz4=".to_owned(),
+                ..profile
+            })
+            .is_err()
+        );
     }
 }

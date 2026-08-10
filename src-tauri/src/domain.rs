@@ -50,6 +50,22 @@ pub struct WorkspaceSummary {
     pub documents: u64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CompanyProfile {
+    pub company_name: String,
+    pub logo_data_url: String,
+    pub signature_data_url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CompanyProfileInput {
+    pub company_name: String,
+    pub logo_data_url: String,
+    pub signature_data_url: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum DocumentType {
