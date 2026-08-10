@@ -89,5 +89,5 @@
   columns: (1fr, 48mm),
   gutter: 15mm,
   [#text(fill: luma(85))[#labels.snapshotNotice\ #branding.companyName]],
-  [#if branding.signaturePath != "" [#align(center)[#image(branding.signaturePath, width: 34mm, height: 12mm, fit: "contain")]] #line(length: 100%)\ #labels.preparedBy],
+  [#if branding.signaturePath != "" [#align(center)[#image(branding.signaturePath, width: if branding.signingAssetKind == "stamp" { 22mm } else { 34mm }, height: if branding.signingAssetKind == "stamp" { 22mm } else { 12mm }, fit: "contain")]] #line(length: 100%)\ #labels.preparedBy],
 )

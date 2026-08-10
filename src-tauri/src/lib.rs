@@ -1,19 +1,21 @@
 mod document;
 mod domain;
+mod spreadsheet;
 mod storage;
 
 use std::{path::PathBuf, sync::Mutex};
 
 use domain::{
-    BusinessCase, BusinessCaseInput, CompanyProfile, CompanyProfileInput, ComponentOption,
-    ComponentOptionInput, ComponentOptionTranslationInput, ConfigComponent, ConfigComponentInput,
-    ConfigurableProduct, ConfigurableProductInput, ConvertDocumentInput, CreateDocumentInput,
-    Customer, CustomerInput, DocumentExportResult, Product, ProductInput, ProductionMilestone,
-    ProductionMilestoneInput, PurchaseOrder, PurchaseOrderInput, PurchaseStatus, SaveDocumentInput,
-    Supplier, SupplierInput, TradeDocument, WorkspaceSummary,
+    BusinessCase, BusinessCaseInput, CompanyRegistry, ComponentOption, ComponentOptionInput,
+    ComponentOptionTranslationInput, ConfigComponent, ConfigComponentInput, ConfigurableProduct,
+    ConfigurableProductInput, ConvertDocumentInput, CreateDocumentInput, Customer, CustomerInput,
+    DocumentExportResult, Product, ProductInput, ProductionMilestone, ProductionMilestoneInput,
+    PurchaseOrder, PurchaseOrderInput, PurchaseStatus, SaveDocumentInput, Supplier, SupplierInput,
+    TradeDocument, WorkspaceSummary,
 };
 use storage::EncryptedDatabase;
 use tauri::{Manager, State};
+use uuid::Uuid;
 use zeroize::Zeroizing;
 
 struct AppState {
@@ -108,22 +110,17 @@ fn workspace_summary(state: State<'_, AppState>) -> Result<WorkspaceSummary, Str
 }
 
 #[tauri::command]
-fn get_company_profile(state: State<'_, AppState>) -> Result<CompanyProfile, String> {
-    with_database(state, EncryptedDatabase::company_profile)
+fn get_company_registry(state: State<'_, AppState>) -> Result<CompanyRegistry, String> {
+    with_database(state, EncryptedDatabase::company_registry)
 }
 
 #[tauri::command]
-fn save_company_profile(
-    input: CompanyProfileInput,
+fn save_company_registry(
+    input: CompanyRegistry,
     state: State<'_, AppState>,
-) -> Result<CompanyProfile, String> {
-    let profile = CompanyProfile {
-        company_name: input.company_name.clone(),
-        logo_data_url: input.logo_data_url.clone(),
-        signature_data_url: input.signature_data_url.clone(),
-    };
-    document::validate_company_profile(&profile)?;
-    with_database(state, |database| database.save_company_profile(input))
+) -> Result<CompanyRegistry, String> {
+    document::validate_company_registry(&input)?;
+    with_database(state, |database| database.save_company_registry(input))
 }
 
 #[tauri::command]
@@ -190,11 +187,17 @@ fn save_configurable_product(
 fn export_configuration_pdf_file(
     id: &str,
     language: &str,
+    company_id: &str,
+    signing_asset_id: &str,
     state: &State<'_, AppState>,
 ) -> Result<DocumentExportResult, String> {
     let (configuration, missing, company_profile) = with_database(state.clone(), |database| {
         let (configuration, missing) = database.configuration_for_export(id, language)?;
-        Ok((configuration, missing, database.company_profile()?))
+        Ok((
+            configuration,
+            missing,
+            database.resolve_company_profile(company_id, signing_asset_id)?,
+        ))
     })?;
     if !missing.is_empty() {
         return Err(format!(
@@ -220,9 +223,11 @@ fn export_configuration_pdf_file(
 fn export_configuration_pdf(
     id: String,
     language: String,
+    company_id: String,
+    signing_asset_id: String,
     state: State<'_, AppState>,
 ) -> Result<DocumentExportResult, String> {
-    export_configuration_pdf_file(&id, &language, &state)
+    export_configuration_pdf_file(&id, &language, &company_id, &signing_asset_id, &state)
 }
 
 #[tauri::command]
@@ -248,9 +253,12 @@ fn export_configuration_csv(
 fn print_configuration(
     id: String,
     language: String,
+    company_id: String,
+    signing_asset_id: String,
     state: State<'_, AppState>,
 ) -> Result<DocumentExportResult, String> {
-    let result = export_configuration_pdf_file(&id, &language, &state)?;
+    let result =
+        export_configuration_pdf_file(&id, &language, &company_id, &signing_asset_id, &state)?;
     document::open_file(std::path::Path::new(&result.path))?;
     Ok(result)
 }
@@ -278,6 +286,127 @@ fn save_supplier(input: SupplierInput, state: State<'_, AppState>) -> Result<Sup
 #[tauri::command]
 fn archive_master(entity: String, id: String, state: State<'_, AppState>) -> Result<(), String> {
     with_database(state, |database| database.archive(&entity, &id))
+}
+
+#[tauri::command]
+fn export_master_data(template_only: bool, state: State<'_, AppState>) -> Result<String, String> {
+    let (products, customers, suppliers, components, configurations) =
+        with_database(state.clone(), |database| {
+            Ok((
+                database.list_products()?,
+                database.list_customers()?,
+                database.list_suppliers()?,
+                database.list_config_components()?,
+                database.list_configurable_products()?,
+            ))
+        })?;
+    std::fs::create_dir_all(&state.export_dir)
+        .map_err(|error| format!("无法创建导出目录：{error}"))?;
+    let filename = if template_only {
+        "TradeDesk_主数据导入模板.xlsx"
+    } else {
+        "TradeDesk_主数据.xlsx"
+    };
+    let path = state.export_dir.join(filename);
+    spreadsheet::export_master_workbook(
+        &path,
+        template_only,
+        &products,
+        &customers,
+        &suppliers,
+        &components,
+        &configurations,
+    )?;
+    Ok(path.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
+fn import_master_data(
+    bytes: Vec<u8>,
+    state: State<'_, AppState>,
+) -> Result<spreadsheet::MasterImportResult, String> {
+    let mut data = spreadsheet::parse_master_workbook(&bytes)?;
+    let existing_components =
+        with_database(state.clone(), EncryptedDatabase::list_config_components)?;
+    with_database(state.clone(), |database| {
+        for item in &mut data.products {
+            item.id = Some(
+                database
+                    .master_record_id("product", &item.sku)?
+                    .unwrap_or_else(|| Uuid::new_v4().to_string()),
+            );
+        }
+        for item in &mut data.customers {
+            item.id = Some(
+                database
+                    .master_record_id("customer", &item.code)?
+                    .unwrap_or_else(|| Uuid::new_v4().to_string()),
+            );
+        }
+        for item in &mut data.suppliers {
+            item.id = Some(
+                database
+                    .master_record_id("supplier", &item.code)?
+                    .unwrap_or_else(|| Uuid::new_v4().to_string()),
+            );
+        }
+        for item in &mut data.components {
+            item.id = Some(
+                database
+                    .master_record_id("config_component", &item.code)?
+                    .unwrap_or_else(|| Uuid::new_v4().to_string()),
+            );
+        }
+        Ok(())
+    })?;
+    let available_component_codes = existing_components
+        .iter()
+        .map(|item| item.code.to_lowercase())
+        .chain(data.components.iter().map(|item| item.code.to_lowercase()))
+        .collect::<std::collections::HashSet<_>>();
+    for configuration in &data.configurations {
+        for line in &configuration.lines {
+            if !available_component_codes.contains(&line.component_code.to_lowercase()) {
+                return Err(format!(
+                    "配置“{}”引用了不存在的组件编号“{}”",
+                    configuration.code, line.component_code
+                ));
+            }
+        }
+    }
+    let result = spreadsheet::MasterImportResult {
+        products: data.products.len(),
+        customers: data.customers.len(),
+        suppliers: data.suppliers.len(),
+        components: data.components.len(),
+        configurations: data.configurations.len(),
+    };
+    with_database(state.clone(), |database| {
+        for item in data.products {
+            database.save_product(item)?;
+        }
+        for item in data.customers {
+            database.save_customer(item)?;
+        }
+        for item in data.suppliers {
+            database.save_supplier(item)?;
+        }
+        for item in data.components {
+            database.save_config_component(item)?;
+        }
+        Ok(())
+    })?;
+    let components = with_database(state.clone(), EncryptedDatabase::list_config_components)?;
+    for configuration in data.configurations {
+        let id = with_database(state.clone(), |database| {
+            database.master_record_id("configurable_product", &configuration.code)
+        })?;
+        let input = spreadsheet::build_configuration_input(configuration, id, &components)?;
+        with_database(state.clone(), |database| {
+            database.save_configurable_product(input.clone())
+        })?;
+    }
+    Ok(result)
 }
 
 #[tauri::command]
@@ -383,9 +512,17 @@ fn create_document_version(
     with_database(state, |database| database.create_document_version(&id))
 }
 
-fn export_pdf(id: &str, state: &State<'_, AppState>) -> Result<DocumentExportResult, String> {
+fn export_pdf(
+    id: &str,
+    company_id: &str,
+    signing_asset_id: &str,
+    state: &State<'_, AppState>,
+) -> Result<DocumentExportResult, String> {
     let (document, company_profile) = with_database(state.clone(), |database| {
-        Ok((database.get_document(id)?, database.company_profile()?))
+        Ok((
+            database.get_document(id)?,
+            database.resolve_company_profile(company_id, signing_asset_id)?,
+        ))
     })?;
     let typst_path = state
         .typst_path
@@ -408,9 +545,11 @@ fn export_pdf(id: &str, state: &State<'_, AppState>) -> Result<DocumentExportRes
 #[tauri::command]
 fn export_document_pdf(
     id: String,
+    company_id: String,
+    signing_asset_id: String,
     state: State<'_, AppState>,
 ) -> Result<DocumentExportResult, String> {
-    export_pdf(&id, &state)
+    export_pdf(&id, &company_id, &signing_asset_id, &state)
 }
 
 #[tauri::command]
@@ -421,8 +560,13 @@ fn export_document_csv(id: String, state: State<'_, AppState>) -> Result<String,
 }
 
 #[tauri::command]
-fn print_document(id: String, state: State<'_, AppState>) -> Result<DocumentExportResult, String> {
-    let result = export_pdf(&id, &state)?;
+fn print_document(
+    id: String,
+    company_id: String,
+    signing_asset_id: String,
+    state: State<'_, AppState>,
+) -> Result<DocumentExportResult, String> {
+    let result = export_pdf(&id, &company_id, &signing_asset_id, &state)?;
     document::open_file(std::path::Path::new(&result.path))?;
     Ok(result)
 }
@@ -466,8 +610,8 @@ pub fn run() {
             unlock_workspace,
             lock_workspace,
             workspace_summary,
-            get_company_profile,
-            save_company_profile,
+            get_company_registry,
+            save_company_registry,
             list_products,
             save_product,
             list_config_components,
@@ -485,6 +629,8 @@ pub fn run() {
             list_suppliers,
             save_supplier,
             archive_master,
+            export_master_data,
+            import_master_data,
             list_business_cases,
             save_business_case,
             archive_business_case,

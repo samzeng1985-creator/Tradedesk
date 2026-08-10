@@ -74,4 +74,4 @@
 #v(6pt)
 #if payload.notes != "" [*PACKING NOTES*\ #payload.notes]
 #v(12pt)
-#align(right)[#box(width: 48mm)[#if branding.signaturePath != "" [#align(center)[#image(branding.signaturePath, width: 34mm, height: 12mm, fit: "contain")]] #line(length: 100%)\ Authorized Signature]]
+#align(right)[#box(width: 48mm)[#if branding.signaturePath != "" [#align(center)[#image(branding.signaturePath, width: if branding.signingAssetKind == "stamp" { 22mm } else { 34mm }, height: if branding.signingAssetKind == "stamp" { 22mm } else { 12mm }, fit: "contain")]] #line(length: 100%)\ Authorized Signature / Stamp]]

@@ -88,6 +88,6 @@ Delivery term: #payload.incoterm. Port of loading: #payload.portOfLoading. Port 
 #grid(
   columns: (1fr, 1fr),
   gutter: 22mm,
-  [*FOR THE SELLER*\ #payload.seller\ #if branding.signaturePath != "" [#v(4mm) #align(center)[#image(branding.signaturePath, width: 40mm, height: 14mm, fit: "contain")]] else [#v(18mm)] #line(length: 100%)\ Authorized Signature],
+  [*FOR THE SELLER*\ #payload.seller\ #if branding.signaturePath != "" [#v(4mm) #align(center)[#image(branding.signaturePath, width: if branding.signingAssetKind == "stamp" { 24mm } else { 40mm }, height: if branding.signingAssetKind == "stamp" { 24mm } else { 14mm }, fit: "contain")]] else [#v(18mm)] #line(length: 100%)\ Authorized Signature / Stamp],
   [*FOR THE BUYER*\ #payload.buyer\ #v(18mm) #line(length: 100%)\ Authorized Signature],
 )

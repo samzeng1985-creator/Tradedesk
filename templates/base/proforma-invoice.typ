@@ -95,5 +95,5 @@
   columns: (1fr, 45mm),
   gutter: 15mm,
   [#text(fill: luma(80))[Proforma invoice - not a tax or customs invoice.\ #branding.companyName]],
-  [#if branding.signaturePath != "" [#align(center)[#image(branding.signaturePath, width: 34mm, height: 13mm, fit: "contain")]] #line(length: 100%)\ Authorized Signature],
+  [#if branding.signaturePath != "" [#align(center)[#image(branding.signaturePath, width: if branding.signingAssetKind == "stamp" { 22mm } else { 34mm }, height: if branding.signingAssetKind == "stamp" { 22mm } else { 13mm }, fit: "contain")]] #line(length: 100%)\ Authorized Signature / Stamp],
 )

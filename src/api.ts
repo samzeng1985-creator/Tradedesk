@@ -2,8 +2,8 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   BusinessCase,
   BusinessCaseInput,
-  CompanyProfile,
-  CompanyProfileInput,
+  CompanyRegistry,
+  CompanyRegistryInput,
   ComponentOption,
   ComponentOptionInput,
   ComponentOptionTranslationInput,
@@ -17,6 +17,7 @@ import type {
   Customer,
   CustomerInput,
   DocumentExportResult,
+  MasterImportResult,
   Product,
   ProductInput,
   ProductionMilestone,
@@ -37,9 +38,9 @@ export const workspaceApi = {
     invoke<WorkspaceSummary>("unlock_workspace", { password, companyName }),
   lock: () => invoke<void>("lock_workspace"),
   summary: () => invoke<WorkspaceSummary>("workspace_summary"),
-  companyProfile: () => invoke<CompanyProfile>("get_company_profile"),
-  saveCompanyProfile: (input: CompanyProfileInput) =>
-    invoke<CompanyProfile>("save_company_profile", { input }),
+  companyRegistry: () => invoke<CompanyRegistry>("get_company_registry"),
+  saveCompanyRegistry: (input: CompanyRegistryInput) =>
+    invoke<CompanyRegistry>("save_company_registry", { input }),
 };
 
 export const documentApi = {
@@ -55,14 +56,16 @@ export const documentApi = {
     invoke<TradeDocument>("void_document", { id, reason }),
   newVersion: (id: string) =>
     invoke<TradeDocument>("create_document_version", { id }),
-  exportPdf: (id: string) =>
-    invoke<DocumentExportResult>("export_document_pdf", { id }),
+  exportPdf: (id: string, companyId: string, signingAssetId: string) =>
+    invoke<DocumentExportResult>("export_document_pdf", { id, companyId, signingAssetId }),
   exportCsv: (id: string) => invoke<string>("export_document_csv", { id }),
-  print: (id: string) => invoke<DocumentExportResult>("print_document", { id }),
+  print: (id: string, companyId: string, signingAssetId: string) => invoke<DocumentExportResult>("print_document", { id, companyId, signingAssetId }),
   openPdf: (id: string) => invoke<void>("open_document_pdf", { id }),
 };
 
 export const masterApi = {
+  exportWorkbook: (templateOnly = false) => invoke<string>("export_master_data", { templateOnly }),
+  importWorkbook: (bytes: number[]) => invoke<MasterImportResult>("import_master_data", { bytes }),
   listProducts: () => invoke<Product[]>("list_products"),
   saveProduct: (input: ProductInput) => invoke<Product>("save_product", { input }),
   listConfigComponents: () => invoke<ConfigComponent[]>("list_config_components"),
@@ -72,9 +75,9 @@ export const masterApi = {
   saveComponentOptionTranslation: (input: ComponentOptionTranslationInput) => invoke<ComponentOption>("save_component_option_translation", { input }),
   listConfigurableProducts: () => invoke<ConfigurableProduct[]>("list_configurable_products"),
   saveConfigurableProduct: (input: ConfigurableProductInput) => invoke<ConfigurableProduct>("save_configurable_product", { input }),
-  exportConfigurationPdf: (id: string, language: ConfigurationLanguage) => invoke<DocumentExportResult>("export_configuration_pdf", { id, language }),
+  exportConfigurationPdf: (id: string, language: ConfigurationLanguage, companyId: string, signingAssetId: string) => invoke<DocumentExportResult>("export_configuration_pdf", { id, language, companyId, signingAssetId }),
   exportConfigurationCsv: (id: string, language: ConfigurationLanguage) => invoke<string>("export_configuration_csv", { id, language }),
-  printConfiguration: (id: string, language: ConfigurationLanguage) => invoke<DocumentExportResult>("print_configuration", { id, language }),
+  printConfiguration: (id: string, language: ConfigurationLanguage, companyId: string, signingAssetId: string) => invoke<DocumentExportResult>("print_configuration", { id, language, companyId, signingAssetId }),
   listCustomers: () => invoke<Customer[]>("list_customers"),
   saveCustomer: (input: CustomerInput) => invoke<Customer>("save_customer", { input }),
   listSuppliers: () => invoke<Supplier[]>("list_suppliers"),

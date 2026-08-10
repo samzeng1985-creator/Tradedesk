@@ -160,13 +160,34 @@ export interface WorkspaceSummary {
   documents: number;
 }
 
-export interface CompanyProfile {
-  companyName: string;
-  logoDataUrl: string;
-  signatureDataUrl: string;
+export interface CompanySigningAsset {
+  id: string;
+  name: string;
+  kind: "signature" | "stamp";
+  dataUrl: string;
 }
 
-export type CompanyProfileInput = CompanyProfile;
+export interface CompanyRecord {
+  id: string;
+  companyName: string;
+  logoDataUrl: string;
+  signingAssets: CompanySigningAsset[];
+}
+
+export interface CompanyRegistry {
+  defaultCompanyId: string;
+  companies: CompanyRecord[];
+}
+
+export type CompanyRegistryInput = CompanyRegistry;
+
+export interface MasterImportResult {
+  products: number;
+  customers: number;
+  suppliers: number;
+  components: number;
+  configurations: number;
+}
 
 export interface BusinessCaseLine {
   id: string;

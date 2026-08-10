@@ -56,14 +56,32 @@ pub struct CompanyProfile {
     pub company_name: String,
     pub logo_data_url: String,
     pub signature_data_url: String,
+    pub signing_asset_kind: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct CompanyProfileInput {
+pub struct CompanySigningAsset {
+    pub id: String,
+    pub name: String,
+    pub kind: String,
+    pub data_url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CompanyRecord {
+    pub id: String,
     pub company_name: String,
     pub logo_data_url: String,
-    pub signature_data_url: String,
+    pub signing_assets: Vec<CompanySigningAsset>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CompanyRegistry {
+    pub default_company_id: String,
+    pub companies: Vec<CompanyRecord>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

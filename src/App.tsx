@@ -11,8 +11,8 @@ import { UnlockScreen } from "./UnlockScreen";
 import type {
   BusinessCase,
   BusinessCaseInput,
-  CompanyProfile,
-  CompanyProfileInput,
+  CompanyRegistry,
+  CompanyRegistryInput,
   ComponentOption,
   ComponentOptionInput,
   ComponentOptionTranslationInput,
@@ -106,7 +106,7 @@ function Pipeline({ stage }: { stage: PipelineStage }) {
 
 export default function App() {
   const [workspace, setWorkspace] = useState<WorkspaceSummary | null>(null);
-  const [companyProfile, setCompanyProfile] = useState<CompanyProfile | null>(null);
+  const [companyRegistry, setCompanyRegistry] = useState<CompanyRegistry | null>(null);
   const [workspaceExists, setWorkspaceExists] = useState(false);
   const [workspaceChecking, setWorkspaceChecking] = useState(true);
   const [view, setView] = useState<View>("overview");
@@ -124,6 +124,8 @@ export default function App() {
   const [editorOpen, setEditorOpen] = useState(false);
   const [editingRecord, setEditingRecord] = useState<MasterRecord | null>(null);
   const [saving, setSaving] = useState(false);
+  const [masterTransferBusy, setMasterTransferBusy] = useState(false);
+  const [masterTransferMessage, setMasterTransferMessage] = useState("");
 
   useEffect(() => {
     workspaceApi.exists()
@@ -159,20 +161,20 @@ export default function App() {
   async function unlock(password: string, companyName?: string) {
     await workspaceApi.unlock(password, companyName);
     await loadMasterData();
-    setCompanyProfile(await workspaceApi.companyProfile());
+    setCompanyRegistry(await workspaceApi.companyRegistry());
     setWorkspaceExists(true);
   }
 
   async function lock() {
     await workspaceApi.lock();
     setWorkspace(null);
-    setCompanyProfile(null);
+    setCompanyRegistry(null);
     setWorkspaceExists(true);
   }
 
-  async function saveCompanyProfile(input: CompanyProfileInput) {
-    const saved = await workspaceApi.saveCompanyProfile(input);
-    setCompanyProfile(saved);
+  async function saveCompanyRegistry(input: CompanyRegistryInput) {
+    const saved = await workspaceApi.saveCompanyRegistry(input);
+    setCompanyRegistry(saved);
     setWorkspace(await workspaceApi.summary());
   }
 
@@ -192,6 +194,25 @@ export default function App() {
     } finally {
       setSaving(false);
     }
+  }
+
+  async function exportMasterWorkbook(templateOnly: boolean) {
+    setMasterTransferBusy(true); setMasterTransferMessage("");
+    try {
+      const path = await masterApi.exportWorkbook(templateOnly);
+      setMasterTransferMessage(`${templateOnly ? "导入模板" : "主数据"}已导出：${path}`);
+    } catch (reason) { setMasterTransferMessage(String(reason)); } finally { setMasterTransferBusy(false); }
+  }
+
+  async function importMasterWorkbook(file: File) {
+    setMasterTransferBusy(true); setMasterTransferMessage("");
+    try {
+      if (!file.name.toLowerCase().endsWith(".xlsx")) throw new Error("请选择 .xlsx 格式的 Excel 文件");
+      const bytes = Array.from(new Uint8Array(await file.arrayBuffer()));
+      const result = await masterApi.importWorkbook(bytes);
+      await loadMasterData();
+      setMasterTransferMessage(`导入完成：产品 ${result.products}、客户 ${result.customers}、供应商 ${result.suppliers}、组件 ${result.components}、自选配置 ${result.configurations}`);
+    } catch (reason) { setMasterTransferMessage(String(reason)); } finally { setMasterTransferBusy(false); }
   }
 
   async function archiveMaster(entity: "product" | "customer" | "supplier", record: MasterRecord) {
@@ -225,8 +246,8 @@ export default function App() {
     await loadMasterData();
   }
 
-  async function exportConfigurationPdf(id: string, language: ConfigurationLanguage) {
-    const result = await masterApi.exportConfigurationPdf(id, language);
+  async function exportConfigurationPdf(id: string, language: ConfigurationLanguage, companyId: string, signingAssetId: string) {
+    const result = await masterApi.exportConfigurationPdf(id, language, companyId, signingAssetId);
     return result.path;
   }
 
@@ -234,8 +255,8 @@ export default function App() {
     return masterApi.exportConfigurationCsv(id, language);
   }
 
-  async function printConfiguration(id: string, language: ConfigurationLanguage) {
-    const result = await masterApi.printConfiguration(id, language);
+  async function printConfiguration(id: string, language: ConfigurationLanguage, companyId: string, signingAssetId: string) {
+    const result = await masterApi.printConfiguration(id, language, companyId, signingAssetId);
     return result.path;
   }
 
@@ -305,8 +326,8 @@ export default function App() {
     return document;
   }
 
-  async function exportDocumentPdf(id: string) {
-    const result = await documentApi.exportPdf(id);
+  async function exportDocumentPdf(id: string, companyId: string, signingAssetId: string) {
+    const result = await documentApi.exportPdf(id, companyId, signingAssetId);
     await loadMasterData();
     return result.path;
   }
@@ -315,8 +336,8 @@ export default function App() {
     return documentApi.exportCsv(id);
   }
 
-  async function printDocument(id: string) {
-    const result = await documentApi.print(id);
+  async function printDocument(id: string, companyId: string, signingAssetId: string) {
+    const result = await documentApi.print(id, companyId, signingAssetId);
     await loadMasterData();
     return result.path;
   }
@@ -374,7 +395,7 @@ export default function App() {
           <span className="brand-mark">TD</span>
           <span>
             <strong>TradeDesk</strong>
-            <small>Local · 0.12.0</small>
+            <small>Local · 0.13.0</small>
           </span>
         </div>
 
@@ -549,6 +570,8 @@ export default function App() {
                 供应商 {suppliers.length}
               </button>
             </div>
+            <div className="master-transfer-toolbar"><div><strong>Excel 批量维护</strong><span>一次导出全部主数据，或按模板校验后批量导入</span></div><div className="toolbar-buttons"><button className="button button-secondary" disabled={masterTransferBusy} onClick={() => void exportMasterWorkbook(false)}>导出主数据</button><button className="button button-secondary" disabled={masterTransferBusy} onClick={() => void exportMasterWorkbook(true)}>下载导入模板</button><label className="button button-primary">{masterTransferBusy ? "处理中…" : "导入 Excel"}<input className="sr-only" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" disabled={masterTransferBusy} onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (file) void importMasterWorkbook(file); }} /></label></div></div>
+            {masterTransferMessage && <div className="document-message">{masterTransferMessage}</div>}
 
             {(masterTab === "products" || masterTab === "customers" || masterTab === "suppliers") && <div className="table-toolbar">
               <label>
@@ -600,7 +623,7 @@ export default function App() {
                 </table>
               )}
             </div>}
-            {masterTab === "configurable" && <ConfigurableProductLibrary configurations={configurableProducts} components={configComponents} options={componentOptions} onSave={saveConfigurableProduct} onArchive={(id) => archiveConfigMaster("configurable_product", id)} onExportPdf={exportConfigurationPdf} onExportCsv={exportConfigurationCsv} onPrint={printConfiguration} />}
+            {masterTab === "configurable" && companyRegistry && <ConfigurableProductLibrary companyRegistry={companyRegistry} configurations={configurableProducts} components={configComponents} options={componentOptions} onSave={saveConfigurableProduct} onArchive={(id) => archiveConfigMaster("configurable_product", id)} onExportPdf={exportConfigurationPdf} onExportCsv={exportConfigurationCsv} onPrint={printConfiguration} />}
             {masterTab === "components" && <ComponentLibrary components={configComponents} options={componentOptions} onSave={saveConfigComponent} onArchive={(id) => archiveConfigMaster("config_component", id)} onSaveOption={saveComponentOption} onSaveOptionTranslation={saveComponentOptionTranslation} onArchiveOption={archiveComponentOption} />}
           </section>
         )}
@@ -618,7 +641,7 @@ export default function App() {
 
         {view === "documents" && (
           <DocumentCenter
-            companyProfile={companyProfile}
+            companyRegistry={companyRegistry}
             documents={documents}
             cases={businessCases}
             onCreate={createDocument}
@@ -634,8 +657,8 @@ export default function App() {
           />
         )}
 
-        {view === "settings" && companyProfile && (
-          <CompanySettings profile={companyProfile} onSave={saveCompanyProfile} />
+        {view === "settings" && companyRegistry && (
+          <CompanySettings registry={companyRegistry} onSave={saveCompanyRegistry} />
         )}
       </main>
       {editorOpen && (masterTab === "products" || masterTab === "customers" || masterTab === "suppliers") && <MasterEditor tab={masterTab} record={editingRecord} saving={saving} onClose={() => setEditorOpen(false)} onSave={saveMaster} />}

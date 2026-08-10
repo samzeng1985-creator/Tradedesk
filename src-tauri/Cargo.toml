@@ -1,6 +1,6 @@
 [package]
 name = "trade-desk-local"
-version = "0.12.0"
+version = "0.13.0"
 description = "Lightweight local-first foreign trade workspace"
 authors = ["TradeDesk"]
 edition = "2024"
@@ -18,7 +18,9 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 base64 = "0.22"
+calamine = "0.36.0"
 rusqlite = { version = "0.40.1", features = ["bundled-sqlcipher-vendored-openssl"] }
+rust_xlsxwriter = "0.97.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"

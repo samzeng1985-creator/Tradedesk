@@ -99,5 +99,5 @@
   columns: (1fr, 45mm),
   gutter: 15mm,
   [#text(fill: luma(80))[Generated from an encrypted local snapshot.\ #branding.companyName]],
-  [#if branding.signaturePath != "" [#align(center)[#image(branding.signaturePath, width: 34mm, height: 13mm, fit: "contain")]] #line(length: 100%)\ Authorized Signature],
+  [#if branding.signaturePath != "" [#align(center)[#image(branding.signaturePath, width: if branding.signingAssetKind == "stamp" { 22mm } else { 34mm }, height: if branding.signingAssetKind == "stamp" { 22mm } else { 13mm }, fit: "contain")]] #line(length: 100%)\ Authorized Signature / Stamp],
 )

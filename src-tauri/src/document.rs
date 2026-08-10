@@ -9,7 +9,7 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 use crate::domain::{
-    CompanyProfile, ConfigurableProduct, DocumentExportResult, DocumentType,
+    CompanyProfile, CompanyRegistry, ConfigurableProduct, DocumentExportResult, DocumentType,
     DocumentValidationIssue, TradeDocument, ValidationSeverity,
 };
 
@@ -54,6 +54,7 @@ struct BrandingPayload {
     company_name: String,
     logo_path: String,
     signature_path: String,
+    signing_asset_kind: String,
 }
 
 const MAX_BRAND_ASSET_BYTES: usize = 3 * 1024 * 1024;
@@ -87,6 +88,44 @@ pub fn validate_company_profile(profile: &CompanyProfile) -> Result<(), String> 
     Ok(())
 }
 
+pub fn validate_company_registry(registry: &CompanyRegistry) -> Result<(), String> {
+    use std::collections::HashSet;
+
+    if registry.companies.is_empty() {
+        return Err("至少需要保留一家出口公司".to_owned());
+    }
+    let mut company_ids = HashSet::new();
+    for company in &registry.companies {
+        if company.id.trim().is_empty() || company.company_name.trim().is_empty() {
+            return Err("公司名称不能为空".to_owned());
+        }
+        if !company_ids.insert(company.id.trim()) {
+            return Err("公司编号不能重复".to_owned());
+        }
+        decode_brand_asset(&company.logo_data_url)?;
+        let mut asset_ids = HashSet::new();
+        for asset in &company.signing_assets {
+            if asset.id.trim().is_empty() || asset.name.trim().is_empty() {
+                return Err("电子签名或电子章的名称不能为空".to_owned());
+            }
+            if !matches!(asset.kind.as_str(), "signature" | "stamp") {
+                return Err("签章类型仅支持电子签名或电子章".to_owned());
+            }
+            if !asset_ids.insert(asset.id.trim()) {
+                return Err("同一公司内的签章编号不能重复".to_owned());
+            }
+            if asset.data_url.trim().is_empty() {
+                return Err(format!("请为“{}”上传图片", asset.name));
+            }
+            decode_brand_asset(&asset.data_url)?;
+        }
+    }
+    if !company_ids.contains(registry.default_company_id.trim()) {
+        return Err("默认公司不存在".to_owned());
+    }
+    Ok(())
+}
+
 fn prepare_branding(profile: &CompanyProfile, work_dir: &Path) -> Result<BrandingPayload, String> {
     validate_company_profile(profile)?;
     let write_asset = |value: &str, stem: &str| -> Result<String, String> {
@@ -102,6 +141,7 @@ fn prepare_branding(profile: &CompanyProfile, work_dir: &Path) -> Result<Brandin
         company_name: profile.company_name.trim().to_owned(),
         logo_path: write_asset(&profile.logo_data_url, "company-logo")?,
         signature_path: write_asset(&profile.signature_data_url, "company-signature")?,
+        signing_asset_kind: profile.signing_asset_kind.clone(),
     })
 }
 
@@ -704,6 +744,7 @@ mod tests {
             company_name: "Example Export Co., Ltd.".to_owned(),
             logo_data_url: "data:image/png;base64,iVBORw0KGgo=".to_owned(),
             signature_data_url: String::new(),
+            signing_asset_kind: String::new(),
         };
         assert!(validate_company_profile(&profile).is_ok());
         assert!(

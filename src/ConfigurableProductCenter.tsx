@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import type { FormEvent } from "react";
 import type {
+  CompanyRegistry,
   ComponentOption,
   ComponentOptionInput,
   ComponentOptionKind,
@@ -456,6 +457,7 @@ function ConfigurationEditor({
 }
 
 export function ConfigurableProductLibrary({
+  companyRegistry,
   configurations,
   components,
   options,
@@ -465,20 +467,24 @@ export function ConfigurableProductLibrary({
   onExportCsv,
   onPrint,
 }: {
+  companyRegistry: CompanyRegistry;
   configurations: ConfigurableProduct[];
   components: ConfigComponent[];
   options: ComponentOption[];
   onSave: (input: ConfigurableProductInput) => Promise<void>;
   onArchive: (id: string) => Promise<void>;
-  onExportPdf: (id: string, language: ConfigurationLanguage) => Promise<string>;
+  onExportPdf: (id: string, language: ConfigurationLanguage, companyId: string, signingAssetId: string) => Promise<string>;
   onExportCsv: (id: string, language: ConfigurationLanguage) => Promise<string>;
-  onPrint: (id: string, language: ConfigurationLanguage) => Promise<string>;
+  onPrint: (id: string, language: ConfigurationLanguage, companyId: string, signingAssetId: string) => Promise<string>;
 }) {
   const [query, setQuery] = useState("");
   const [editing, setEditing] = useState<ConfigurableProduct | "new" | null>(null);
   const [busy, setBusy] = useState("");
   const [message, setMessage] = useState("");
   const [language, setLanguage] = useState<ConfigurationLanguage>("en");
+  const [companyId, setCompanyId] = useState(companyRegistry.defaultCompanyId);
+  const [signingAssetId, setSigningAssetId] = useState("");
+  const selectedCompany = companyRegistry.companies.find((item) => item.id === companyId) ?? companyRegistry.companies[0];
   const normalized = query.trim().toLocaleLowerCase();
   const filtered = configurations.filter((item) => [item.code, item.name, item.model, item.notes, ...item.lines.flatMap((line) => [line.category, line.name, line.specification, line.brand])].some((value) => value.toLocaleLowerCase().includes(normalized)));
 
@@ -491,7 +497,7 @@ export function ConfigurableProductLibrary({
     setBusy(`${item.id}-${action}`);
     setMessage("");
     try {
-      const path = action === "pdf" ? await onExportPdf(item.id, language) : action === "csv" ? await onExportCsv(item.id, language) : await onPrint(item.id, language);
+      const path = action === "pdf" ? await onExportPdf(item.id, language, companyId, signingAssetId) : action === "csv" ? await onExportCsv(item.id, language) : await onPrint(item.id, language, companyId, signingAssetId);
       setMessage(`${action === "print" ? "已打开打印用 PDF" : "已导出配置单"}：${path}`);
     } catch (reason) {
       setMessage(`导出失败：${String(reason)}`);
@@ -501,7 +507,7 @@ export function ConfigurableProductLibrary({
   }
 
   return <>
-    <div className="table-toolbar"><label><span className="sr-only">搜索配置</span><input placeholder="搜索配置编号、产品、型号或组件" value={query} onChange={(event) => setQuery(event.target.value)} /></label><div className="toolbar-buttons"><label className="export-language">导出语种<select value={language} onChange={(event) => setLanguage(event.target.value as ConfigurationLanguage)}>{Object.entries(configurationLanguageLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label><button className="button button-primary" disabled={!components.length} onClick={() => setEditing("new")}>新建自选配置</button></div></div>
+    <div className="table-toolbar configuration-output-toolbar"><label><span className="sr-only">搜索配置</span><input placeholder="搜索配置编号、产品、型号或组件" value={query} onChange={(event) => setQuery(event.target.value)} /></label><div className="toolbar-buttons"><label className="export-language">导出语种<select value={language} onChange={(event) => setLanguage(event.target.value as ConfigurationLanguage)}>{Object.entries(configurationLanguageLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label><label className="export-language">导出公司<select value={companyId} onChange={(event) => { setCompanyId(event.target.value); setSigningAssetId(""); }}>{companyRegistry.companies.map((item) => <option value={item.id} key={item.id}>{item.companyName}</option>)}</select></label><label className="export-language">签章<select value={signingAssetId} onChange={(event) => setSigningAssetId(event.target.value)}><option value="">不使用</option>{selectedCompany?.signingAssets.map((item) => <option value={item.id} key={item.id}>{item.kind === "stamp" ? "电子章" : "电子签名"} · {item.name}</option>)}</select></label><button className="button button-primary" disabled={!components.length} onClick={() => setEditing("new")}>新建自选配置</button></div></div>
     {!components.length && <div className="empty-callout">请先进入“组件库”，录入至少一个可选组件。</div>}
     {message && <div className="document-message">{message}</div>}
     <div className="table-wrap"><table><thead><tr><th>配置编号</th><th>产品</th><th>型号</th><th>组件数</th><th>币种/汇率</th><th>配置总价</th><th>说明</th><th>操作</th></tr></thead><tbody>{filtered.map((item) => <tr key={item.id}><td>{item.code}</td><td><strong>{item.name}</strong></td><td>{item.model || "—"}</td><td>{item.lines.length}</td><td><strong>{item.currency}</strong>{item.currency !== "CNY" && <small className="table-subtitle">1 CNY = {item.exchangeRate} {item.currency}<br />{item.exchangeRateDate || "待确认日期"}</small>}</td><td><strong>{formatMoney(item.totalAmountMinor, item.currency)}</strong></td><td>{item.notes || "—"}</td><td><div className="row-actions configuration-actions"><button onClick={() => setEditing(item)}>配置/查看</button><button disabled={!!busy} onClick={() => void output(item, "pdf")}>{busy === `${item.id}-pdf` ? "导出中…" : "PDF"}</button><button disabled={!!busy} onClick={() => void output(item, "csv")}>{busy === `${item.id}-csv` ? "导出中…" : "CSV"}</button><button disabled={!!busy} onClick={() => void output(item, "print")}>{busy === `${item.id}-print` ? "打开中…" : "打印"}</button><button className="danger-link" onClick={() => void archive(item)}>停用</button></div></td></tr>)}</tbody></table></div>

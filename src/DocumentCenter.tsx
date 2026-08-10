@@ -1,7 +1,9 @@
 import { useMemo, useState } from "react";
 import type {
   BusinessCase,
-  CompanyProfile,
+  CompanyRecord,
+  CompanyRegistry,
+  CompanySigningAsset,
   ConvertDocumentInput,
   CreateDocumentInput,
   DocumentLineSnapshot,
@@ -13,7 +15,7 @@ import type {
 } from "./domain";
 
 interface DocumentCenterProps {
-  companyProfile: CompanyProfile | null;
+  companyRegistry: CompanyRegistry | null;
   documents: TradeDocument[];
   cases: BusinessCase[];
   onCreate: (input: CreateDocumentInput) => Promise<TradeDocument>;
@@ -22,9 +24,9 @@ interface DocumentCenterProps {
   onIssue: (id: string) => Promise<TradeDocument>;
   onVoid: (id: string, reason: string) => Promise<TradeDocument>;
   onNewVersion: (id: string) => Promise<TradeDocument>;
-  onExportPdf: (id: string) => Promise<string>;
+  onExportPdf: (id: string, companyId: string, signingAssetId: string) => Promise<string>;
   onExportCsv: (id: string) => Promise<string>;
-  onPrint: (id: string) => Promise<string>;
+  onPrint: (id: string, companyId: string, signingAssetId: string) => Promise<string>;
   onOpenPdf: (id: string) => Promise<void>;
 }
 
@@ -181,7 +183,7 @@ function ConvertDocumentModal({ source, documents, onClose, onConvert }: {
   </div>;
 }
 
-function Preview({ document, payload, companyProfile }: { document: TradeDocument; payload: DocumentPayload; companyProfile: CompanyProfile | null }) {
+function Preview({ document, payload, company, signingAsset }: { document: TradeDocument; payload: DocumentPayload; company?: CompanyRecord; signingAsset?: CompanySigningAsset }) {
   const total = payload.lines.reduce((sum, line) => sum + line.amountMinor, 0);
   const payable = total - payload.discountMinor;
   const packing = document.documentType === "packing_list";
@@ -190,14 +192,14 @@ function Preview({ document, payload, companyProfile }: { document: TradeDocumen
   const proforma = document.documentType === "proforma_invoice";
   const title = contract ? "SALES CONTRACT" : packing ? "DETAILED PACKING LIST" : quotation ? "COMMERCIAL QUOTATION" : proforma ? "PROFORMA INVOICE" : "COMMERCIAL INVOICE";
   return <div className={`document-paper ${packing ? "landscape" : ""}`}>
-    <header>{companyProfile?.logoDataUrl && <img className="preview-logo" src={companyProfile.logoDataUrl} alt="公司 Logo" />}<h2>{title}</h2><p>{typeLabels[document.documentType]} · {document.number} · V{document.version}</p>{document.status === "draft" && <strong>DRAFT / 草稿</strong>}</header>
+    <header>{company?.logoDataUrl && <img className="preview-logo" src={company.logoDataUrl} alt="公司 Logo" />}<h2>{title}</h2><p>{typeLabels[document.documentType]} · {document.number} · V{document.version}</p>{document.status === "draft" && <strong>DRAFT / 草稿</strong>}</header>
     <div className="preview-parties"><div><b>{packing ? "SHIPPER" : "SELLER / EXPORTER"}</b><span>{payload.seller}</span><small>{payload.sellerAddress}</small></div><div><b>{packing ? "CONSIGNEE" : "BUYER / CONSIGNEE"}</b><span>{payload.buyer}</span><small>{payload.buyerAddress}</small></div></div>
     <div className="preview-meta"><span><b>No.</b>{document.number}</span><span><b>Date</b>{document.issueDate}</span><span><b>Reference</b>{document.businessCaseNumber}</span><span><b>Incoterm</b>{payload.incoterm}</span>{quotation ? <span><b>Valid until</b>{payload.validUntil}</span> : <><span><b>Loading</b>{payload.portOfLoading}</span><span><b>Discharge</b>{payload.portOfDischarge}</span></>}</div>
     <table><thead><tr><th>No.</th><th>SKU / Description</th><th>Qty</th>{packing ? <><th>Packages</th><th>Net kg</th><th>Gross kg</th><th>CBM</th></> : <><th>Unit price</th><th>Amount</th></>}</tr></thead><tbody>{payload.lines.map((line, index) => <tr key={`${line.productId}-${index}`}><td>{index + 1}</td><td><b>{line.sku}</b><br />{line.description}{line.model && <small>{line.model}</small>}</td><td>{line.quantity} {line.unit}</td>{packing ? <><td>{line.packages} {line.packageType}</td><td>{line.netWeightKg}</td><td>{line.grossWeightKg}</td><td>{line.cbm}</td></> : <><td>{money(line.unitPriceMinor, document.currency)}</td><td>{money(line.amountMinor, document.currency)}</td></>}</tr>)}</tbody>{!packing && <tfoot><tr><td colSpan={4}>TOTAL</td><td>{money(payable, document.currency)}</td></tr></tfoot>}</table>
     {!packing && payload.discountMinor > 0 && <section><h3>DISCOUNT</h3><p>{money(payload.discountMinor, document.currency)} · Total after discount: {money(payable, document.currency)}</p></section>}
     {contract && <section><h3>GENERAL TERMS</h3><p>{payload.contractTerms || "General trade terms shall be confirmed in writing by both parties."}</p></section>}
     {payload.notes && <section><h3>NOTES</h3><p>{payload.notes}</p></section>}
-    <footer><span>{companyProfile?.companyName || payload.seller} · Encrypted local snapshot</span><span className="preview-signature">{companyProfile?.signatureDataUrl && <img src={companyProfile.signatureDataUrl} alt="电子签名" />}<b>Authorized Signature</b></span></footer>
+    <footer><span>{company?.companyName || payload.seller} · Encrypted local snapshot</span><span className={`preview-signature ${signingAsset?.kind === "stamp" ? "stamp" : ""}`}>{signingAsset?.dataUrl && <img src={signingAsset.dataUrl} alt={signingAsset.kind === "stamp" ? "电子章" : "电子签名"} />}<b>Authorized Signature / Stamp</b></span></footer>
   </div>;
 }
 
@@ -216,15 +218,15 @@ function LineEditor({ line, packing, onChange }: { line: DocumentLineSnapshot; p
   </div>;
 }
 
-function DocumentEditor({ initial, companyProfile, onClose, onSave, onIssue, onExportPdf, onExportCsv, onPrint }: {
+function DocumentEditor({ initial, companyRegistry, onClose, onSave, onIssue, onExportPdf, onExportCsv, onPrint }: {
   initial: TradeDocument;
-  companyProfile: CompanyProfile | null;
+  companyRegistry: CompanyRegistry | null;
   onClose: () => void;
   onSave: (input: SaveDocumentInput) => Promise<TradeDocument>;
   onIssue: (id: string) => Promise<TradeDocument>;
-  onExportPdf: (id: string) => Promise<string>;
+  onExportPdf: (id: string, companyId: string, signingAssetId: string) => Promise<string>;
   onExportCsv: (id: string) => Promise<string>;
-  onPrint: (id: string) => Promise<string>;
+  onPrint: (id: string, companyId: string, signingAssetId: string) => Promise<string>;
 }) {
   const [document, setDocument] = useState(initial);
   const [number, setNumber] = useState(initial.number);
@@ -233,6 +235,10 @@ function DocumentEditor({ initial, companyProfile, onClose, onSave, onIssue, onE
   const [payload, setPayload] = useState<DocumentPayload>(() => structuredClone(initial.payload));
   const [busy, setBusy] = useState("");
   const [message, setMessage] = useState("");
+  const [companyId, setCompanyId] = useState(companyRegistry?.defaultCompanyId ?? "");
+  const [signingAssetId, setSigningAssetId] = useState("");
+  const selectedCompany = companyRegistry?.companies.find((item) => item.id === companyId) ?? companyRegistry?.companies[0];
+  const selectedAsset = selectedCompany?.signingAssets.find((item) => item.id === signingAssetId);
   const editable = document.status === "draft";
   const packing = document.documentType === "packing_list";
   const quotation = document.documentType === "commercial_quotation";
@@ -261,7 +267,7 @@ function DocumentEditor({ initial, companyProfile, onClose, onSave, onIssue, onE
     setBusy(action); setMessage("");
     try {
       if (editable) await save();
-      const path = action === "pdf" ? await onExportPdf(document.id) : action === "csv" ? await onExportCsv(document.id) : await onPrint(document.id);
+      const path = action === "pdf" ? await onExportPdf(document.id, companyId, signingAssetId) : action === "csv" ? await onExportCsv(document.id) : await onPrint(document.id, companyId, signingAssetId);
       setMessage(`${action === "print" ? "已打开打印用 PDF" : "已导出"}：${path}`);
     } catch (reason) { setMessage(String(reason)); } finally { setBusy(""); }
   }
@@ -271,6 +277,7 @@ function DocumentEditor({ initial, companyProfile, onClose, onSave, onIssue, onE
     {message && <div className="document-message">{message}</div>}
     <div className="document-editor-layout">
       <div className="document-form-panel">
+        <div className="document-brand-selectors"><label>导出公司<select value={companyId} onChange={(event) => { setCompanyId(event.target.value); setSigningAssetId(""); }}>{companyRegistry?.companies.map((item) => <option value={item.id} key={item.id}>{item.companyName}</option>)}</select></label><label>签章（可不选）<select value={signingAssetId} onChange={(event) => setSigningAssetId(event.target.value)}><option value="">不使用签章</option>{selectedCompany?.signingAssets.map((item) => <option value={item.id} key={item.id}>{item.kind === "stamp" ? "电子章" : "电子签名"} · {item.name}</option>)}</select></label></div>
         {!editable && <div className="locked-callout">该版本已{document.status === "issued" ? "签发" : "作废"}，内容只读；修改请创建新版本。</div>}
         {document.validationIssues.length > 0 && <div className="validation-list">{document.validationIssues.map((issue, index) => <span className={issue.severity} key={`${issue.code}-${index}`}>{issue.severity === "error" ? "错误" : "提醒"} · {issue.message}</span>)}</div>}
         <fieldset disabled={!editable}><div className="form-grid two-columns"><label>单证编号<input value={number} onChange={(event) => setNumber(event.target.value)} /></label><label>签发日期<input type="date" value={issueDate} onChange={(event) => setIssueDate(event.target.value)} /></label><label>输出语言<select value={language} onChange={(event) => setLanguage(event.target.value)}><option value="zh_en">中英双语</option><option value="en">英文</option><option value="ru">俄文</option></select></label><label>来源业务单<input value={document.businessCaseNumber} readOnly /></label></div>
@@ -282,7 +289,7 @@ function DocumentEditor({ initial, companyProfile, onClose, onSave, onIssue, onE
         {document.documentType === "trade_contract" && <label>合同通用条款<textarea rows={6} value={payload.contractTerms} onChange={(event) => setPayloadField({ contractTerms: event.target.value })} /></label>}
         <label>备注<textarea rows={4} value={payload.notes} onChange={(event) => setPayloadField({ notes: event.target.value })} /></label></fieldset>
       </div>
-      <div className="document-preview-panel"><Preview document={{ ...document, number, issueDate, language }} payload={payload} companyProfile={companyProfile} /></div>
+      <div className="document-preview-panel"><Preview document={{ ...document, number, issueDate, language }} payload={payload} company={selectedCompany} signingAsset={selectedAsset} /></div>
     </div>
   </div>;
 }
@@ -320,7 +327,7 @@ export function DocumentCenter(props: DocumentCenterProps) {
     try { const created = await props.onNewVersion(document.id); setEditing(created); } catch (error) { setMessage(String(error)); }
   }
 
-  if (editing) return <DocumentEditor initial={editing} companyProfile={props.companyProfile} onClose={() => setEditing(null)} onSave={props.onSave} onIssue={props.onIssue} onExportPdf={props.onExportPdf} onExportCsv={props.onExportCsv} onPrint={props.onPrint} />;
+  if (editing) return <DocumentEditor initial={editing} companyRegistry={props.companyRegistry} onClose={() => setEditing(null)} onSave={props.onSave} onIssue={props.onIssue} onExportPdf={props.onExportPdf} onExportCsv={props.onExportCsv} onPrint={props.onPrint} />;
 
   return <section className="panel document-center">
     <div className="panel-heading"><div><h2>单证中心</h2><p>从报价、PI 到履约单证，复用同一份加密业务快照</p></div><button className="button button-primary" disabled={!props.cases.length} onClick={() => setCreating(true)}>新建单证</button></div>

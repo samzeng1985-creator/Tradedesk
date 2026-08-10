@@ -353,6 +353,7 @@ tbody tr:hover { background: #fafbfc; }
 .document-paper > footer { display: flex; justify-content: space-between; gap: 20px; margin-top: 40px; padding-top: 10px; border-top: 1px solid #111827; color: #64748b; }
 .preview-signature { display: grid; justify-items: center; min-width: 145px; }
 .preview-signature img { width: 110px; height: 42px; object-fit: contain; }
+.preview-signature.stamp img { width: 70px; height: 70px; }
 .preview-signature b { font-weight: 500; }
 
 .company-settings { min-height: 560px; }
@@ -368,6 +369,32 @@ tbody tr:hover { background: #fafbfc; }
 .brand-asset-actions { display: flex; align-items: center; gap: 12px; margin-top: 12px; }
 .brand-asset-actions .button { display: inline-flex; cursor: pointer; }
 .settings-note { margin-top: 18px; font-size: 12px; }
+.company-registry-layout { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 20px; margin-top: 20px; }
+.company-registry-list { display: grid; align-content: start; gap: 6px; padding: 12px; border: 1px solid #e1e6ed; border-radius: 12px; background: #f8fafc; }
+.company-list-heading { display: flex; justify-content: space-between; align-items: center; padding: 4px 5px 10px; }
+.company-list-heading button, .company-registry-list > button { border: 0; background: transparent; color: #6d28d9; }
+.company-registry-list > button { display: flex; justify-content: space-between; gap: 8px; padding: 10px; text-align: left; border-radius: 8px; color: #475569; }
+.company-registry-list > button.active { color: #4c1d95; background: #ede9fe; font-weight: 700; }
+.company-registry-list small { padding: 2px 6px; border-radius: 999px; color: #166534; background: #dcfce7; }
+.company-registry-editor { min-width: 0; }
+.company-editor-actions { display: flex; justify-content: flex-end; gap: 12px; }
+.signing-assets-heading { display: flex; justify-content: space-between; align-items: end; gap: 14px; margin: 26px 0 12px; }
+.signing-assets-heading h3 { margin: 0; }
+.signing-assets-heading p { margin: 5px 0 0; color: #64748b; font-size: 12px; }
+.signing-assets-heading > div:last-child { display: flex; gap: 8px; }
+.signing-assets-list { display: grid; gap: 14px; }
+.signing-asset-row { padding: 16px; border: 1px solid #e1e6ed; border-radius: 12px; }
+.signing-asset-fields { display: grid; grid-template-columns: 1fr 160px; gap: 12px; margin-bottom: 12px; }
+.signing-asset-fields label, .document-brand-selectors label { display: grid; gap: 6px; color: #64748b; font-size: 11px; font-weight: 650; }
+.signing-asset-fields input, .signing-asset-fields select, .document-brand-selectors select { width: 100%; border: 1px solid #cfd7e3; border-radius: 8px; padding: 9px 10px; background: white; }
+.signing-asset-row .brand-asset-card { grid-template-columns: 150px 1fr; padding: 12px; }
+.signing-asset-row .brand-asset-preview { height: 95px; }
+.document-brand-selectors { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px; padding: 12px; border: 1px solid #ddd6fe; border-radius: 9px; background: #faf5ff; }
+.master-transfer-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin: 16px 0; padding: 12px 14px; border: 1px solid #ddd6fe; border-radius: 10px; background: #faf5ff; }
+.master-transfer-toolbar strong, .master-transfer-toolbar span { display: block; }
+.master-transfer-toolbar span { margin-top: 4px; color: #64748b; font-size: 11px; }
+.configuration-output-toolbar { align-items: flex-end; }
+.configuration-output-toolbar .toolbar-buttons { flex-wrap: wrap; }
 
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 
@@ -416,4 +443,6 @@ tbody tr:hover { background: #fafbfc; }
   .configuration-footer { grid-template-columns: 1fr; align-items: stretch; }
   .configuration-footer .modal-actions { justify-content: flex-start; }
   .brand-assets-grid, .brand-asset-card { grid-template-columns: 1fr; }
+  .company-registry-layout, .document-brand-selectors, .signing-asset-fields { grid-template-columns: 1fr; }
+  .master-transfer-toolbar, .signing-assets-heading { align-items: stretch; flex-direction: column; }
 }
