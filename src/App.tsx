@@ -291,7 +291,7 @@ export default function App() {
           <span className="brand-mark">TD</span>
           <span>
             <strong>TradeDesk</strong>
-            <small>Local · 0.6.1</small>
+            <small>Local · 0.6.2</small>
           </span>
         </div>
 
@@ -477,7 +477,7 @@ export default function App() {
                   </thead>
                   <tbody>
                     {filteredProducts.map((item) => (
-                      <tr key={item.id}><td>{item.sku}</td><td><strong>{item.nameEn}</strong><small className="table-subtitle">{item.nameZh}</small></td><td>{item.model || "—"}</td><td>{item.hsCode || "—"}</td><td>{item.unit}</td><td>{item.grossWeightKg} kg</td><td className="row-actions"><button onClick={() => openEditor(item)}>编辑</button><button onClick={() => archiveMaster("product", item)}>停用</button></td></tr>
+                      <tr key={item.id}><td>{item.sku}</td><td><strong>{item.nameEn}</strong><small className="table-subtitle">{item.nameZh}</small></td><td>{item.model || "—"}</td><td>{item.hsCode || "—"}</td><td>{item.unit}</td><td>{item.grossWeightKg} kg</td><td><div className="row-actions"><button onClick={() => openEditor(item)}>编辑</button><button onClick={() => archiveMaster("product", item)}>停用</button></div></td></tr>
                     ))}
                   </tbody>
                 </table>
@@ -489,7 +489,7 @@ export default function App() {
                   </thead>
                   <tbody>
                     {filteredCustomers.map((item) => (
-                      <tr key={item.id}><td>{item.code}</td><td>{item.legalName}</td><td>{item.market || "—"}</td><td>{item.currency}</td><td>{item.paymentTerms || "—"}</td><td className="row-actions"><button onClick={() => openEditor(item)}>编辑</button><button onClick={() => archiveMaster("customer", item)}>停用</button></td></tr>
+                      <tr key={item.id}><td>{item.code}</td><td>{item.legalName}</td><td>{item.market || "—"}</td><td>{item.currency}</td><td>{item.paymentTerms || "—"}</td><td><div className="row-actions"><button onClick={() => openEditor(item)}>编辑</button><button onClick={() => archiveMaster("customer", item)}>停用</button></div></td></tr>
                     ))}
                   </tbody>
                 </table>
@@ -501,7 +501,7 @@ export default function App() {
                   </thead>
                   <tbody>
                     {filteredSuppliers.map((item) => (
-                      <tr key={item.id}><td>{item.code}</td><td>{item.legalName}</td><td>{item.leadTimeDays} 天</td><td>{item.onTimeRate}%</td><td><Status status="ready" /></td><td className="row-actions"><button onClick={() => openEditor(item)}>编辑</button><button onClick={() => archiveMaster("supplier", item)}>停用</button></td></tr>
+                      <tr key={item.id}><td>{item.code}</td><td>{item.legalName}</td><td>{item.leadTimeDays} 天</td><td>{item.onTimeRate}%</td><td><Status status="ready" /></td><td><div className="row-actions"><button onClick={() => openEditor(item)}>编辑</button><button onClick={() => archiveMaster("supplier", item)}>停用</button></div></td></tr>
                     ))}
                   </tbody>
                 </table>
