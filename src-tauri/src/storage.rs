@@ -5,14 +5,16 @@ use uuid::Uuid;
 use zeroize::Zeroizing;
 
 use crate::domain::{
-    BusinessCase, BusinessCaseInput, BusinessCaseLine, ConvertDocumentInput, CreateDocumentInput,
-    Customer, CustomerInput, DocumentLineSnapshot, DocumentPayload, DocumentStatus, DocumentType,
-    MilestoneStatus, PipelineStage, Product, ProductInput, ProductionMilestone,
-    ProductionMilestoneInput, PurchaseOrder, PurchaseOrderInput, PurchaseOrderLine, PurchaseStatus,
-    SaveDocumentInput, Supplier, SupplierInput, TradeDocument, WorkspaceSummary,
+    BusinessCase, BusinessCaseInput, BusinessCaseLine, ConfigComponent, ConfigComponentInput,
+    ConfigurableProduct, ConfigurableProductInput, ConfigurableProductLine, ConvertDocumentInput,
+    CreateDocumentInput, Customer, CustomerInput, DocumentLineSnapshot, DocumentPayload,
+    DocumentStatus, DocumentType, MilestoneStatus, PipelineStage, Product, ProductInput,
+    ProductionMilestone, ProductionMilestoneInput, PurchaseOrder, PurchaseOrderInput,
+    PurchaseOrderLine, PurchaseStatus, SaveDocumentInput, Supplier, SupplierInput, TradeDocument,
+    WorkspaceSummary,
 };
 
-const SCHEMA_VERSION: i64 = 6;
+const SCHEMA_VERSION: i64 = 7;
 
 const MILESTONE_STAGES: [(&str, &str); 6] = [
     ("raw_material", "原料准备"),
@@ -85,6 +87,53 @@ impl EncryptedDatabase {
                 lead_time_days INTEGER NOT NULL DEFAULT 0,
                 active INTEGER NOT NULL DEFAULT 1
              );
+
+             CREATE TABLE IF NOT EXISTS config_components (
+                id TEXT PRIMARY KEY,
+                code TEXT NOT NULL UNIQUE,
+                category TEXT NOT NULL,
+                name TEXT NOT NULL,
+                specification TEXT NOT NULL DEFAULT '',
+                default_quantity REAL NOT NULL DEFAULT 1,
+                unit TEXT NOT NULL,
+                unit_price_minor INTEGER NOT NULL DEFAULT 0,
+                currency TEXT NOT NULL DEFAULT 'CNY',
+                brand TEXT NOT NULL DEFAULT '',
+                notes TEXT NOT NULL DEFAULT '',
+                active INTEGER NOT NULL DEFAULT 1
+             );
+             CREATE INDEX IF NOT EXISTS idx_config_components_category
+                ON config_components(category, code);
+
+             CREATE TABLE IF NOT EXISTS configurable_products (
+                id TEXT PRIMARY KEY,
+                code TEXT NOT NULL UNIQUE,
+                name TEXT NOT NULL,
+                model TEXT NOT NULL DEFAULT '',
+                currency TEXT NOT NULL DEFAULT 'CNY',
+                notes TEXT NOT NULL DEFAULT '',
+                total_amount_minor INTEGER NOT NULL DEFAULT 0,
+                active INTEGER NOT NULL DEFAULT 1
+             );
+
+             CREATE TABLE IF NOT EXISTS configurable_product_lines (
+                id TEXT PRIMARY KEY,
+                configurable_product_id TEXT NOT NULL REFERENCES configurable_products(id) ON DELETE CASCADE,
+                sort_order INTEGER NOT NULL,
+                component_id TEXT NOT NULL REFERENCES config_components(id),
+                category_snapshot TEXT NOT NULL,
+                name_snapshot TEXT NOT NULL,
+                specification_snapshot TEXT NOT NULL DEFAULT '',
+                quantity REAL NOT NULL,
+                unit_snapshot TEXT NOT NULL,
+                unit_price_minor INTEGER NOT NULL,
+                brand_snapshot TEXT NOT NULL DEFAULT '',
+                notes_snapshot TEXT NOT NULL DEFAULT '',
+                amount_minor INTEGER NOT NULL,
+                UNIQUE(configurable_product_id, component_id)
+             );
+             CREATE INDEX IF NOT EXISTS idx_configurable_product_lines_product
+                ON configurable_product_lines(configurable_product_id, sort_order);
 
              CREATE TABLE IF NOT EXISTS trade_cases (
                 id TEXT PRIMARY KEY,
@@ -385,6 +434,207 @@ impl EncryptedDatabase {
         )
     }
 
+    pub fn list_config_components(&self) -> rusqlite::Result<Vec<ConfigComponent>> {
+        let mut statement = self.connection.prepare(
+            "SELECT id, code, category, name, specification, default_quantity, unit,
+                    unit_price_minor, currency, brand, notes, active
+             FROM config_components WHERE active = 1
+             ORDER BY category COLLATE NOCASE, code COLLATE NOCASE",
+        )?;
+        statement.query_map([], map_config_component)?.collect()
+    }
+
+    pub fn save_config_component(
+        &self,
+        input: ConfigComponentInput,
+    ) -> rusqlite::Result<ConfigComponent> {
+        require_text(&input.code)?;
+        require_text(&input.category)?;
+        require_text(&input.name)?;
+        require_text(&input.unit)?;
+        require_text(&input.currency)?;
+        if input.default_quantity <= 0.0 || input.unit_price_minor < 0 {
+            return Err(rusqlite::Error::InvalidQuery);
+        }
+        let id = input.id.unwrap_or_else(|| Uuid::new_v4().to_string());
+        self.connection.execute(
+            "INSERT INTO config_components(
+                id, code, category, name, specification, default_quantity, unit,
+                unit_price_minor, currency, brand, notes, active
+             ) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 1)
+             ON CONFLICT(id) DO UPDATE SET
+                code = excluded.code, category = excluded.category, name = excluded.name,
+                specification = excluded.specification, default_quantity = excluded.default_quantity,
+                unit = excluded.unit, unit_price_minor = excluded.unit_price_minor,
+                currency = excluded.currency, brand = excluded.brand, notes = excluded.notes,
+                active = 1",
+            params![
+                id,
+                input.code.trim(),
+                input.category.trim(),
+                input.name.trim(),
+                input.specification.trim(),
+                input.default_quantity,
+                input.unit.trim(),
+                input.unit_price_minor,
+                input.currency.trim().to_uppercase(),
+                input.brand.trim(),
+                input.notes.trim(),
+            ],
+        )?;
+        self.audit("config_component", &id, "save")?;
+        self.connection.query_row(
+            "SELECT id, code, category, name, specification, default_quantity, unit,
+                    unit_price_minor, currency, brand, notes, active
+             FROM config_components WHERE id = ?1",
+            params![id],
+            map_config_component,
+        )
+    }
+
+    pub fn list_configurable_products(&self) -> rusqlite::Result<Vec<ConfigurableProduct>> {
+        let ids = {
+            let mut statement = self.connection.prepare(
+                "SELECT id FROM configurable_products WHERE active = 1
+                 ORDER BY code COLLATE NOCASE",
+            )?;
+            statement
+                .query_map([], |row| row.get::<_, String>(0))?
+                .collect::<rusqlite::Result<Vec<_>>>()?
+        };
+        ids.iter()
+            .map(|id| self.get_configurable_product(id))
+            .collect()
+    }
+
+    pub fn get_configurable_product(&self, id: &str) -> rusqlite::Result<ConfigurableProduct> {
+        let mut product = self.connection.query_row(
+            "SELECT id, code, name, model, currency, notes, total_amount_minor, active
+             FROM configurable_products WHERE id = ?1",
+            params![id],
+            |row| {
+                Ok(ConfigurableProduct {
+                    id: row.get(0)?,
+                    code: row.get(1)?,
+                    name: row.get(2)?,
+                    model: row.get(3)?,
+                    currency: row.get(4)?,
+                    notes: row.get(5)?,
+                    total_amount_minor: row.get(6)?,
+                    active: row.get::<_, i64>(7)? != 0,
+                    lines: Vec::new(),
+                })
+            },
+        )?;
+        let mut statement = self.connection.prepare(
+            "SELECT id, component_id, category_snapshot, name_snapshot,
+                    specification_snapshot, quantity, unit_snapshot, unit_price_minor,
+                    brand_snapshot, notes_snapshot, amount_minor
+             FROM configurable_product_lines WHERE configurable_product_id = ?1
+             ORDER BY sort_order",
+        )?;
+        product.lines = statement
+            .query_map(params![id], map_configurable_product_line)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(product)
+    }
+
+    pub fn save_configurable_product(
+        &self,
+        input: ConfigurableProductInput,
+    ) -> rusqlite::Result<ConfigurableProduct> {
+        require_text(&input.code)?;
+        require_text(&input.name)?;
+        require_text(&input.currency)?;
+        if input.lines.is_empty() {
+            return Err(rusqlite::Error::InvalidQuery);
+        }
+        let id = input.id.unwrap_or_else(|| Uuid::new_v4().to_string());
+        let currency = input.currency.trim().to_uppercase();
+        let transaction = self.connection.unchecked_transaction()?;
+        transaction.execute(
+            "INSERT INTO configurable_products(
+                id, code, name, model, currency, notes, total_amount_minor, active
+             ) VALUES(?1, ?2, ?3, ?4, ?5, ?6, 0, 1)
+             ON CONFLICT(id) DO UPDATE SET code = excluded.code, name = excluded.name,
+                model = excluded.model, currency = excluded.currency, notes = excluded.notes,
+                active = 1",
+            params![
+                id,
+                input.code.trim(),
+                input.name.trim(),
+                input.model.trim(),
+                currency,
+                input.notes.trim(),
+            ],
+        )?;
+        transaction.execute(
+            "DELETE FROM configurable_product_lines WHERE configurable_product_id = ?1",
+            params![id],
+        )?;
+
+        let mut total_amount_minor = 0_i64;
+        for (index, line) in input.lines.iter().enumerate() {
+            require_text(&line.component_id)?;
+            if line.quantity <= 0.0 || line.unit_price_minor < 0 {
+                return Err(rusqlite::Error::InvalidQuery);
+            }
+            let (category, name, specification, unit, component_currency, brand, notes) =
+                transaction.query_row(
+                    "SELECT category, name, specification, unit, currency, brand, notes
+                     FROM config_components WHERE id = ?1",
+                    params![line.component_id],
+                    |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, String>(2)?,
+                            row.get::<_, String>(3)?,
+                            row.get::<_, String>(4)?,
+                            row.get::<_, String>(5)?,
+                            row.get::<_, String>(6)?,
+                        ))
+                    },
+                )?;
+            if component_currency != currency {
+                return Err(rusqlite::Error::InvalidQuery);
+            }
+            let amount_minor = (line.quantity * line.unit_price_minor as f64).round() as i64;
+            total_amount_minor = total_amount_minor
+                .checked_add(amount_minor)
+                .ok_or(rusqlite::Error::InvalidQuery)?;
+            transaction.execute(
+                "INSERT INTO configurable_product_lines(
+                    id, configurable_product_id, sort_order, component_id, category_snapshot,
+                    name_snapshot, specification_snapshot, quantity, unit_snapshot,
+                    unit_price_minor, brand_snapshot, notes_snapshot, amount_minor
+                 ) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                params![
+                    Uuid::new_v4().to_string(),
+                    id,
+                    index as i64,
+                    line.component_id,
+                    category,
+                    name,
+                    specification,
+                    line.quantity,
+                    unit,
+                    line.unit_price_minor,
+                    brand,
+                    notes,
+                    amount_minor,
+                ],
+            )?;
+        }
+        transaction.execute(
+            "UPDATE configurable_products SET total_amount_minor = ?2 WHERE id = ?1",
+            params![id, total_amount_minor],
+        )?;
+        transaction.commit()?;
+        self.audit("configurable_product", &id, "save")?;
+        self.get_configurable_product(&id)
+    }
+
     pub fn list_customers(&self) -> rusqlite::Result<Vec<Customer>> {
         let mut statement = self.connection.prepare(
             "SELECT id, code, legal_name, market, currency, payment_terms, address,
@@ -486,6 +736,8 @@ impl EncryptedDatabase {
     pub fn archive(&self, entity: &str, id: &str) -> rusqlite::Result<()> {
         let table = match entity {
             "product" => "products",
+            "config_component" => "config_components",
+            "configurable_product" => "configurable_products",
             "customer" => "customers",
             "supplier" => "suppliers",
             _ => return Err(rusqlite::Error::InvalidQuery),
@@ -1546,6 +1798,41 @@ impl EncryptedDatabase {
     }
 }
 
+fn map_config_component(row: &rusqlite::Row<'_>) -> rusqlite::Result<ConfigComponent> {
+    Ok(ConfigComponent {
+        id: row.get(0)?,
+        code: row.get(1)?,
+        category: row.get(2)?,
+        name: row.get(3)?,
+        specification: row.get(4)?,
+        default_quantity: row.get(5)?,
+        unit: row.get(6)?,
+        unit_price_minor: row.get(7)?,
+        currency: row.get(8)?,
+        brand: row.get(9)?,
+        notes: row.get(10)?,
+        active: row.get::<_, i64>(11)? != 0,
+    })
+}
+
+fn map_configurable_product_line(
+    row: &rusqlite::Row<'_>,
+) -> rusqlite::Result<ConfigurableProductLine> {
+    Ok(ConfigurableProductLine {
+        id: row.get(0)?,
+        component_id: row.get(1)?,
+        category: row.get(2)?,
+        name: row.get(3)?,
+        specification: row.get(4)?,
+        quantity: row.get(5)?,
+        unit: row.get(6)?,
+        unit_price_minor: row.get(7)?,
+        brand: row.get(8)?,
+        notes: row.get(9)?,
+        amount_minor: row.get(10)?,
+    })
+}
+
 fn map_milestone(row: &rusqlite::Row<'_>) -> rusqlite::Result<ProductionMilestone> {
     let status_value: String = row.get(8)?;
     let status = MilestoneStatus::from_db(&status_value).ok_or(rusqlite::Error::InvalidQuery)?;
@@ -1675,7 +1962,7 @@ fn json_error(error: serde_json::Error) -> rusqlite::Error {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::BusinessCaseLineInput;
+    use crate::domain::{BusinessCaseLineInput, ConfigurableProductLineInput};
 
     #[test]
     fn encrypted_database_persists_business_workflow() {
@@ -1695,6 +1982,60 @@ mod tests {
                     gross_weight_kg: 1.2,
                 })
                 .unwrap();
+            let oil_tank = database
+                .save_config_component(ConfigComponentInput {
+                    id: None,
+                    code: "COMP-OIL-200".into(),
+                    category: "润滑油系统".into(),
+                    name: "润滑油补给箱".into(),
+                    specification: "V=200L碳钢补油箱".into(),
+                    default_quantity: 1.0,
+                    unit: "套".into(),
+                    unit_price_minor: 545_400,
+                    currency: "CNY".into(),
+                    brand: "康达".into(),
+                    notes: String::new(),
+                })
+                .unwrap();
+            let silencer = database
+                .save_config_component(ConfigComponentInput {
+                    id: None,
+                    code: "COMP-EXHAUST-01".into(),
+                    category: "排气系统".into(),
+                    name: "消声器".into(),
+                    specification: "碳钢材质，含法兰".into(),
+                    default_quantity: 2.0,
+                    unit: "只".into(),
+                    unit_price_minor: 350_000,
+                    currency: "CNY".into(),
+                    brand: "康达".into(),
+                    notes: String::new(),
+                })
+                .unwrap();
+            let configured = database
+                .save_configurable_product(ConfigurableProductInput {
+                    id: None,
+                    code: "CFG-K38-G6".into(),
+                    name: "600KW天然气发电机组".into(),
+                    model: "K38N-G6".into(),
+                    currency: "CNY".into(),
+                    notes: "配置报价测试".into(),
+                    lines: vec![
+                        ConfigurableProductLineInput {
+                            component_id: oil_tank.id,
+                            quantity: 1.0,
+                            unit_price_minor: 545_400,
+                        },
+                        ConfigurableProductLineInput {
+                            component_id: silencer.id,
+                            quantity: 2.0,
+                            unit_price_minor: 350_000,
+                        },
+                    ],
+                })
+                .unwrap();
+            assert_eq!(configured.lines.len(), 2);
+            assert_eq!(configured.total_amount_minor, 1_245_400);
             let customer = database
                 .save_customer(CustomerInput {
                     id: None,
@@ -1933,6 +2274,10 @@ mod tests {
         let reopened =
             EncryptedDatabase::open(&path, Zeroizing::new("test-password".to_owned())).unwrap();
         assert_eq!(reopened.list_products().unwrap()[0].sku, "SKU-1");
+        assert_eq!(
+            reopened.list_configurable_products().unwrap()[0].total_amount_minor,
+            1_245_400
+        );
         let business_cases = reopened.list_business_cases().unwrap();
         assert_eq!(business_cases[0].number, "TD-2026-0001");
         assert_eq!(business_cases[0].lines[0].name_en, "Test product");
@@ -2001,7 +2346,7 @@ mod tests {
                     |row| row.get::<_, String>(0),
                 )
                 .unwrap(),
-            "6"
+            "7"
         );
         drop(database);
         let _ = std::fs::remove_file(&path);

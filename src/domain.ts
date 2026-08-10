@@ -22,6 +22,65 @@ export interface Product {
 
 export type ProductInput = Omit<Product, "active" | "id"> & { id?: string };
 
+export interface ConfigComponent {
+  id: string;
+  code: string;
+  category: string;
+  name: string;
+  specification: string;
+  defaultQuantity: number;
+  unit: string;
+  unitPriceMinor: number;
+  currency: string;
+  brand: string;
+  notes: string;
+  active: boolean;
+}
+
+export type ConfigComponentInput = Omit<ConfigComponent, "active" | "id"> & { id?: string };
+
+export interface ConfigurableProductLine {
+  id: string;
+  componentId: string;
+  category: string;
+  name: string;
+  specification: string;
+  quantity: number;
+  unit: string;
+  unitPriceMinor: number;
+  brand: string;
+  notes: string;
+  amountMinor: number;
+}
+
+export interface ConfigurableProductLineInput {
+  componentId: string;
+  quantity: number;
+  unitPriceMinor: number;
+}
+
+export interface ConfigurableProduct {
+  id: string;
+  code: string;
+  name: string;
+  model: string;
+  currency: string;
+  notes: string;
+  totalAmountMinor: number;
+  active: boolean;
+  lines: ConfigurableProductLine[];
+}
+
+export interface ConfigurableProductInput {
+  id?: string;
+  code: string;
+  name: string;
+  model: string;
+  currency: string;
+  notes: string;
+  lines: ConfigurableProductLineInput[];
+}
+
 export interface Customer {
   id: string;
   code: string;

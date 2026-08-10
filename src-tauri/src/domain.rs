@@ -254,6 +254,89 @@ pub struct ProductInput {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ConfigComponent {
+    pub id: String,
+    pub code: String,
+    pub category: String,
+    pub name: String,
+    pub specification: String,
+    pub default_quantity: f64,
+    pub unit: String,
+    pub unit_price_minor: i64,
+    pub currency: String,
+    pub brand: String,
+    pub notes: String,
+    pub active: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfigComponentInput {
+    pub id: Option<String>,
+    pub code: String,
+    pub category: String,
+    pub name: String,
+    pub specification: String,
+    pub default_quantity: f64,
+    pub unit: String,
+    pub unit_price_minor: i64,
+    pub currency: String,
+    pub brand: String,
+    pub notes: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfigurableProductLine {
+    pub id: String,
+    pub component_id: String,
+    pub category: String,
+    pub name: String,
+    pub specification: String,
+    pub quantity: f64,
+    pub unit: String,
+    pub unit_price_minor: i64,
+    pub brand: String,
+    pub notes: String,
+    pub amount_minor: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfigurableProductLineInput {
+    pub component_id: String,
+    pub quantity: f64,
+    pub unit_price_minor: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfigurableProduct {
+    pub id: String,
+    pub code: String,
+    pub name: String,
+    pub model: String,
+    pub currency: String,
+    pub notes: String,
+    pub total_amount_minor: i64,
+    pub active: bool,
+    pub lines: Vec<ConfigurableProductLine>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfigurableProductInput {
+    pub id: Option<String>,
+    pub code: String,
+    pub name: String,
+    pub model: String,
+    pub currency: String,
+    pub notes: String,
+    pub lines: Vec<ConfigurableProductLineInput>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Customer {
     pub id: String,
     pub code: String,

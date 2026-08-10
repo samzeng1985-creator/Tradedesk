@@ -9,7 +9,7 @@ import type {
   SupplierInput,
 } from "./domain";
 
-export type MasterTab = "products" | "customers" | "suppliers";
+export type MasterTab = "products" | "configurable" | "components" | "customers" | "suppliers";
 export type MasterRecord = Product | Customer | Supplier;
 export type MasterInput = ProductInput | CustomerInput | SupplierInput;
 

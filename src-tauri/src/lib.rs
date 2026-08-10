@@ -5,10 +5,11 @@ mod storage;
 use std::{path::PathBuf, sync::Mutex};
 
 use domain::{
-    BusinessCase, BusinessCaseInput, ConvertDocumentInput, CreateDocumentInput, Customer,
-    CustomerInput, DocumentExportResult, Product, ProductInput, ProductionMilestone,
-    ProductionMilestoneInput, PurchaseOrder, PurchaseOrderInput, PurchaseStatus, SaveDocumentInput,
-    Supplier, SupplierInput, TradeDocument, WorkspaceSummary,
+    BusinessCase, BusinessCaseInput, ConfigComponent, ConfigComponentInput, ConfigurableProduct,
+    ConfigurableProductInput, ConvertDocumentInput, CreateDocumentInput, Customer, CustomerInput,
+    DocumentExportResult, Product, ProductInput, ProductionMilestone, ProductionMilestoneInput,
+    PurchaseOrder, PurchaseOrderInput, PurchaseStatus, SaveDocumentInput, Supplier, SupplierInput,
+    TradeDocument, WorkspaceSummary,
 };
 use storage::EncryptedDatabase;
 use tauri::{Manager, State};
@@ -113,6 +114,34 @@ fn list_products(state: State<'_, AppState>) -> Result<Vec<Product>, String> {
 #[tauri::command]
 fn save_product(input: ProductInput, state: State<'_, AppState>) -> Result<Product, String> {
     with_database(state, |database| database.save_product(input))
+}
+
+#[tauri::command]
+fn list_config_components(state: State<'_, AppState>) -> Result<Vec<ConfigComponent>, String> {
+    with_database(state, EncryptedDatabase::list_config_components)
+}
+
+#[tauri::command]
+fn save_config_component(
+    input: ConfigComponentInput,
+    state: State<'_, AppState>,
+) -> Result<ConfigComponent, String> {
+    with_database(state, |database| database.save_config_component(input))
+}
+
+#[tauri::command]
+fn list_configurable_products(
+    state: State<'_, AppState>,
+) -> Result<Vec<ConfigurableProduct>, String> {
+    with_database(state, EncryptedDatabase::list_configurable_products)
+}
+
+#[tauri::command]
+fn save_configurable_product(
+    input: ConfigurableProductInput,
+    state: State<'_, AppState>,
+) -> Result<ConfigurableProduct, String> {
+    with_database(state, |database| database.save_configurable_product(input))
 }
 
 #[tauri::command]
@@ -325,6 +354,10 @@ pub fn run() {
             workspace_summary,
             list_products,
             save_product,
+            list_config_components,
+            save_config_component,
+            list_configurable_products,
+            save_configurable_product,
             list_customers,
             save_customer,
             list_suppliers,

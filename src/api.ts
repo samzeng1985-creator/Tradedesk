@@ -2,6 +2,10 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   BusinessCase,
   BusinessCaseInput,
+  ConfigComponent,
+  ConfigComponentInput,
+  ConfigurableProduct,
+  ConfigurableProductInput,
   ConvertDocumentInput,
   CreateDocumentInput,
   Customer,
@@ -52,11 +56,15 @@ export const documentApi = {
 export const masterApi = {
   listProducts: () => invoke<Product[]>("list_products"),
   saveProduct: (input: ProductInput) => invoke<Product>("save_product", { input }),
+  listConfigComponents: () => invoke<ConfigComponent[]>("list_config_components"),
+  saveConfigComponent: (input: ConfigComponentInput) => invoke<ConfigComponent>("save_config_component", { input }),
+  listConfigurableProducts: () => invoke<ConfigurableProduct[]>("list_configurable_products"),
+  saveConfigurableProduct: (input: ConfigurableProductInput) => invoke<ConfigurableProduct>("save_configurable_product", { input }),
   listCustomers: () => invoke<Customer[]>("list_customers"),
   saveCustomer: (input: CustomerInput) => invoke<Customer>("save_customer", { input }),
   listSuppliers: () => invoke<Supplier[]>("list_suppliers"),
   saveSupplier: (input: SupplierInput) => invoke<Supplier>("save_supplier", { input }),
-  archive: (entity: "product" | "customer" | "supplier", id: string) =>
+  archive: (entity: "product" | "config_component" | "configurable_product" | "customer" | "supplier", id: string) =>
     invoke<void>("archive_master", { entity, id }),
 };
 

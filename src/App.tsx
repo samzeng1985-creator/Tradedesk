@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { businessCaseApi, documentApi, fulfillmentApi, masterApi, workspaceApi } from "./api";
 import { BusinessCaseCenter } from "./BusinessCaseCenter";
+import { ComponentLibrary, ConfigurableProductLibrary } from "./ConfigurableProductCenter";
 import { DocumentCenter } from "./DocumentCenter";
 import { FulfillmentCenter } from "./FulfillmentCenter";
 import { MasterEditor } from "./MasterEditor";
@@ -9,6 +10,10 @@ import { UnlockScreen } from "./UnlockScreen";
 import type {
   BusinessCase,
   BusinessCaseInput,
+  ConfigComponent,
+  ConfigComponentInput,
+  ConfigurableProduct,
+  ConfigurableProductInput,
   ConvertDocumentInput,
   CreateDocumentInput,
   Customer,
@@ -94,6 +99,8 @@ export default function App() {
   const [view, setView] = useState<View>("overview");
   const [masterTab, setMasterTab] = useState<MasterTab>("products");
   const [products, setProducts] = useState<Product[]>([]);
+  const [configComponents, setConfigComponents] = useState<ConfigComponent[]>([]);
+  const [configurableProducts, setConfigurableProducts] = useState<ConfigurableProduct[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [businessCases, setBusinessCases] = useState<BusinessCase[]>([]);
@@ -111,8 +118,10 @@ export default function App() {
   }, []);
 
   async function loadMasterData() {
-    const [nextProducts, nextCustomers, nextSuppliers, nextCases, nextOrders, nextDocuments, summary] = await Promise.all([
+    const [nextProducts, nextComponents, nextConfigurations, nextCustomers, nextSuppliers, nextCases, nextOrders, nextDocuments, summary] = await Promise.all([
       masterApi.listProducts(),
+      masterApi.listConfigComponents(),
+      masterApi.listConfigurableProducts(),
       masterApi.listCustomers(),
       masterApi.listSuppliers(),
       businessCaseApi.list(),
@@ -121,6 +130,8 @@ export default function App() {
       workspaceApi.summary(),
     ]);
     setProducts(nextProducts);
+    setConfigComponents(nextComponents);
+    setConfigurableProducts(nextConfigurations);
     setCustomers(nextCustomers);
     setSuppliers(nextSuppliers);
     setBusinessCases(nextCases);
@@ -162,6 +173,21 @@ export default function App() {
   async function archiveMaster(entity: "product" | "customer" | "supplier", record: MasterRecord) {
     if (!window.confirm(`停用“${"sku" in record ? record.sku : record.legalName}”？历史资料不会被删除。`)) return;
     await masterApi.archive(entity, record.id);
+    await loadMasterData();
+  }
+
+  async function saveConfigComponent(input: ConfigComponentInput) {
+    await masterApi.saveConfigComponent(input);
+    await loadMasterData();
+  }
+
+  async function saveConfigurableProduct(input: ConfigurableProductInput) {
+    await masterApi.saveConfigurableProduct(input);
+    await loadMasterData();
+  }
+
+  async function archiveConfigMaster(entity: "config_component" | "configurable_product", id: string) {
+    await masterApi.archive(entity, id);
     await loadMasterData();
   }
 
@@ -295,7 +321,7 @@ export default function App() {
           <span className="brand-mark">TD</span>
           <span>
             <strong>TradeDesk</strong>
-            <small>Local · 0.7.0</small>
+            <small>Local · 0.8.0</small>
           </span>
         </div>
 
@@ -453,6 +479,12 @@ export default function App() {
               <button role="tab" aria-selected={masterTab === "products"} onClick={() => setMasterTab("products")}>
                 产品 {products.length}
               </button>
+              <button role="tab" aria-selected={masterTab === "configurable"} onClick={() => setMasterTab("configurable")}>
+                自选配置 {configurableProducts.length}
+              </button>
+              <button role="tab" aria-selected={masterTab === "components"} onClick={() => setMasterTab("components")}>
+                组件库 {configComponents.length}
+              </button>
               <button role="tab" aria-selected={masterTab === "customers"} onClick={() => setMasterTab("customers")}>
                 客户 {customers.length}
               </button>
@@ -461,7 +493,7 @@ export default function App() {
               </button>
             </div>
 
-            <div className="table-toolbar">
+            {(masterTab === "products" || masterTab === "customers" || masterTab === "suppliers") && <div className="table-toolbar">
               <label>
                 <span className="sr-only">搜索主数据</span>
                 <input
@@ -471,9 +503,9 @@ export default function App() {
                 />
               </label>
               <button className="button button-primary" onClick={() => openEditor()}>新建记录</button>
-            </div>
+            </div>}
 
-            <div className="table-wrap">
+            {(masterTab === "products" || masterTab === "customers" || masterTab === "suppliers") && <div className="table-wrap">
               {masterTab === "products" && (
                 <table>
                   <thead>
@@ -510,7 +542,9 @@ export default function App() {
                   </tbody>
                 </table>
               )}
-            </div>
+            </div>}
+            {masterTab === "configurable" && <ConfigurableProductLibrary configurations={configurableProducts} components={configComponents} onSave={saveConfigurableProduct} onArchive={(id) => archiveConfigMaster("configurable_product", id)} />}
+            {masterTab === "components" && <ComponentLibrary components={configComponents} onSave={saveConfigComponent} onArchive={(id) => archiveConfigMaster("config_component", id)} />}
           </section>
         )}
 
@@ -542,7 +576,7 @@ export default function App() {
           />
         )}
       </main>
-      {editorOpen && <MasterEditor tab={masterTab} record={editingRecord} saving={saving} onClose={() => setEditorOpen(false)} onSave={saveMaster} />}
+      {editorOpen && (masterTab === "products" || masterTab === "customers" || masterTab === "suppliers") && <MasterEditor tab={masterTab} record={editingRecord} saving={saving} onClose={() => setEditorOpen(false)} onSave={saveMaster} />}
     </div>
   );
 }
