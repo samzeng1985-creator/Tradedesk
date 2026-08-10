@@ -442,7 +442,10 @@ export type DocumentType =
   | "proforma_invoice"
   | "commercial_invoice"
   | "packing_list"
-  | "trade_contract";
+  | "trade_contract"
+  | "shipping_marks"
+  | "shipper_instruction"
+  | "customs_declaration";
 export type DocumentStatus = "draft" | "issued" | "voided";
 export type ValidationSeverity = "error" | "warning";
 
@@ -488,6 +491,14 @@ export interface DocumentPayload {
   notes: string;
   declaration: string;
   contractTerms: string;
+  shippingMarks: string;
+  transportMode: string;
+  vesselVoyage: string;
+  bookingReference: string;
+  freightTerms: string;
+  billOfLadingType: string;
+  customsSupervisionCode: string;
+  customsDeclarationElements: string;
   lines: DocumentLineSnapshot[];
 }
 

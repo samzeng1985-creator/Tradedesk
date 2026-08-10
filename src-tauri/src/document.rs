@@ -20,6 +20,11 @@ const COMMERCIAL_QUOTATION_TEMPLATE: &str =
 const PROFORMA_INVOICE_TEMPLATE: &str = include_str!("../../templates/base/proforma-invoice.typ");
 const PACKING_LIST_TEMPLATE: &str = include_str!("../../templates/base/packing-list.typ");
 const TRADE_CONTRACT_TEMPLATE: &str = include_str!("../../templates/base/trade-contract.typ");
+const SHIPPING_MARKS_TEMPLATE: &str = include_str!("../../templates/base/shipping-marks.typ");
+const SHIPPER_INSTRUCTION_TEMPLATE: &str =
+    include_str!("../../templates/base/shipper-instruction.typ");
+const CUSTOMS_DECLARATION_TEMPLATE: &str =
+    include_str!("../../templates/base/customs-declaration.typ");
 const CONFIGURATION_SHEET_TEMPLATE: &str =
     include_str!("../../templates/base/configuration-sheet.typ");
 
@@ -170,6 +175,7 @@ fn branded_json<T: Serialize>(value: &T, branding: BrandingPayload) -> Result<Ve
 
 pub fn validate(document: &TradeDocument) -> Vec<DocumentValidationIssue> {
     let mut issues = Vec::new();
+    let mut hs_warnings = Vec::new();
     let mut error = |code: &str, message: &str| {
         issues.push(DocumentValidationIssue {
             severity: ValidationSeverity::Error,
@@ -203,6 +209,13 @@ pub fn validate(document: &TradeDocument) -> Vec<DocumentValidationIssue> {
     {
         error("invalid_valid_until", "报价有效期不能早于签发日期");
     }
+    let packing_fields = matches!(
+        document.document_type,
+        DocumentType::PackingList
+            | DocumentType::ShippingMarks
+            | DocumentType::ShipperInstruction
+            | DocumentType::CustomsDeclaration
+    );
     for (index, line) in document.payload.lines.iter().enumerate() {
         if line.description.trim().is_empty() || line.quantity <= 0.0 || !line.quantity.is_finite()
         {
@@ -217,7 +230,7 @@ pub fn validate(document: &TradeDocument) -> Vec<DocumentValidationIssue> {
                 &format!("第 {} 行金额不能为负数", index + 1),
             );
         }
-        if document.document_type == DocumentType::PackingList {
+        if packing_fields {
             if line.packages <= 0 {
                 error(
                     "packages_required",
@@ -232,6 +245,24 @@ pub fn validate(document: &TradeDocument) -> Vec<DocumentValidationIssue> {
             }
         }
     }
+    if document.document_type == DocumentType::ShippingMarks
+        && document.payload.shipping_marks.trim().is_empty()
+    {
+        error("shipping_marks_required", "唛头内容不能为空");
+    }
+    if matches!(
+        document.document_type,
+        DocumentType::ShipperInstruction | DocumentType::CustomsDeclaration
+    ) && document.payload.transport_mode.trim().is_empty()
+    {
+        error("transport_mode_required", "运输方式不能为空");
+    }
+    if document.document_type == DocumentType::ShipperInstruction
+        && (document.payload.port_of_loading.trim().is_empty()
+            || document.payload.port_of_discharge.trim().is_empty())
+    {
+        error("ports_required", "货代委托书必须填写装运港和目的港");
+    }
     let subtotal = document
         .payload
         .lines
@@ -241,14 +272,24 @@ pub fn validate(document: &TradeDocument) -> Vec<DocumentValidationIssue> {
     if document.payload.discount_minor < 0 || document.payload.discount_minor > subtotal {
         error("invalid_discount", "折扣不能为负数或超过产品小计");
     }
-    if document.document_type != DocumentType::PackingList {
+    if !matches!(
+        document.document_type,
+        DocumentType::PackingList | DocumentType::ShippingMarks
+    ) {
         for (index, line) in document.payload.lines.iter().enumerate() {
             if line.hs_code.trim().is_empty() {
-                issues.push(DocumentValidationIssue {
-                    severity: ValidationSeverity::Warning,
-                    code: "hs_code_missing".to_owned(),
-                    message: format!("第 {} 行缺少 HS 编码", index + 1),
-                });
+                if document.document_type == DocumentType::CustomsDeclaration {
+                    error(
+                        "hs_code_missing",
+                        &format!("报关资料第 {} 行必须填写 HS 编码", index + 1),
+                    );
+                } else {
+                    hs_warnings.push(DocumentValidationIssue {
+                        severity: ValidationSeverity::Warning,
+                        code: "hs_code_missing".to_owned(),
+                        message: format!("第 {} 行缺少 HS 编码", index + 1),
+                    });
+                }
             }
         }
     }
@@ -261,13 +302,163 @@ pub fn validate(document: &TradeDocument) -> Vec<DocumentValidationIssue> {
             message: "形式发票尚未填写收款银行资料".to_owned(),
         });
     }
+    issues.extend(hs_warnings);
     issues
 }
 
 pub fn has_blocking_errors(document: &TradeDocument) -> bool {
     validate(document)
         .iter()
+        .chain(document.validation_issues.iter())
         .any(|issue| issue.severity == ValidationSeverity::Error)
+}
+
+pub fn cross_validate(
+    document: &TradeDocument,
+    peers: &[TradeDocument],
+) -> Vec<DocumentValidationIssue> {
+    let peer = |document_type: DocumentType| {
+        peers.iter().find(|item| {
+            item.id != document.id
+                && item.business_case_id == document.business_case_id
+                && item.document_type == document_type
+                && item.status != crate::domain::DocumentStatus::Voided
+        })
+    };
+    let mut pairs = Vec::new();
+    match document.document_type {
+        DocumentType::CommercialInvoice => {
+            if let Some(item) = peer(DocumentType::PackingList) {
+                pairs.push((item, false, false));
+            }
+            if let Some(item) = peer(DocumentType::CustomsDeclaration) {
+                pairs.push((item, true, true));
+            }
+        }
+        DocumentType::PackingList => {
+            if let Some(item) = peer(DocumentType::CommercialInvoice) {
+                pairs.push((item, false, false));
+            }
+            if let Some(item) = peer(DocumentType::ShipperInstruction) {
+                pairs.push((item, true, false));
+            }
+            if let Some(item) = peer(DocumentType::ShippingMarks) {
+                pairs.push((item, false, false));
+            }
+            if let Some(item) = peer(DocumentType::CustomsDeclaration) {
+                pairs.push((item, true, false));
+            }
+        }
+        DocumentType::CustomsDeclaration => {
+            if let Some(item) = peer(DocumentType::CommercialInvoice) {
+                pairs.push((item, false, true));
+            }
+            if let Some(item) = peer(DocumentType::PackingList) {
+                pairs.push((item, true, false));
+            }
+        }
+        DocumentType::ShipperInstruction | DocumentType::ShippingMarks => {
+            if let Some(item) = peer(DocumentType::PackingList) {
+                pairs.push((
+                    item,
+                    document.document_type == DocumentType::ShipperInstruction,
+                    false,
+                ));
+            }
+        }
+        _ => {}
+    }
+    let mut issues = Vec::new();
+    for (other, compare_weight, compare_amount) in pairs {
+        compare_document_pair(document, other, compare_weight, compare_amount, &mut issues);
+    }
+    issues
+}
+
+fn compare_document_pair(
+    document: &TradeDocument,
+    other: &TradeDocument,
+    compare_weight: bool,
+    compare_amount: bool,
+    issues: &mut Vec<DocumentValidationIssue>,
+) {
+    let quantities = |value: &TradeDocument| {
+        let mut totals = std::collections::HashMap::<String, f64>::new();
+        for line in &value.payload.lines {
+            *totals.entry(line.product_id.clone()).or_default() += line.quantity;
+        }
+        totals
+    };
+    let current_quantities = quantities(document);
+    let other_quantities = quantities(other);
+    if current_quantities.len() != other_quantities.len()
+        || current_quantities.iter().any(|(product_id, quantity)| {
+            (other_quantities
+                .get(product_id)
+                .copied()
+                .unwrap_or_default()
+                - quantity)
+                .abs()
+                > 0.000_001
+        })
+    {
+        issues.push(DocumentValidationIssue {
+            severity: ValidationSeverity::Error,
+            code: "cross_document_quantity_mismatch".to_owned(),
+            message: format!("与单证 {} 的产品数量不一致，请核对后再签发", other.number),
+        });
+    }
+    if compare_weight {
+        let weights = |value: &TradeDocument| {
+            value.payload.lines.iter().fold((0.0, 0.0), |sum, line| {
+                (sum.0 + line.net_weight_kg, sum.1 + line.gross_weight_kg)
+            })
+        };
+        let current = weights(document);
+        let compared = weights(other);
+        if (current.0 - compared.0).abs() > 0.001 || (current.1 - compared.1).abs() > 0.001 {
+            issues.push(DocumentValidationIssue {
+                severity: ValidationSeverity::Error,
+                code: "cross_document_weight_mismatch".to_owned(),
+                message: format!("与单证 {} 的净重或毛重不一致", other.number),
+            });
+        }
+    }
+    if compare_amount {
+        let amount = |value: &TradeDocument| {
+            value
+                .payload
+                .lines
+                .iter()
+                .map(|line| line.amount_minor)
+                .sum::<i64>()
+                - value.payload.discount_minor
+        };
+        if document.currency != other.currency || amount(document) != amount(other) {
+            issues.push(DocumentValidationIssue {
+                severity: ValidationSeverity::Error,
+                code: "cross_document_amount_mismatch".to_owned(),
+                message: format!("与单证 {} 的币种或申报总额不一致", other.number),
+            });
+        }
+        for line in &document.payload.lines {
+            if let Some(other_line) = other
+                .payload
+                .lines
+                .iter()
+                .find(|item| item.product_id == line.product_id)
+                && !line.hs_code.trim().is_empty()
+                && !other_line.hs_code.trim().is_empty()
+                && line.hs_code.trim() != other_line.hs_code.trim()
+            {
+                issues.push(DocumentValidationIssue {
+                    severity: ValidationSeverity::Error,
+                    code: "cross_document_hs_mismatch".to_owned(),
+                    message: format!("产品 {} 与单证 {} 的 HS 编码不一致", line.sku, other.number),
+                });
+            }
+        }
+    }
 }
 
 pub fn export_pdf(
@@ -317,6 +508,24 @@ pub fn export_csv(document: &TradeDocument, output_dir: &Path) -> Result<PathBuf
     fs::create_dir_all(output_dir).map_err(|error| format!("无法创建单证导出目录：{error}"))?;
     let output_path = output_dir.join(format!("{}.csv", export_stem(document)));
     let mut rows = vec![
+        "document_type,document_number,business_case,issue_date,currency,transport_mode,vessel_voyage,booking_reference,freight_terms,bill_of_lading_type,shipping_marks,customs_supervision_code,customs_declaration_elements".to_owned(),
+        [
+            csv(document.document_type.as_str()),
+            csv(&document.number),
+            csv(&document.business_case_number),
+            csv(&document.issue_date),
+            csv(&document.currency),
+            csv(&document.payload.transport_mode),
+            csv(&document.payload.vessel_voyage),
+            csv(&document.payload.booking_reference),
+            csv(&document.payload.freight_terms),
+            csv(&document.payload.bill_of_lading_type),
+            csv(&document.payload.shipping_marks),
+            csv(&document.payload.customs_supervision_code),
+            csv(&document.payload.customs_declaration_elements),
+        ]
+        .join(","),
+        String::new(),
         "line,sku,description,model,hs_code,quantity,unit,unit_price,amount,packages,package_type,net_weight_kg,gross_weight_kg,cbm".to_owned(),
     ];
     for (index, line) in document.payload.lines.iter().enumerate() {
@@ -677,6 +886,9 @@ fn template(document: &TradeDocument) -> &'static str {
         DocumentType::CommercialInvoice => COMMERCIAL_INVOICE_TEMPLATE,
         DocumentType::PackingList => PACKING_LIST_TEMPLATE,
         DocumentType::TradeContract => TRADE_CONTRACT_TEMPLATE,
+        DocumentType::ShippingMarks => SHIPPING_MARKS_TEMPLATE,
+        DocumentType::ShipperInstruction => SHIPPER_INSTRUCTION_TEMPLATE,
+        DocumentType::CustomsDeclaration => CUSTOMS_DECLARATION_TEMPLATE,
     }
 }
 
@@ -687,6 +899,9 @@ fn export_stem(document: &TradeDocument) -> String {
         DocumentType::CommercialInvoice => "CommercialInvoice",
         DocumentType::PackingList => "PackingList",
         DocumentType::TradeContract => "TradeContract",
+        DocumentType::ShippingMarks => "ShippingMarks",
+        DocumentType::ShipperInstruction => "ShipperInstruction",
+        DocumentType::CustomsDeclaration => "CustomsDeclaration",
     };
     let raw = format!(
         "{}_{}_{}_V{}_{}",

@@ -138,6 +138,9 @@ pub enum DocumentType {
     CommercialInvoice,
     PackingList,
     TradeContract,
+    ShippingMarks,
+    ShipperInstruction,
+    CustomsDeclaration,
 }
 
 impl DocumentType {
@@ -148,6 +151,9 @@ impl DocumentType {
             Self::CommercialInvoice => "commercial_invoice",
             Self::PackingList => "packing_list",
             Self::TradeContract => "trade_contract",
+            Self::ShippingMarks => "shipping_marks",
+            Self::ShipperInstruction => "shipper_instruction",
+            Self::CustomsDeclaration => "customs_declaration",
         }
     }
 
@@ -158,6 +164,9 @@ impl DocumentType {
             "commercial_invoice" => Some(Self::CommercialInvoice),
             "packing_list" => Some(Self::PackingList),
             "trade_contract" => Some(Self::TradeContract),
+            "shipping_marks" => Some(Self::ShippingMarks),
+            "shipper_instruction" => Some(Self::ShipperInstruction),
+            "customs_declaration" => Some(Self::CustomsDeclaration),
             _ => None,
         }
     }
@@ -239,6 +248,22 @@ pub struct DocumentPayload {
     pub notes: String,
     pub declaration: String,
     pub contract_terms: String,
+    #[serde(default)]
+    pub shipping_marks: String,
+    #[serde(default)]
+    pub transport_mode: String,
+    #[serde(default)]
+    pub vessel_voyage: String,
+    #[serde(default)]
+    pub booking_reference: String,
+    #[serde(default)]
+    pub freight_terms: String,
+    #[serde(default)]
+    pub bill_of_lading_type: String,
+    #[serde(default)]
+    pub customs_supervision_code: String,
+    #[serde(default)]
+    pub customs_declaration_elements: String,
     pub lines: Vec<DocumentLineSnapshot>,
 }
 

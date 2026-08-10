@@ -39,6 +39,9 @@ const typeLabels: Record<DocumentType, string> = {
   commercial_invoice: "商业发票",
   packing_list: "详细装箱单",
   trade_contract: "外贸合同",
+  shipping_marks: "运输唛头",
+  shipper_instruction: "发货人委托书",
+  customs_declaration: "报关资料",
 };
 
 const statusLabels: Record<DocumentStatus, string> = {
@@ -53,6 +56,9 @@ const prefixes: Record<DocumentType, string> = {
   commercial_invoice: "INV",
   packing_list: "PKL",
   trade_contract: "CT",
+  shipping_marks: "MARK",
+  shipper_instruction: "SI",
+  customs_declaration: "CUS",
 };
 
 const documentTypes: DocumentType[] = [
@@ -61,6 +67,9 @@ const documentTypes: DocumentType[] = [
   "trade_contract",
   "commercial_invoice",
   "packing_list",
+  "shipping_marks",
+  "shipper_instruction",
+  "customs_declaration",
 ];
 
 function nextNumber(documents: TradeDocument[], type: DocumentType, issueDate = todayIso()) {
@@ -85,6 +94,10 @@ function money(value: number, currency: string) {
 function numberValue(value: string) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function canConvertDocument(type: DocumentType) {
+  return ["commercial_quotation", "proforma_invoice", "commercial_invoice", "packing_list"].includes(type);
 }
 
 function CreateDocumentModal({
@@ -143,7 +156,11 @@ function ConvertDocumentModal({ source, documents, onClose, onConvert }: {
 }) {
   const targets: DocumentType[] = source.documentType === "commercial_quotation"
     ? ["proforma_invoice", "trade_contract"]
-    : ["trade_contract", "commercial_invoice"];
+    : source.documentType === "proforma_invoice"
+      ? ["trade_contract", "commercial_invoice"]
+      : source.documentType === "commercial_invoice"
+        ? ["packing_list", "shipping_marks", "shipper_instruction", "customs_declaration"]
+        : ["shipping_marks", "shipper_instruction", "customs_declaration"];
   const [target, setTarget] = useState<DocumentType>(targets[0]);
   const [number, setNumber] = useState(nextNumber(documents, targets[0]));
   const [issueDate, setIssueDate] = useState(todayIso());
@@ -182,15 +199,17 @@ function ConvertDocumentModal({ source, documents, onClose, onConvert }: {
 function Preview({ document, payload, company, signingAsset }: { document: TradeDocument; payload: DocumentPayload; company?: CompanyRecord; signingAsset?: CompanySigningAsset }) {
   const total = payload.lines.reduce((sum, line) => sum + line.amountMinor, 0);
   const payable = total - payload.discountMinor;
-  const packing = document.documentType === "packing_list";
+  const packing = ["packing_list", "shipping_marks", "shipper_instruction", "customs_declaration"].includes(document.documentType);
   const contract = document.documentType === "trade_contract";
   const quotation = document.documentType === "commercial_quotation";
   const proforma = document.documentType === "proforma_invoice";
-  const title = contract ? "SALES CONTRACT" : packing ? "DETAILED PACKING LIST" : quotation ? "COMMERCIAL QUOTATION" : proforma ? "PROFORMA INVOICE" : "COMMERCIAL INVOICE";
+  const title = document.documentType === "shipping_marks" ? "SHIPPING MARKS" : document.documentType === "shipper_instruction" ? "SHIPPER'S INSTRUCTION" : document.documentType === "customs_declaration" ? "CUSTOMS DECLARATION DATA" : contract ? "SALES CONTRACT" : packing ? "DETAILED PACKING LIST" : quotation ? "COMMERCIAL QUOTATION" : proforma ? "PROFORMA INVOICE" : "COMMERCIAL INVOICE";
   return <div className="document-paper landscape">
     <header>{company?.logoDataUrl && <img className="preview-logo" src={company.logoDataUrl} alt="公司 Logo" />}<h2>{title}</h2><p>{typeLabels[document.documentType]} · {document.number} · V{document.version}</p>{document.status === "draft" && <strong>DRAFT / 草稿</strong>}</header>
     <div className="preview-parties"><div><b>{packing ? "SHIPPER" : "SELLER / EXPORTER"}</b><span>{payload.seller}</span><small>{payload.sellerAddress}</small></div><div><b>{packing ? "CONSIGNEE" : "BUYER / CONSIGNEE"}</b><span>{payload.buyer}</span><small>{payload.buyerAddress}</small></div></div>
     <div className="preview-meta"><span><b>No.</b>{document.number}</span><span><b>Date</b>{document.issueDate}</span><span><b>Reference</b>{document.businessCaseNumber}</span><span><b>Incoterm</b>{payload.incoterm}</span>{quotation ? <span><b>Valid until</b>{payload.validUntil}</span> : <><span><b>Loading</b>{payload.portOfLoading}</span><span><b>Discharge</b>{payload.portOfDischarge}</span></>}</div>
+    {document.documentType === "shipping_marks" && <section><h3>SHIPPING MARKS</h3><p>{payload.shippingMarks}</p></section>}
+    {(document.documentType === "shipper_instruction" || document.documentType === "customs_declaration") && <div className="preview-meta"><span><b>Transport</b>{payload.transportMode}</span><span><b>Vessel / Voyage</b>{payload.vesselVoyage || "—"}</span>{document.documentType === "shipper_instruction" ? <><span><b>Booking</b>{payload.bookingReference || "—"}</span><span><b>Freight / B/L</b>{payload.freightTerms} / {payload.billOfLadingType}</span></> : <><span><b>Supervision</b>{payload.customsSupervisionCode || "—"}</span><span><b>Declaration</b>{payload.customsDeclarationElements || "—"}</span></>}</div>}
     <table><thead><tr><th>No.</th><th>SKU / Description</th><th>Qty</th>{packing ? <><th>Packages</th><th>Net kg</th><th>Gross kg</th><th>CBM</th></> : <><th>Unit price</th><th>Amount</th></>}</tr></thead><tbody>{payload.lines.map((line, index) => <tr key={`${line.productId}-${index}`}><td>{index + 1}</td><td><b>{line.sku}</b> · {line.description}{line.model && <small> · {line.model}</small>}</td><td>{line.quantity} {line.unit}</td>{packing ? <><td>{line.packages} {line.packageType}</td><td>{line.netWeightKg}</td><td>{line.grossWeightKg}</td><td>{line.cbm}</td></> : <><td>{money(line.unitPriceMinor, document.currency)}</td><td>{money(line.amountMinor, document.currency)}</td></>}</tr>)}</tbody>{!packing && <tfoot><tr><td colSpan={4}>TOTAL</td><td>{money(payable, document.currency)}</td></tr></tfoot>}</table>
     {!packing && payload.discountMinor > 0 && <section><h3>DISCOUNT</h3><p>{money(payload.discountMinor, document.currency)} · Total after discount: {money(payable, document.currency)}</p></section>}
     {contract && <section><h3>GENERAL TERMS</h3><p>{payload.contractTerms || "General trade terms shall be confirmed in writing by both parties."}</p></section>}
@@ -241,9 +260,13 @@ function DocumentEditor({ initial, companyRegistry, onClose, onSave, onIssue, on
   const selectedCompany = companyRegistry?.companies.find((item) => item.id === companyId) ?? companyRegistry?.companies[0];
   const selectedAsset = selectedCompany?.signingAssets.find((item) => item.id === signingAssetId);
   const editable = document.status === "draft";
-  const packing = document.documentType === "packing_list";
+  const packing = ["packing_list", "shipping_marks", "shipper_instruction", "customs_declaration"].includes(document.documentType);
   const quotation = document.documentType === "commercial_quotation";
   const invoiceLike = document.documentType === "commercial_invoice" || document.documentType === "proforma_invoice";
+  const shippingMarks = document.documentType === "shipping_marks";
+  const shipperInstruction = document.documentType === "shipper_instruction";
+  const customsDeclaration = document.documentType === "customs_declaration";
+  const amountDocument = !["packing_list", "shipping_marks", "shipper_instruction"].includes(document.documentType);
   const setPayloadField = (patch: Partial<DocumentPayload>) => setPayload((current) => ({ ...current, ...patch }));
   const draftInput = (): SaveDocumentInput => ({ id: document.id, number, issueDate, language, payload });
 
@@ -359,8 +382,9 @@ function DocumentEditor({ initial, companyRegistry, onClose, onSave, onIssue, on
         <fieldset disabled={!editable}><div className="form-grid two-columns"><label>单证编号<input value={number} onChange={(event) => setNumber(event.target.value)} /></label><label>签发日期<input type="date" value={issueDate} onChange={(event) => setIssueDate(event.target.value)} /></label><label>输出语言<select value={language} onChange={(event) => setLanguage(event.target.value)}><option value="zh_en">中英双语</option><option value="en">英文</option><option value="ru">俄文</option></select></label><label>来源业务单<input value={document.businessCaseNumber} readOnly /></label></div>
         <h3>买卖双方</h3><div className="form-grid two-columns"><label>卖方/出口商<input value={payload.seller} onChange={(event) => setPayloadField({ seller: event.target.value })} /></label><label>买方/收货人<input value={payload.buyer} onChange={(event) => setPayloadField({ buyer: event.target.value })} /></label><label>卖方地址<textarea value={payload.sellerAddress} onChange={(event) => setPayloadField({ sellerAddress: event.target.value })} /></label><label>买方地址<textarea value={payload.buyerAddress} onChange={(event) => setPayloadField({ buyerAddress: event.target.value })} /></label></div>
         <h3>贸易与运输</h3><div className="form-grid two-columns"><label>原产国<input value={payload.originCountry} onChange={(event) => setPayloadField({ originCountry: event.target.value })} /></label><label>目的国<input value={payload.destinationCountry} onChange={(event) => setPayloadField({ destinationCountry: event.target.value })} /></label><label>装运港<input value={payload.portOfLoading} onChange={(event) => setPayloadField({ portOfLoading: event.target.value })} /></label><label>目的港<input value={payload.portOfDischarge} onChange={(event) => setPayloadField({ portOfDischarge: event.target.value })} /></label><label>贸易术语<input value={payload.incoterm} onChange={(event) => setPayloadField({ incoterm: event.target.value })} /></label><label>付款条款<input value={payload.paymentTerms} onChange={(event) => setPayloadField({ paymentTerms: event.target.value })} /></label><label>装运日期<input type="date" value={payload.shipmentDate} onChange={(event) => setPayloadField({ shipmentDate: event.target.value })} /></label><label>客户 PO<input value={payload.poReference} onChange={(event) => setPayloadField({ poReference: event.target.value })} /></label>{quotation && <label>报价有效期<input type="date" value={payload.validUntil} onChange={(event) => setPayloadField({ validUntil: event.target.value })} /></label>}</div>
+        {(shippingMarks || shipperInstruction || customsDeclaration) && <><h3>履约资料</h3><div className="form-grid two-columns">{shippingMarks && <label className="field-wide">正唛内容<textarea rows={4} value={payload.shippingMarks} onChange={(event) => setPayloadField({ shippingMarks: event.target.value })} /></label>}{(shipperInstruction || customsDeclaration) && <label>运输方式<input value={payload.transportMode} onChange={(event) => setPayloadField({ transportMode: event.target.value })} /></label>}{(shipperInstruction || customsDeclaration) && <label>船名/航次<input value={payload.vesselVoyage} onChange={(event) => setPayloadField({ vesselVoyage: event.target.value })} /></label>}{shipperInstruction && <label>订舱参考号<input value={payload.bookingReference} onChange={(event) => setPayloadField({ bookingReference: event.target.value })} /></label>}{shipperInstruction && <label>运费条款<input value={payload.freightTerms} onChange={(event) => setPayloadField({ freightTerms: event.target.value })} /></label>}{shipperInstruction && <label>提单类型<input value={payload.billOfLadingType} onChange={(event) => setPayloadField({ billOfLadingType: event.target.value })} /></label>}{customsDeclaration && <label>监管方式代码<input value={payload.customsSupervisionCode} onChange={(event) => setPayloadField({ customsSupervisionCode: event.target.value })} /></label>}{customsDeclaration && <label className="field-wide">申报要素<input value={payload.customsDeclarationElements} onChange={(event) => setPayloadField({ customsDeclarationElements: event.target.value })} placeholder="品牌、用途、材质、规格等" /></label>}</div></>}
         <h3>产品明细</h3><div className="document-lines">{payload.lines.map((line, index) => <LineEditor line={line} packing={packing} onChange={(updated) => setPayloadField({ lines: payload.lines.map((item, itemIndex) => itemIndex === index ? updated : item) })} key={`${line.productId}-${index}`} />)}</div>
-        {!packing && <label>折扣金额（{document.currency}）<input type="number" min="0" step="0.01" value={(payload.discountMinor / 100).toFixed(2)} onChange={(event) => setPayloadField({ discountMinor: Math.round(numberValue(event.target.value) * 100) })} /></label>}
+        {amountDocument && <label>折扣金额（{document.currency}）<input type="number" min="0" step="0.01" value={(payload.discountMinor / 100).toFixed(2)} onChange={(event) => setPayloadField({ discountMinor: Math.round(numberValue(event.target.value) * 100) })} /></label>}
         {invoiceLike && <label>银行资料<textarea rows={3} value={payload.bankDetails} onChange={(event) => setPayloadField({ bankDetails: event.target.value })} /></label>}
         {document.documentType === "trade_contract" && <label>合同通用条款<textarea rows={6} value={payload.contractTerms} onChange={(event) => setPayloadField({ contractTerms: event.target.value })} /></label>}
         <label>备注<textarea rows={4} value={payload.notes} onChange={(event) => setPayloadField({ notes: event.target.value })} /></label></fieldset>
@@ -410,7 +434,7 @@ export function DocumentCenter(props: DocumentCenterProps) {
     {!props.cases.length && <div className="empty-callout">请先建立报价阶段的业务单，再生成报价、形式发票、合同及出货单证。</div>}
     {message && <div className="document-message">{message}</div>}
     <div className="document-filters"><input placeholder="搜索单号、业务单或客户" value={query} onChange={(event) => setQuery(event.target.value)} /><select value={type} onChange={(event) => setType(event.target.value as typeof type)}><option value="all">全部类型</option>{documentTypes.map((item) => <option value={item} key={item}>{typeLabels[item]}</option>)}</select><select value={status} onChange={(event) => setStatus(event.target.value as typeof status)}><option value="all">全部状态</option><option value="draft">草稿</option><option value="issued">已签发</option><option value="voided">已作废</option></select><span>{filtered.length} 个版本</span></div>
-    <div className="document-history-list">{filtered.map((document) => <article className="document-history-card" key={document.id}><div className="document-type-mark">{prefixes[document.documentType]}</div><div className="document-history-main"><span className="eyebrow">{typeLabels[document.documentType]} · {document.businessCaseNumber}</span><h3>{document.number} <small>V{document.version}</small></h3><p>{document.customerName} · {document.issueDate} · 模板 {document.templateVersion}</p><div className="document-chips"><span className={`document-status ${document.status}`}>{statusLabels[document.status]}</span>{document.validationIssues.filter((item) => item.severity === "error").length > 0 && <span className="validation-chip">{document.validationIssues.filter((item) => item.severity === "error").length} 个错误</span>}{document.pdfSha256 && <span>PDF {document.pdfSha256.slice(0, 10)}…</span>}</div></div><div className="document-card-actions"><button onClick={() => setEditing(document)}>{document.status === "draft" ? "编辑" : "查看"}</button>{document.pdfPath && <button onClick={() => void props.onOpenPdf(document.id)}>打开 PDF</button>}{document.status === "issued" && (document.documentType === "commercial_quotation" || document.documentType === "proforma_invoice") && <button onClick={() => setConverting(document)}>转换单证</button>}{document.status === "issued" && <button onClick={() => void newVersion(document)}>创建新版本</button>}{document.status === "issued" && <button className="danger-link" onClick={() => void voidDocument(document)}>作废</button>}</div></article>)}</div>
+    <div className="document-history-list">{filtered.map((document) => <article className="document-history-card" key={document.id}><div className="document-type-mark">{prefixes[document.documentType]}</div><div className="document-history-main"><span className="eyebrow">{typeLabels[document.documentType]} · {document.businessCaseNumber}</span><h3>{document.number} <small>V{document.version}</small></h3><p>{document.customerName} · {document.issueDate} · 模板 {document.templateVersion}</p><div className="document-chips"><span className={`document-status ${document.status}`}>{statusLabels[document.status]}</span>{document.validationIssues.filter((item) => item.severity === "error").length > 0 && <span className="validation-chip">{document.validationIssues.filter((item) => item.severity === "error").length} 个错误</span>}{document.pdfSha256 && <span>PDF {document.pdfSha256.slice(0, 10)}…</span>}</div></div><div className="document-card-actions"><button onClick={() => setEditing(document)}>{document.status === "draft" ? "编辑" : "查看"}</button>{document.pdfPath && <button onClick={() => void props.onOpenPdf(document.id)}>打开 PDF</button>}{document.status === "issued" && canConvertDocument(document.documentType) && <button onClick={() => setConverting(document)}>转换单证</button>}{document.status === "issued" && <button onClick={() => void newVersion(document)}>创建新版本</button>}{document.status === "issued" && <button className="danger-link" onClick={() => void voidDocument(document)}>作废</button>}</div></article>)}</div>
     {!filtered.length && <div className="empty-table">{props.documents.length ? "没有符合筛选条件的单证" : "还没有历史单证，可从业务单生成第一份草稿"}</div>}
     {creating && <CreateDocumentModal documents={props.documents} cases={props.cases} onClose={() => setCreating(false)} onCreate={create} />}
     {converting && <ConvertDocumentModal source={converting} documents={props.documents} onClose={() => setConverting(null)} onConvert={convert} />}

@@ -2291,6 +2291,16 @@ impl EncryptedDatabase {
     }
 
     pub fn list_documents(&self) -> rusqlite::Result<Vec<TradeDocument>> {
+        let mut documents = self.list_documents_raw()?;
+        let peers = documents.clone();
+        for document in &mut documents {
+            let issues = crate::document::cross_validate(document, &peers);
+            document.validation_issues.extend(issues);
+        }
+        Ok(documents)
+    }
+
+    fn list_documents_raw(&self) -> rusqlite::Result<Vec<TradeDocument>> {
         let mut statement = self.connection.prepare(
             "SELECT id, document_type, number, trade_case_id, trade_case_number_snapshot,
                     customer_name_snapshot, version, status, language, issue_date, currency,
@@ -2302,6 +2312,14 @@ impl EncryptedDatabase {
     }
 
     pub fn get_document(&self, id: &str) -> rusqlite::Result<TradeDocument> {
+        let mut document = self.get_document_raw(id)?;
+        let peers = self.list_documents_raw()?;
+        let issues = crate::document::cross_validate(&document, &peers);
+        document.validation_issues.extend(issues);
+        Ok(document)
+    }
+
+    fn get_document_raw(&self, id: &str) -> rusqlite::Result<TradeDocument> {
         self.connection.query_row(
             "SELECT id, document_type, number, trade_case_id, trade_case_number_snapshot,
                     customer_name_snapshot, version, status, language, issue_date, currency,
@@ -2343,7 +2361,10 @@ impl EncryptedDatabase {
                 },
             )?;
         let preferred_buyer_address = match &input.document_type {
-            DocumentType::PackingList => &shipping_address,
+            DocumentType::PackingList
+            | DocumentType::ShippingMarks
+            | DocumentType::ShipperInstruction
+            | DocumentType::CustomsDeclaration => &shipping_address,
             DocumentType::CommercialInvoice | DocumentType::ProformaInvoice => &billing_address,
             _ => &customer_address,
         };
@@ -2411,6 +2432,17 @@ impl EncryptedDatabase {
             declaration: "We certify that the information in this document is true and correct."
                 .to_owned(),
             contract_terms: String::new(),
+            shipping_marks: format!(
+                "{} / {} / MADE IN CHINA",
+                business_case.customer_name, business_case.number
+            ),
+            transport_mode: "Sea".to_owned(),
+            vessel_voyage: String::new(),
+            booking_reference: String::new(),
+            freight_terms: "Freight Prepaid".to_owned(),
+            bill_of_lading_type: "Original B/L".to_owned(),
+            customs_supervision_code: String::new(),
+            customs_declaration_elements: String::new(),
             lines,
         };
         let payload_json = serde_json::to_string(&payload).map_err(json_error)?;
@@ -2453,6 +2485,17 @@ impl EncryptedDatabase {
                 ) | (
                     DocumentType::ProformaInvoice,
                     DocumentType::TradeContract | DocumentType::CommercialInvoice
+                ) | (
+                    DocumentType::CommercialInvoice,
+                    DocumentType::PackingList
+                        | DocumentType::ShippingMarks
+                        | DocumentType::ShipperInstruction
+                        | DocumentType::CustomsDeclaration
+                ) | (
+                    DocumentType::PackingList,
+                    DocumentType::ShippingMarks
+                        | DocumentType::ShipperInstruction
+                        | DocumentType::CustomsDeclaration
                 )
             )
         {
@@ -2589,7 +2632,11 @@ impl EncryptedDatabase {
                     params![document.business_case_id],
                 )?;
             }
-            DocumentType::CommercialInvoice | DocumentType::PackingList => {
+            DocumentType::CommercialInvoice
+            | DocumentType::PackingList
+            | DocumentType::ShippingMarks
+            | DocumentType::ShipperInstruction
+            | DocumentType::CustomsDeclaration => {
                 transaction.execute(
                     "UPDATE trade_cases SET stage = 'documents' WHERE id = ?1",
                     params![document.business_case_id],
@@ -3607,7 +3654,9 @@ mod tests {
                     std::fs::copy(&export.path, output).unwrap();
                 }
                 let csv = crate::document::export_csv(&issued, &output_dir).unwrap();
-                assert!(std::fs::read_to_string(csv).unwrap().contains("SKU-1"));
+                let csv_content = std::fs::read_to_string(csv).unwrap();
+                assert!(csv_content.contains("document_type,document_number,business_case"));
+                assert!(csv_content.contains("SKU-1"));
                 for sales_document in [&issued_quote, &issued_proforma] {
                     let sales_export = crate::document::export_pdf(
                         sales_document,
@@ -3619,7 +3668,13 @@ mod tests {
                     .unwrap();
                     assert_eq!(&std::fs::read(sales_export.path).unwrap()[..5], b"%PDF-");
                 }
-                for document_type in [DocumentType::PackingList, DocumentType::TradeContract] {
+                for document_type in [
+                    DocumentType::PackingList,
+                    DocumentType::TradeContract,
+                    DocumentType::ShippingMarks,
+                    DocumentType::ShipperInstruction,
+                    DocumentType::CustomsDeclaration,
+                ] {
                     let mut template_document = issued.clone();
                     template_document.document_type = document_type;
                     let template_export = crate::document::export_pdf(
@@ -3657,6 +3712,36 @@ mod tests {
                 );
                 let _ = std::fs::remove_dir_all(render_root);
             }
+            let mut customs = issued.clone();
+            customs.id = "customs-validation".into();
+            customs.document_type = DocumentType::CustomsDeclaration;
+            customs.number = "CUS-20260810-0001".into();
+            assert!(
+                crate::document::cross_validate(&customs, std::slice::from_ref(&issued)).is_empty()
+            );
+            customs.payload.lines[0].quantity += 1.0;
+            customs.payload.lines[0].unit_price_minor += 1;
+            customs.payload.lines[0].amount_minor = (customs.payload.lines[0].quantity
+                * customs.payload.lines[0].unit_price_minor as f64)
+                .round() as i64;
+            customs.payload.lines[0].hs_code = "DIFFERENT".into();
+            let cross_issues =
+                crate::document::cross_validate(&customs, std::slice::from_ref(&issued));
+            assert!(
+                cross_issues
+                    .iter()
+                    .any(|issue| issue.code == "cross_document_quantity_mismatch")
+            );
+            assert!(
+                cross_issues
+                    .iter()
+                    .any(|issue| issue.code == "cross_document_amount_mismatch")
+            );
+            assert!(
+                cross_issues
+                    .iter()
+                    .any(|issue| issue.code == "cross_document_hs_mismatch")
+            );
             assert!(
                 database
                     .save_document(SaveDocumentInput {
