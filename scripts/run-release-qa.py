@@ -216,6 +216,9 @@ def main() -> int:
         durations["frontendTests"] = run(
             command_line(resolve_command("pnpm"), "test"), repo, environment
         )
+        durations["frontendBuild"] = run(
+            command_line(resolve_command("pnpm"), "build"), repo, environment
+        )
         durations["rustTests"] = run(
             command_line(
                 resolve_command("cargo"),
