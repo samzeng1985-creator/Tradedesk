@@ -9,6 +9,7 @@ import type {
   SupplierInput,
 } from "./domain";
 import { CurrencySelect } from "./currencies";
+import { moneyInputToMinor, normalizeMoneyInput } from "./decimalInput";
 
 export type MasterTab = "products" | "configurable" | "components" | "customers" | "suppliers";
 export type MasterRecord = Product | Customer | Supplier;
@@ -59,6 +60,14 @@ export function MasterEditor({ tab, record, products, saving, onClose, onSave }:
   const [supplierTerms, setSupplierTerms] = useState(() =>
     tab === "suppliers" ? structuredClone((record as Supplier | null)?.productTerms ?? []) : [],
   );
+  const [supplierPriceInputs, setSupplierPriceInputs] = useState<Record<string, string>>(() =>
+    Object.fromEntries(
+      ((record as Supplier | null)?.productTerms ?? []).map((term) => [
+        term.id,
+        (term.unitPriceMinor / 100).toFixed(2),
+      ]),
+    ),
+  );
   const [error, setError] = useState("");
   const set = (key: string, value: string) => setValues((current) => ({ ...current, [key]: value }));
 
@@ -87,12 +96,20 @@ export function MasterEditor({ tab, record, products, saving, onClose, onSave }:
           setError("同一供应商不能重复添加同一个产品。");
           return;
         }
+        const productTerms = supplierTerms.map((term) => ({
+          ...term,
+          unitPriceMinor: moneyInputToMinor(supplierPriceInputs[term.id] ?? "") ?? 0,
+        }));
+        if (productTerms.some((term) => term.unitPriceMinor <= 0)) {
+          setError("采购单价必须大于 0，最多可输入 12 位整数和 2 位小数。");
+          return;
+        }
         await onSave({
           id: values.id || undefined, code: values.code, legalName: values.legalName,
           address: values.address, contacts: values.contacts, bankDetails: values.bankDetails,
           currency: values.currency, paymentTerms: values.paymentTerms,
           leadTimeDays: Number(values.leadTimeDays), onTimeRate: Number(values.onTimeRate),
-          qualificationNotes: values.qualificationNotes, productTerms: supplierTerms,
+          qualificationNotes: values.qualificationNotes, productTerms,
         });
       }
     } catch (reason) {
@@ -162,12 +179,29 @@ export function MasterEditor({ tab, record, products, saving, onClose, onSave }:
                   setSupplierTerms((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, productId: product?.id ?? "", productSku: product?.sku ?? "", productName: product?.nameEn || product?.nameZh || "" } : item));
                 }}><option value="">请选择产品</option>{products.map((product) => <option value={product.id} key={product.id}>{product.sku} · {product.nameEn || product.nameZh}</option>)}</select></label>
                 <label>币种 *<CurrencySelect value={term.currency} onChange={(value) => setSupplierTerms((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, currency: value } : item))} /></label>
-                <label>采购单价 *<input required type="number" min="0.01" step="0.01" value={(term.unitPriceMinor / 100).toFixed(2)} onChange={(event) => setSupplierTerms((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, unitPriceMinor: Math.round(Number(event.target.value) * 100) } : item))} /></label>
+                <label>采购单价 *<input required type="text" inputMode="decimal" value={supplierPriceInputs[term.id] ?? ""} onChange={(event) => {
+                  const normalized = normalizeMoneyInput(event.target.value);
+                  if (normalized === null) return;
+                  setSupplierPriceInputs((current) => ({ ...current, [term.id]: normalized }));
+                  const unitPriceMinor = moneyInputToMinor(normalized) ?? 0;
+                  setSupplierTerms((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, unitPriceMinor } : item));
+                }} placeholder="例如：125000.00" /></label>
                 <label>MOQ *<input required type="number" min="0.001" step="0.001" value={term.moq} onChange={(event) => setSupplierTerms((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, moq: Number(event.target.value) } : item))} /></label>
                 <label>交期（天）<input type="number" min="0" value={term.leadTimeDays} onChange={(event) => setSupplierTerms((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, leadTimeDays: Number(event.target.value) } : item))} /></label>
-                <button type="button" className="danger-link supplier-term-remove" onClick={() => setSupplierTerms((current) => current.filter((_, itemIndex) => itemIndex !== index))}>移除</button>
+                <button type="button" className="danger-link supplier-term-remove" onClick={() => {
+                  setSupplierTerms((current) => current.filter((_, itemIndex) => itemIndex !== index));
+                  setSupplierPriceInputs((current) => {
+                    const next = { ...current };
+                    delete next[term.id];
+                    return next;
+                  });
+                }}>移除</button>
               </div>)}
-              <button type="button" className="button button-secondary" disabled={!products.length} onClick={() => setSupplierTerms((current) => [...current, { id: crypto.randomUUID(), productId: "", productSku: "", productName: "", currency: values.currency || "CNY", unitPriceMinor: 0, moq: 1, leadTimeDays: Number(values.leadTimeDays) || 0 }])}>添加供应产品</button>
+              <button type="button" className="button button-secondary" disabled={!products.length} onClick={() => {
+                const id = crypto.randomUUID();
+                setSupplierTerms((current) => [...current, { id, productId: "", productSku: "", productName: "", currency: values.currency || "CNY", unitPriceMinor: 0, moq: 1, leadTimeDays: Number(values.leadTimeDays) || 0 }]);
+                setSupplierPriceInputs((current) => ({ ...current, [id]: "" }));
+              }}>添加供应产品</button>
               {!products.length && <small>请先录入产品，再维护供应商采购条件。</small>}
             </div>
           </>}

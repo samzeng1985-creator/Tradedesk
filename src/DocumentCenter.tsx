@@ -492,7 +492,7 @@ export function DocumentCenter(props: DocumentCenterProps) {
   }
 
   async function archiveDocument(document: TradeDocument) {
-    if (!window.confirm(`归档 ${document.number} V${document.version}？归档后仍可查看和导出。`)) return;
+    if (!window.confirm(`请确认归档单证：${document.number}（版本 V${document.version}）。\n归档后仍可查看和导出。`)) return;
     try { await props.onArchive(document.id); setMessage(`${document.number} V${document.version} 已归档`); } catch (error) { setMessage(String(error)); }
   }
 
