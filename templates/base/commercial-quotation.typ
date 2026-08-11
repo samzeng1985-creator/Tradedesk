@@ -1,6 +1,7 @@
 #let data = json("document.json")
 #let payload = data.payload
 #let branding = data.branding
+#import "helpers.typ": fit-line
 #let money(value) = {
   let whole = calc.floor(value / 100)
   let cents = calc.abs(value - whole * 100)
@@ -8,7 +9,7 @@
 }
 #let subtotal = payload.lines.fold(0, (sum, line) => sum + line.amountMinor)
 #let total = subtotal - payload.discountMinor
-#let nowrap(body) = box[#text(size: 6.5pt)[#body]]
+#let nowrap(body) = fit-line(body, text-size: 6.5pt)
 
 #set document(title: "Commercial Quotation " + data.number, author: payload.seller)
 #set page(

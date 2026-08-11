@@ -1,7 +1,8 @@
 #let data = json("document.json")
 #let payload = data.payload
 #let branding = data.branding
-#let nowrap(body) = box[#text(size: 6.2pt)[#body]]
+#import "helpers.typ": fit-line
+#let nowrap(body) = fit-line(body, text-size: 6.2pt)
 #let packages = payload.lines.fold(0, (sum, line) => sum + line.packages)
 #let net = payload.lines.fold(0, (sum, line) => sum + line.netWeightKg)
 #let gross = payload.lines.fold(0, (sum, line) => sum + line.grossWeightKg)

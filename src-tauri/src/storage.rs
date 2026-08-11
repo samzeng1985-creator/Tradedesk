@@ -3920,6 +3920,14 @@ mod tests {
                 let pdf = std::fs::read(&export.path).unwrap();
                 assert_eq!(&pdf[..5], b"%PDF-");
                 assert_eq!(export.sha256.len(), 64);
+                if let Ok(qa_dir) = std::env::var("TRADEDESK_PDF_QA_DIR") {
+                    std::fs::create_dir_all(&qa_dir).unwrap();
+                    std::fs::copy(
+                        &export.path,
+                        std::path::Path::new(&qa_dir).join("commercial_invoice.pdf"),
+                    )
+                    .unwrap();
+                }
                 if let Ok(output) = std::env::var("TRADEDESK_PDF_OUTPUT") {
                     std::fs::copy(&export.path, output).unwrap();
                 }
@@ -3936,7 +3944,16 @@ mod tests {
                         &output_dir,
                     )
                     .unwrap();
-                    assert_eq!(&std::fs::read(sales_export.path).unwrap()[..5], b"%PDF-");
+                    assert_eq!(&std::fs::read(&sales_export.path).unwrap()[..5], b"%PDF-");
+                    if let Ok(qa_dir) = std::env::var("TRADEDESK_PDF_QA_DIR") {
+                        std::fs::create_dir_all(&qa_dir).unwrap();
+                        std::fs::copy(
+                            &sales_export.path,
+                            std::path::Path::new(&qa_dir)
+                                .join(format!("{}.pdf", sales_document.document_type.as_str())),
+                        )
+                        .unwrap();
+                    }
                 }
                 for document_type in [
                     DocumentType::PackingList,
@@ -3952,7 +3969,7 @@ mod tests {
                     DocumentType::BeneficiaryCertificate,
                 ] {
                     let mut template_document = issued.clone();
-                    template_document.document_type = document_type;
+                    template_document.document_type = document_type.clone();
                     let template_export = crate::document::export_pdf(
                         &template_document,
                         &company_profile,
@@ -3961,7 +3978,19 @@ mod tests {
                         &output_dir,
                     )
                     .unwrap();
-                    assert_eq!(&std::fs::read(template_export.path).unwrap()[..5], b"%PDF-");
+                    assert_eq!(
+                        &std::fs::read(&template_export.path).unwrap()[..5],
+                        b"%PDF-"
+                    );
+                    if let Ok(qa_dir) = std::env::var("TRADEDESK_PDF_QA_DIR") {
+                        std::fs::create_dir_all(&qa_dir).unwrap();
+                        std::fs::copy(
+                            &template_export.path,
+                            std::path::Path::new(&qa_dir)
+                                .join(format!("{}.pdf", document_type.as_str())),
+                        )
+                        .unwrap();
+                    }
                 }
                 for language in ["en", "ru", "fr", "es", "pt", "ar"] {
                     let configuration_export = crate::document::export_configuration_pdf(
@@ -3974,9 +4003,19 @@ mod tests {
                     )
                     .unwrap();
                     assert_eq!(
-                        &std::fs::read(configuration_export.path).unwrap()[..5],
+                        &std::fs::read(&configuration_export.path).unwrap()[..5],
                         b"%PDF-"
                     );
+                    if language == "en"
+                        && let Ok(qa_dir) = std::env::var("TRADEDESK_PDF_QA_DIR")
+                    {
+                        std::fs::create_dir_all(&qa_dir).unwrap();
+                        std::fs::copy(
+                            &configuration_export.path,
+                            std::path::Path::new(&qa_dir).join("configuration-sheet.pdf"),
+                        )
+                        .unwrap();
+                    }
                 }
                 let configuration_csv =
                     crate::document::export_configuration_csv(&configured, "en", &output_dir)

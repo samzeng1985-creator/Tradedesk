@@ -1,7 +1,8 @@
 #let data = json("document.json")
 #let payload = data.payload
 #let branding = data.branding
-#let nowrap(body) = box[#text(size: 6.2pt)[#body]]
+#import "helpers.typ": fit-line
+#let nowrap(body) = fit-line(body, text-size: 6.2pt)
 #let total = payload.lines.fold(0, (sum, line) => sum + line.amountMinor) - payload.discountMinor
 #let money(value) = data.currency + " " + str(calc.round(value / 100, digits: 2))
 

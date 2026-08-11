@@ -37,6 +37,7 @@ const BENEFICIARY_CERTIFICATE_TEMPLATE: &str =
     include_str!("../../templates/base/beneficiary-certificate.typ");
 const CONFIGURATION_SHEET_TEMPLATE: &str =
     include_str!("../../templates/base/configuration-sheet.typ");
+const TEMPLATE_HELPERS: &str = include_str!("../../templates/base/helpers.typ");
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -931,6 +932,8 @@ pub fn export_pdf(
     let payload = branded_json(document, prepare_branding(company_profile, work_dir)?)
         .map_err(|error| format!("无法生成单证快照：{error}"))?;
     fs::write(&data_path, payload).map_err(|error| format!("无法写入单证快照：{error}"))?;
+    fs::write(work_dir.join("helpers.typ"), TEMPLATE_HELPERS)
+        .map_err(|error| format!("无法写入单证排版助手：{error}"))?;
     fs::write(&template_path, template(document))
         .map_err(|error| format!("无法写入单证模板：{error}"))?;
     let output = Command::new(typst_path)
@@ -1074,6 +1077,8 @@ pub fn export_configuration_pdf(
     }))
     .map_err(|error| format!("无法生成配置清单快照：{error}"))?;
     fs::write(&data_path, payload).map_err(|error| format!("无法写入配置清单快照：{error}"))?;
+    fs::write(work_dir.join("helpers.typ"), TEMPLATE_HELPERS)
+        .map_err(|error| format!("无法写入配置单排版助手：{error}"))?;
     fs::write(&template_path, CONFIGURATION_SHEET_TEMPLATE)
         .map_err(|error| format!("无法写入配置单模板：{error}"))?;
     let output = Command::new(typst_path)

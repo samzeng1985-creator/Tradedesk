@@ -1,8 +1,9 @@
 #let data = json("document.json")
 #let payload = data.payload
 #let branding = data.branding
+#import "helpers.typ": fit-line
 #let total-packages = payload.lines.fold(0, (sum, line) => sum + line.packages)
-#let nowrap(body) = box[#text(size: 7pt)[#body]]
+#let nowrap(body) = fit-line(body, text-size: 7pt)
 
 #set document(title: "Shipping Marks " + data.number, author: payload.seller)
 #set page(

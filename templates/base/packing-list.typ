@@ -1,12 +1,13 @@
 #let data = json("document.json")
 #let payload = data.payload
 #let branding = data.branding
+#import "helpers.typ": fit-line
 #let total-quantity = payload.lines.fold(0, (sum, line) => sum + line.quantity)
 #let total-packages = payload.lines.fold(0, (sum, line) => sum + line.packages)
 #let total-net = payload.lines.fold(0, (sum, line) => sum + line.netWeightKg)
 #let total-gross = payload.lines.fold(0, (sum, line) => sum + line.grossWeightKg)
 #let total-cbm = payload.lines.fold(0, (sum, line) => sum + line.cbm)
-#let nowrap(body) = box[#text(size: 6.3pt)[#body]]
+#let nowrap(body) = fit-line(body, text-size: 6.3pt)
 
 #set document(title: "Detailed Packing List " + data.number, author: payload.seller)
 #set page(

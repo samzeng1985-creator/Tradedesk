@@ -2,12 +2,13 @@
 #let configuration = data.configuration
 #let labels = data.labels
 #let branding = data.branding
+#import "helpers.typ": fit-line
 #let money(value) = {
   let whole = calc.floor(value / 100)
   let cents = calc.abs(value - whole * 100)
   str(whole) + "." + (if cents < 10 { "0" } else { "" }) + str(cents)
 }
-#let nowrap(body) = box[#text(size: 6pt)[#body]]
+#let nowrap(body) = fit-line(body, text-size: 6pt)
 
 #set document(title: labels.title + " " + configuration.code, author: branding.companyName)
 #set page(

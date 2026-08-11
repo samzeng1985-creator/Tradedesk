@@ -1,7 +1,8 @@
 #let data = json("document.json")
 #let payload = data.payload
 #let branding = data.branding
-#let nowrap(body) = box[#text(size: 6.5pt)[#body]]
+#import "helpers.typ": fit-line
+#let nowrap(body) = fit-line(body, text-size: 6.5pt)
 
 #set document(title: "Shipper Instruction " + data.number, author: payload.seller)
 #set page(
