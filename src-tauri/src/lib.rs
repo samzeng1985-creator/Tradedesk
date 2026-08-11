@@ -952,6 +952,7 @@ pub fn run() {
                 .parent()
                 .map(PathBuf::from)
                 .unwrap_or_else(|| app_data_dir.clone());
+            let resource_dir = app.path().resource_dir().ok();
             app.manage(AppState {
                 database_path,
                 recovery_path,
@@ -960,7 +961,7 @@ pub fn run() {
                 attachment_export_dir,
                 export_dir,
                 render_cache_dir,
-                typst_path: document::find_typst(&executable_dir),
+                typst_path: document::find_typst(&executable_dir, resource_dir.as_deref()),
                 database: Mutex::new(None),
             });
             Ok(())

@@ -1,0 +1,14 @@
+{
+  "bundle": {
+    "active": true,
+    "targets": ["app", "dmg"],
+    "resources": {
+      "../tools/typst/typst": "typst",
+      "../tools/typst/TYPST-LICENSE.txt": "TYPST-LICENSE.txt",
+      "../tools/typst/TYPST-NOTICE.txt": "TYPST-NOTICE.txt"
+    },
+    "macOS": {
+      "minimumSystemVersion": "12.0"
+    }
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "resources": {
+      "../tools/typst/typst.exe": "typst.exe",
+      "../tools/typst/TYPST-LICENSE.txt": "TYPST-LICENSE.txt",
+      "../tools/typst/TYPST-NOTICE.txt": "TYPST-NOTICE.txt"
+    },
+    "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper",
+        "silent": true
+      },
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": ["SimpChinese", "English"],
+        "displayLanguageSelector": true
+      }
+    }
+  }
+}

@@ -1489,13 +1489,13 @@ fn configuration_labels(language: &str) -> Result<ConfigurationLabels, String> {
     Ok(labels)
 }
 
-pub fn find_typst(executable_dir: &Path) -> Option<PathBuf> {
+pub fn find_typst(executable_dir: &Path, resource_dir: Option<&Path>) -> Option<PathBuf> {
     let file_name = if cfg!(target_os = "windows") {
         "typst.exe"
     } else {
         "typst"
     };
-    let candidates = [
+    let mut candidates = vec![
         executable_dir.join(file_name),
         executable_dir.join("resources").join(file_name),
         Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -1517,6 +1517,9 @@ pub fn find_typst(executable_dir: &Path) -> Option<PathBuf> {
             .join("typst-x86_64-apple-darwin")
             .join("typst"),
     ];
+    if let Some(resource_dir) = resource_dir {
+        candidates.insert(0, resource_dir.join(file_name));
+    }
     candidates.into_iter().find(|path| path.is_file())
 }
 
@@ -1625,8 +1628,9 @@ fn minor(value: i64) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{csv, validate_company_profile};
+    use super::{csv, find_typst, validate_company_profile};
     use crate::domain::CompanyProfile;
+    use std::{fs, path::Path};
 
     #[test]
     fn csv_escapes_quotes() {
@@ -1649,5 +1653,28 @@ mod tests {
             })
             .is_err()
         );
+    }
+
+    #[test]
+    fn resolves_bundled_typst_from_the_platform_resource_directory() {
+        let root = std::env::temp_dir().join(format!(
+            "tradedesk-resource-test-{}-{}",
+            std::process::id(),
+            uuid::Uuid::new_v4()
+        ));
+        fs::create_dir_all(&root).expect("create resource fixture");
+        let filename = if cfg!(target_os = "windows") {
+            "typst.exe"
+        } else {
+            "typst"
+        };
+        let bundled_typst = root.join(filename);
+        fs::write(&bundled_typst, b"test runtime").expect("write runtime fixture");
+
+        assert_eq!(
+            find_typst(Path::new("missing-executable-dir"), Some(&root)),
+            Some(bundled_typst)
+        );
+        fs::remove_dir_all(root).expect("remove resource fixture");
     }
 }

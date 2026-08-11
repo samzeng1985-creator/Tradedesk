@@ -4764,7 +4764,7 @@ mod tests {
                 "Beneficiary's Certificate"
             );
             assert_eq!(issued.status, DocumentStatus::Issued);
-            if let Some(typst) = crate::document::find_typst(std::path::Path::new("")) {
+            if let Some(typst) = crate::document::find_typst(std::path::Path::new(""), None) {
                 let render_root =
                     std::env::temp_dir().join(format!("tradedesk-pdf-{}", Uuid::new_v4()));
                 let work_dir = render_root.join("work");

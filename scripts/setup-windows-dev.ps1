@@ -81,19 +81,7 @@ try {
         }
     }
 
-    $typstRoot = Join-Path $projectRoot "tools\typst"
-    $typstExe = Get-ChildItem -Path $typstRoot -Recurse -Filter "typst.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
-    if (-not $typstExe) {
-        $typstVersion = "0.15.1"
-        $typstArchive = Join-Path $setupRoot "typst-$typstVersion-x64.zip"
-        Invoke-WebRequest -Uri "https://github.com/typst/typst/releases/download/v$typstVersion/typst-x86_64-pc-windows-msvc.zip" -OutFile $typstArchive -UseBasicParsing
-        $archiveHash = (Get-FileHash -LiteralPath $typstArchive -Algorithm SHA256).Hash
-        if ($archiveHash -ne "19CE3551153C2FE7EE9FA2F95208310C8F4D3209FEDB699E0333FAF8913F6736") {
-            throw "Typst archive checksum validation failed"
-        }
-        New-Item -ItemType Directory -Path $typstRoot -Force | Out-Null
-        Expand-Archive -LiteralPath $typstArchive -DestinationPath $typstRoot -Force
-    }
+    & (Join-Path $PSScriptRoot "prepare-typst-runtime.ps1")
 
     Write-Host "Development prerequisites and Typst PDF renderer installed. Open a new terminal, then run scripts/verify-dev.ps1."
 }

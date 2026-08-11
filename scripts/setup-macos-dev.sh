@@ -21,15 +21,21 @@ case "$architecture" in
     ;;
 esac
 
-if [[ -x "$typst_root/typst-$target/typst" ]]; then
-  "$typst_root/typst-$target/typst" --version
+if [[ -x "$typst_root/typst" ]]; then
+  "$typst_root/typst" --version
   exit 0
 fi
 
-archive="$(mktemp -t tradedesk-typst).tar.xz"
-trap 'rm -f "$archive"' EXIT
-curl -fL "https://github.com/typst/typst/releases/download/v$version/typst-$target.tar.xz" -o "$archive"
-echo "$checksum  $archive" | shasum -a 256 -c -
 mkdir -p "$typst_root"
-tar -xJf "$archive" -C "$typst_root"
-"$typst_root/typst-$target/typst" --version
+if [[ ! -x "$typst_root/typst-$target/typst" ]]; then
+  archive="$(mktemp -t tradedesk-typst).tar.xz"
+  trap 'rm -f "$archive"' EXIT
+  curl -fL "https://github.com/typst/typst/releases/download/v$version/typst-$target.tar.xz" -o "$archive"
+  echo "$checksum  $archive" | shasum -a 256 -c -
+  tar -xJf "$archive" -C "$typst_root"
+fi
+cp "$typst_root/typst-$target/typst" "$typst_root/typst"
+cp "$typst_root/typst-$target/LICENSE" "$typst_root/TYPST-LICENSE.txt"
+cp "$typst_root/typst-$target/NOTICE" "$typst_root/TYPST-NOTICE.txt"
+chmod +x "$typst_root/typst"
+"$typst_root/typst" --version
