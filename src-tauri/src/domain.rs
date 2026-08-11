@@ -145,6 +145,8 @@ pub enum DocumentType {
     InsurancePolicy,
     CertificateOfOrigin,
     InspectionCertificate,
+    FumigationCertificate,
+    BeneficiaryCertificate,
 }
 
 impl DocumentType {
@@ -162,6 +164,8 @@ impl DocumentType {
             Self::InsurancePolicy => "insurance_policy",
             Self::CertificateOfOrigin => "certificate_of_origin",
             Self::InspectionCertificate => "inspection_certificate",
+            Self::FumigationCertificate => "fumigation_certificate",
+            Self::BeneficiaryCertificate => "beneficiary_certificate",
         }
     }
 
@@ -179,6 +183,8 @@ impl DocumentType {
             "insurance_policy" => Some(Self::InsurancePolicy),
             "certificate_of_origin" => Some(Self::CertificateOfOrigin),
             "inspection_certificate" => Some(Self::InspectionCertificate),
+            "fumigation_certificate" => Some(Self::FumigationCertificate),
+            "beneficiary_certificate" => Some(Self::BeneficiaryCertificate),
             _ => None,
         }
     }
@@ -328,6 +334,40 @@ pub struct DocumentPayload {
     pub inspection_place: String,
     #[serde(default)]
     pub inspection_result: String,
+    #[serde(default)]
+    pub fumigation_agent: String,
+    #[serde(default)]
+    pub fumigation_method: String,
+    #[serde(default)]
+    pub fumigation_temperature_celsius: f64,
+    #[serde(default)]
+    pub fumigation_duration_hours: f64,
+    #[serde(default)]
+    pub fumigation_date: String,
+    #[serde(default)]
+    pub fumigation_place: String,
+    #[serde(default)]
+    pub fumigation_operator: String,
+    #[serde(default)]
+    pub fumigation_license_number: String,
+    #[serde(default)]
+    pub letter_of_credit_number: String,
+    #[serde(default)]
+    pub issuing_bank: String,
+    #[serde(default)]
+    pub letter_of_credit_issue_date: String,
+    #[serde(default)]
+    pub letter_of_credit_expiry_date: String,
+    #[serde(default)]
+    pub presentation_deadline: String,
+    #[serde(default)]
+    pub beneficiary_certificate_type: String,
+    #[serde(default)]
+    pub beneficiary_statement: String,
+    #[serde(default)]
+    pub letter_of_credit_terms: String,
+    #[serde(default)]
+    pub required_documents: String,
     pub lines: Vec<DocumentLineSnapshot>,
 }
 

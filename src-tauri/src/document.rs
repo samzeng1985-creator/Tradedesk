@@ -31,6 +31,10 @@ const CERTIFICATE_OF_ORIGIN_TEMPLATE: &str =
     include_str!("../../templates/base/certificate-of-origin.typ");
 const INSPECTION_CERTIFICATE_TEMPLATE: &str =
     include_str!("../../templates/base/inspection-certificate.typ");
+const FUMIGATION_CERTIFICATE_TEMPLATE: &str =
+    include_str!("../../templates/base/fumigation-certificate.typ");
+const BENEFICIARY_CERTIFICATE_TEMPLATE: &str =
+    include_str!("../../templates/base/beneficiary-certificate.typ");
 const CONFIGURATION_SHEET_TEMPLATE: &str =
     include_str!("../../templates/base/configuration-sheet.typ");
 
@@ -223,6 +227,7 @@ pub fn validate(document: &TradeDocument) -> Vec<DocumentValidationIssue> {
             | DocumentType::CustomsDeclaration
             | DocumentType::BillOfLading
             | DocumentType::InspectionCertificate
+            | DocumentType::FumigationCertificate
     );
     for (index, line) in document.payload.lines.iter().enumerate() {
         if line.description.trim().is_empty() || line.quantity <= 0.0 || !line.quantity.is_finite()
@@ -266,6 +271,8 @@ pub fn validate(document: &TradeDocument) -> Vec<DocumentValidationIssue> {
             | DocumentType::InsurancePolicy
             | DocumentType::CertificateOfOrigin
             | DocumentType::InspectionCertificate
+            | DocumentType::FumigationCertificate
+            | DocumentType::BeneficiaryCertificate
     ) && document.payload.transport_mode.trim().is_empty()
     {
         error("transport_mode_required", "运输方式不能为空");
@@ -277,6 +284,8 @@ pub fn validate(document: &TradeDocument) -> Vec<DocumentValidationIssue> {
             | DocumentType::InsurancePolicy
             | DocumentType::CertificateOfOrigin
             | DocumentType::InspectionCertificate
+            | DocumentType::FumigationCertificate
+            | DocumentType::BeneficiaryCertificate
     ) && (document.payload.port_of_loading.trim().is_empty()
         || document.payload.port_of_discharge.trim().is_empty())
     {
@@ -368,6 +377,152 @@ pub fn validate(document: &TradeDocument) -> Vec<DocumentValidationIssue> {
             }
         }
     }
+    if document.document_type == DocumentType::FumigationCertificate {
+        for (code, value, message) in [
+            (
+                "fumigation_authority_required",
+                document.payload.certification_authority.as_str(),
+                "熏蒸证书申请必须填写服务或签证机构",
+            ),
+            (
+                "fumigation_agent_required",
+                document.payload.fumigation_agent.as_str(),
+                "熏蒸证书申请必须填写熏蒸剂",
+            ),
+            (
+                "fumigation_method_required",
+                document.payload.fumigation_method.as_str(),
+                "熏蒸证书申请必须填写处理方法",
+            ),
+            (
+                "fumigation_date_required",
+                document.payload.fumigation_date.as_str(),
+                "熏蒸证书申请必须填写处理日期",
+            ),
+            (
+                "fumigation_place_required",
+                document.payload.fumigation_place.as_str(),
+                "熏蒸证书申请必须填写处理地点",
+            ),
+            (
+                "fumigation_operator_required",
+                document.payload.fumigation_operator.as_str(),
+                "熏蒸证书申请必须填写操作人员",
+            ),
+            (
+                "fumigation_license_required",
+                document.payload.fumigation_license_number.as_str(),
+                "熏蒸证书申请必须填写机构或人员许可证号",
+            ),
+        ] {
+            if value.trim().is_empty() {
+                error(code, message);
+            }
+        }
+        if document.payload.fumigation_duration_hours <= 0.0
+            || !document.payload.fumigation_duration_hours.is_finite()
+        {
+            error(
+                "fumigation_duration_required",
+                "熏蒸持续时间必须大于 0 小时",
+            );
+        }
+    }
+    if document.document_type == DocumentType::BeneficiaryCertificate {
+        for (code, value, message) in [
+            (
+                "letter_of_credit_number_required",
+                document.payload.letter_of_credit_number.as_str(),
+                "受益人证明必须填写信用证号码",
+            ),
+            (
+                "issuing_bank_required",
+                document.payload.issuing_bank.as_str(),
+                "受益人证明必须填写开证行",
+            ),
+            (
+                "letter_of_credit_expiry_required",
+                document.payload.letter_of_credit_expiry_date.as_str(),
+                "受益人证明必须填写信用证有效期",
+            ),
+            (
+                "presentation_deadline_required",
+                document.payload.presentation_deadline.as_str(),
+                "受益人证明必须填写交单截止日",
+            ),
+            (
+                "beneficiary_certificate_type_required",
+                document.payload.beneficiary_certificate_type.as_str(),
+                "受益人证明必须填写证明类型",
+            ),
+            (
+                "beneficiary_statement_required",
+                document.payload.beneficiary_statement.as_str(),
+                "受益人证明必须填写证明声明",
+            ),
+        ] {
+            if value.trim().is_empty() {
+                error(code, message);
+            }
+        }
+        if !document
+            .payload
+            .letter_of_credit_issue_date
+            .trim()
+            .is_empty()
+            && !document
+                .payload
+                .letter_of_credit_expiry_date
+                .trim()
+                .is_empty()
+            && document.payload.letter_of_credit_expiry_date
+                < document.payload.letter_of_credit_issue_date
+        {
+            error(
+                "invalid_letter_of_credit_dates",
+                "信用证有效期不能早于开证日期",
+            );
+        }
+        if !document.payload.presentation_deadline.trim().is_empty()
+            && !document
+                .payload
+                .letter_of_credit_expiry_date
+                .trim()
+                .is_empty()
+            && document.payload.presentation_deadline
+                > document.payload.letter_of_credit_expiry_date
+        {
+            error(
+                "invalid_presentation_deadline",
+                "交单截止日不能晚于信用证有效期",
+            );
+        }
+        for (code, value, message) in [
+            (
+                "letter_of_credit_issue_date_missing",
+                document.payload.letter_of_credit_issue_date.as_str(),
+                "尚未填写信用证开证日期，请与银行正本核对",
+            ),
+            (
+                "letter_of_credit_terms_missing",
+                document.payload.letter_of_credit_terms.as_str(),
+                "尚未记录信用证条款清单，请与银行正本核对",
+            ),
+            (
+                "required_documents_missing",
+                document.payload.required_documents.as_str(),
+                "尚未记录所需交单文件清单",
+            ),
+        ] {
+            if value.trim().is_empty() {
+                hs_warnings.push(DocumentValidationIssue {
+                    severity: ValidationSeverity::Warning,
+                    code: code.to_owned(),
+                    message: message.to_owned(),
+                });
+            }
+        }
+    }
     if !matches!(
         document.document_type,
         DocumentType::PackingList | DocumentType::ShippingMarks
@@ -441,6 +596,9 @@ pub fn cross_validate(
             if let Some(item) = peer(DocumentType::CertificateOfOrigin) {
                 pairs.push((item, false, false, true, false));
             }
+            if let Some(item) = peer(DocumentType::BeneficiaryCertificate) {
+                pairs.push((item, false, true, true, false));
+            }
         }
         DocumentType::PackingList => {
             if let Some(item) = peer(DocumentType::CommercialInvoice) {
@@ -461,6 +619,9 @@ pub fn cross_validate(
             if let Some(item) = peer(DocumentType::InspectionCertificate) {
                 pairs.push((item, true, false, false, false));
             }
+            if let Some(item) = peer(DocumentType::FumigationCertificate) {
+                pairs.push((item, true, false, false, true));
+            }
         }
         DocumentType::CustomsDeclaration => {
             if let Some(item) = peer(DocumentType::CommercialInvoice) {
@@ -471,6 +632,9 @@ pub fn cross_validate(
             }
             if let Some(item) = peer(DocumentType::CertificateOfOrigin) {
                 pairs.push((item, false, false, true, false));
+            }
+            if let Some(item) = peer(DocumentType::FumigationCertificate) {
+                pairs.push((item, true, false, false, true));
             }
         }
         DocumentType::ShipperInstruction | DocumentType::ShippingMarks => {
@@ -488,6 +652,11 @@ pub fn cross_validate(
             {
                 pairs.push((item, true, false, false, true));
             }
+            if document.document_type == DocumentType::ShipperInstruction
+                && let Some(item) = peer(DocumentType::FumigationCertificate)
+            {
+                pairs.push((item, true, false, false, true));
+            }
         }
         DocumentType::BillOfLading => {
             if let Some(item) = peer(DocumentType::PackingList) {
@@ -501,6 +670,12 @@ pub fn cross_validate(
             }
             if let Some(item) = peer(DocumentType::InspectionCertificate) {
                 pairs.push((item, true, false, false, true));
+            }
+            if let Some(item) = peer(DocumentType::FumigationCertificate) {
+                pairs.push((item, true, false, false, true));
+            }
+            if let Some(item) = peer(DocumentType::BeneficiaryCertificate) {
+                pairs.push((item, false, false, false, true));
             }
         }
         DocumentType::InsurancePolicy => {
@@ -528,6 +703,22 @@ pub fn cross_validate(
             }
             if let Some(item) = peer(DocumentType::BillOfLading) {
                 pairs.push((item, true, false, false, true));
+            }
+        }
+        DocumentType::FumigationCertificate => {
+            if let Some(item) = peer(DocumentType::PackingList) {
+                pairs.push((item, true, false, false, true));
+            }
+            if let Some(item) = peer(DocumentType::BillOfLading) {
+                pairs.push((item, true, false, false, true));
+            }
+        }
+        DocumentType::BeneficiaryCertificate => {
+            if let Some(item) = peer(DocumentType::CommercialInvoice) {
+                pairs.push((item, false, true, true, false));
+            }
+            if let Some(item) = peer(DocumentType::BillOfLading) {
+                pairs.push((item, false, false, false, true));
             }
         }
         _ => {}
@@ -772,7 +963,7 @@ pub fn export_csv(document: &TradeDocument, output_dir: &Path) -> Result<PathBuf
     fs::create_dir_all(output_dir).map_err(|error| format!("无法创建单证导出目录：{error}"))?;
     let output_path = output_dir.join(format!("{}.csv", export_stem(document)));
     let mut rows = vec![
-        "document_type,document_number,business_case,issue_date,currency,transport_mode,vessel_voyage,booking_reference,freight_terms,bill_of_lading_type,bill_of_lading_number,carrier,notify_party,place_of_receipt,place_of_delivery,container_numbers,seal_numbers,shipping_marks,insurance_company,policy_number,insured_value,insurance_markup_percent,premium_rate_percent,premium,insurance_coverage,claims_payable_at,customs_supervision_code,customs_declaration_elements,certificate_number,certificate_type,certification_authority,manufacturer,manufacturer_address,batch_number,inspection_standard,inspection_date,inspection_place,inspection_result".to_owned(),
+        "document_type,document_number,business_case,issue_date,currency,transport_mode,vessel_voyage,booking_reference,freight_terms,bill_of_lading_type,bill_of_lading_number,carrier,notify_party,place_of_receipt,place_of_delivery,container_numbers,seal_numbers,shipping_marks,insurance_company,policy_number,insured_value,insurance_markup_percent,premium_rate_percent,premium,insurance_coverage,claims_payable_at,customs_supervision_code,customs_declaration_elements,certificate_number,certificate_type,certification_authority,manufacturer,manufacturer_address,batch_number,inspection_standard,inspection_date,inspection_place,inspection_result,fumigation_agent,fumigation_method,fumigation_temperature_celsius,fumigation_duration_hours,fumigation_date,fumigation_place,fumigation_operator,fumigation_license_number,letter_of_credit_number,issuing_bank,letter_of_credit_issue_date,letter_of_credit_expiry_date,presentation_deadline,beneficiary_certificate_type,beneficiary_statement,letter_of_credit_terms,required_documents".to_owned(),
         [
             csv(document.document_type.as_str()),
             csv(&document.number),
@@ -812,6 +1003,23 @@ pub fn export_csv(document: &TradeDocument, output_dir: &Path) -> Result<PathBuf
             csv(&document.payload.inspection_date),
             csv(&document.payload.inspection_place),
             csv(&document.payload.inspection_result),
+            csv(&document.payload.fumigation_agent),
+            csv(&document.payload.fumigation_method),
+            document.payload.fumigation_temperature_celsius.to_string(),
+            document.payload.fumigation_duration_hours.to_string(),
+            csv(&document.payload.fumigation_date),
+            csv(&document.payload.fumigation_place),
+            csv(&document.payload.fumigation_operator),
+            csv(&document.payload.fumigation_license_number),
+            csv(&document.payload.letter_of_credit_number),
+            csv(&document.payload.issuing_bank),
+            csv(&document.payload.letter_of_credit_issue_date),
+            csv(&document.payload.letter_of_credit_expiry_date),
+            csv(&document.payload.presentation_deadline),
+            csv(&document.payload.beneficiary_certificate_type),
+            csv(&document.payload.beneficiary_statement),
+            csv(&document.payload.letter_of_credit_terms),
+            csv(&document.payload.required_documents),
         ]
         .join(","),
         String::new(),
@@ -1182,6 +1390,8 @@ fn template(document: &TradeDocument) -> &'static str {
         DocumentType::InsurancePolicy => INSURANCE_POLICY_TEMPLATE,
         DocumentType::CertificateOfOrigin => CERTIFICATE_OF_ORIGIN_TEMPLATE,
         DocumentType::InspectionCertificate => INSPECTION_CERTIFICATE_TEMPLATE,
+        DocumentType::FumigationCertificate => FUMIGATION_CERTIFICATE_TEMPLATE,
+        DocumentType::BeneficiaryCertificate => BENEFICIARY_CERTIFICATE_TEMPLATE,
     }
 }
 
@@ -1199,6 +1409,8 @@ fn export_stem(document: &TradeDocument) -> String {
         DocumentType::InsurancePolicy => "InsuranceApplication",
         DocumentType::CertificateOfOrigin => "CertificateOfOriginApplication",
         DocumentType::InspectionCertificate => "InspectionCertificateApplication",
+        DocumentType::FumigationCertificate => "FumigationCertificateApplication",
+        DocumentType::BeneficiaryCertificate => "BeneficiaryCertificate",
     };
     let raw = format!(
         "{}_{}_{}_V{}_{}",

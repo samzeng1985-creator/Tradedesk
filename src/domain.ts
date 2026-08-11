@@ -449,7 +449,9 @@ export type DocumentType =
   | "bill_of_lading"
   | "insurance_policy"
   | "certificate_of_origin"
-  | "inspection_certificate";
+  | "inspection_certificate"
+  | "fumigation_certificate"
+  | "beneficiary_certificate";
 export type DocumentStatus = "draft" | "issued" | "voided";
 export type ValidationSeverity = "error" | "warning";
 
@@ -529,6 +531,23 @@ export interface DocumentPayload {
   inspectionDate: string;
   inspectionPlace: string;
   inspectionResult: string;
+  fumigationAgent: string;
+  fumigationMethod: string;
+  fumigationTemperatureCelsius: number;
+  fumigationDurationHours: number;
+  fumigationDate: string;
+  fumigationPlace: string;
+  fumigationOperator: string;
+  fumigationLicenseNumber: string;
+  letterOfCreditNumber: string;
+  issuingBank: string;
+  letterOfCreditIssueDate: string;
+  letterOfCreditExpiryDate: string;
+  presentationDeadline: string;
+  beneficiaryCertificateType: string;
+  beneficiaryStatement: string;
+  letterOfCreditTerms: string;
+  requiredDocuments: string;
   lines: DocumentLineSnapshot[];
 }
 

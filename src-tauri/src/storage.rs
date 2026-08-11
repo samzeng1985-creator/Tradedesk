@@ -2368,7 +2368,9 @@ impl EncryptedDatabase {
             | DocumentType::BillOfLading
             | DocumentType::InsurancePolicy
             | DocumentType::CertificateOfOrigin
-            | DocumentType::InspectionCertificate => &shipping_address,
+            | DocumentType::InspectionCertificate
+            | DocumentType::FumigationCertificate
+            | DocumentType::BeneficiaryCertificate => &shipping_address,
             DocumentType::CommercialInvoice | DocumentType::ProformaInvoice => &billing_address,
             _ => &customer_address,
         };
@@ -2483,6 +2485,23 @@ impl EncryptedDatabase {
             inspection_date: input.issue_date.trim().to_owned(),
             inspection_place: String::new(),
             inspection_result: "Conforms to the stated inspection standard.".to_owned(),
+            fumigation_agent: "Methyl Bromide".to_owned(),
+            fumigation_method: "Fumigation under gas-proof sheet".to_owned(),
+            fumigation_temperature_celsius: 21.0,
+            fumigation_duration_hours: 24.0,
+            fumigation_date: input.issue_date.trim().to_owned(),
+            fumigation_place: String::new(),
+            fumigation_operator: String::new(),
+            fumigation_license_number: String::new(),
+            letter_of_credit_number: String::new(),
+            issuing_bank: String::new(),
+            letter_of_credit_issue_date: String::new(),
+            letter_of_credit_expiry_date: String::new(),
+            presentation_deadline: String::new(),
+            beneficiary_certificate_type: "Beneficiary's Certificate".to_owned(),
+            beneficiary_statement: "We hereby certify that the documents required under the letter of credit have been presented in accordance with its terms.".to_owned(),
+            letter_of_credit_terms: String::new(),
+            required_documents: String::new(),
             lines,
         };
         let payload_json = serde_json::to_string(&payload).map_err(json_error)?;
@@ -2535,6 +2554,8 @@ impl EncryptedDatabase {
                         | DocumentType::InsurancePolicy
                         | DocumentType::CertificateOfOrigin
                         | DocumentType::InspectionCertificate
+                        | DocumentType::FumigationCertificate
+                        | DocumentType::BeneficiaryCertificate
                 ) | (
                     DocumentType::PackingList,
                     DocumentType::ShippingMarks
@@ -2544,20 +2565,29 @@ impl EncryptedDatabase {
                         | DocumentType::InsurancePolicy
                         | DocumentType::CertificateOfOrigin
                         | DocumentType::InspectionCertificate
+                        | DocumentType::FumigationCertificate
+                        | DocumentType::BeneficiaryCertificate
                 ) | (
                     DocumentType::ShipperInstruction,
                     DocumentType::BillOfLading
                         | DocumentType::InsurancePolicy
                         | DocumentType::CertificateOfOrigin
                         | DocumentType::InspectionCertificate
+                        | DocumentType::FumigationCertificate
+                        | DocumentType::BeneficiaryCertificate
                 ) | (
                     DocumentType::BillOfLading,
                     DocumentType::InsurancePolicy
                         | DocumentType::CertificateOfOrigin
                         | DocumentType::InspectionCertificate
+                        | DocumentType::FumigationCertificate
+                        | DocumentType::BeneficiaryCertificate
                 ) | (
                     DocumentType::CustomsDeclaration,
-                    DocumentType::CertificateOfOrigin | DocumentType::InspectionCertificate
+                    DocumentType::CertificateOfOrigin
+                        | DocumentType::InspectionCertificate
+                        | DocumentType::FumigationCertificate
+                        | DocumentType::BeneficiaryCertificate
                 )
             )
         {
@@ -2626,6 +2656,23 @@ impl EncryptedDatabase {
                 payload.inspection_result =
                     "Conforms to the stated inspection standard.".to_owned();
             }
+        }
+        if input.target_document_type == DocumentType::FumigationCertificate {
+            payload.fumigation_date = input.issue_date.trim().to_owned();
+            if payload.fumigation_agent.trim().is_empty() {
+                payload.fumigation_agent = "Methyl Bromide".to_owned();
+            }
+            if payload.fumigation_method.trim().is_empty() {
+                payload.fumigation_method = "Fumigation under gas-proof sheet".to_owned();
+            }
+            if payload.fumigation_duration_hours <= 0.0 {
+                payload.fumigation_duration_hours = 24.0;
+            }
+        }
+        if input.target_document_type == DocumentType::BeneficiaryCertificate
+            && payload.beneficiary_certificate_type.trim().is_empty()
+        {
+            payload.beneficiary_certificate_type = "Beneficiary's Certificate".to_owned();
         }
         let payload_json = serde_json::to_string(&payload).map_err(json_error)?;
         self.connection.execute(
@@ -2700,6 +2747,12 @@ impl EncryptedDatabase {
             || !payload.premium_rate_percent.is_finite()
             || payload.premium_rate_percent < 0.0
             || payload.premium_rate_percent > 100.0
+            || !payload.fumigation_temperature_celsius.is_finite()
+            || payload.fumigation_temperature_celsius < -100.0
+            || payload.fumigation_temperature_celsius > 200.0
+            || !payload.fumigation_duration_hours.is_finite()
+            || payload.fumigation_duration_hours < 0.0
+            || payload.fumigation_duration_hours > 10_000.0
         {
             return Err(rusqlite::Error::InvalidQuery);
         }
@@ -2779,7 +2832,9 @@ impl EncryptedDatabase {
             | DocumentType::BillOfLading
             | DocumentType::InsurancePolicy
             | DocumentType::CertificateOfOrigin
-            | DocumentType::InspectionCertificate => {
+            | DocumentType::InspectionCertificate
+            | DocumentType::FumigationCertificate
+            | DocumentType::BeneficiaryCertificate => {
                 transaction.execute(
                     "UPDATE trade_cases SET stage = 'documents' WHERE id = ?1",
                     params![document.business_case_id],
@@ -3823,6 +3878,30 @@ mod tests {
                 .unwrap();
             assert_eq!(inspection_draft.payload.manufacturer, issued.payload.seller);
             assert_eq!(inspection_draft.payload.inspection_date, "2026-08-11");
+            let fumigation_draft = database
+                .convert_document(ConvertDocumentInput {
+                    source_document_id: issued.id.clone(),
+                    target_document_type: DocumentType::FumigationCertificate,
+                    number: "FUM-20260811-0001".into(),
+                    language: "zh_en".into(),
+                    issue_date: "2026-08-11".into(),
+                })
+                .unwrap();
+            assert_eq!(fumigation_draft.payload.fumigation_date, "2026-08-11");
+            assert_eq!(fumigation_draft.payload.fumigation_duration_hours, 24.0);
+            let beneficiary_draft = database
+                .convert_document(ConvertDocumentInput {
+                    source_document_id: issued.id.clone(),
+                    target_document_type: DocumentType::BeneficiaryCertificate,
+                    number: "BC-20260811-0001".into(),
+                    language: "zh_en".into(),
+                    issue_date: "2026-08-11".into(),
+                })
+                .unwrap();
+            assert_eq!(
+                beneficiary_draft.payload.beneficiary_certificate_type,
+                "Beneficiary's Certificate"
+            );
             assert_eq!(issued.status, DocumentStatus::Issued);
             if let Some(typst) = crate::document::find_typst(std::path::Path::new("")) {
                 let render_root =
@@ -3869,6 +3948,8 @@ mod tests {
                     DocumentType::InsurancePolicy,
                     DocumentType::CertificateOfOrigin,
                     DocumentType::InspectionCertificate,
+                    DocumentType::FumigationCertificate,
+                    DocumentType::BeneficiaryCertificate,
                 ] {
                     let mut template_document = issued.clone();
                     template_document.document_type = document_type;
@@ -3989,6 +4070,35 @@ mod tests {
                     .iter()
                     .any(|issue| issue.code == "cross_document_weight_mismatch")
             );
+            let mut fumigation_validation = packing_validation.clone();
+            fumigation_validation.id = "fumigation-validation".into();
+            fumigation_validation.document_type = DocumentType::FumigationCertificate;
+            fumigation_validation.payload.lines[0].packages += 1;
+            let fumigation_issues = crate::document::cross_validate(
+                &fumigation_validation,
+                std::slice::from_ref(&packing_validation),
+            );
+            assert!(
+                fumigation_issues
+                    .iter()
+                    .any(|issue| issue.code == "cross_document_package_mismatch")
+            );
+            let mut beneficiary_validation = issued.clone();
+            beneficiary_validation.id = "beneficiary-validation".into();
+            beneficiary_validation.document_type = DocumentType::BeneficiaryCertificate;
+            beneficiary_validation.payload.lines[0].unit_price_minor += 1;
+            beneficiary_validation.payload.lines[0].amount_minor += 1;
+            beneficiary_validation.payload.lines[0].hs_code = "DIFFERENT".into();
+            let beneficiary_issues = crate::document::cross_validate(
+                &beneficiary_validation,
+                std::slice::from_ref(&issued),
+            );
+            for code in [
+                "cross_document_amount_mismatch",
+                "cross_document_hs_mismatch",
+            ] {
+                assert!(beneficiary_issues.iter().any(|issue| issue.code == code));
+            }
             assert!(
                 database
                     .save_document(SaveDocumentInput {
@@ -4010,7 +4120,7 @@ mod tests {
             assert_eq!(database.summary().unwrap().products, 1);
             assert_eq!(database.summary().unwrap().active_cases, 1);
             assert_eq!(database.summary().unwrap().purchase_orders, 1);
-            assert_eq!(database.summary().unwrap().documents, 7);
+            assert_eq!(database.summary().unwrap().documents, 9);
         }
         let reopened =
             EncryptedDatabase::open(&path, Zeroizing::new("test-password".to_owned())).unwrap();
@@ -4032,7 +4142,7 @@ mod tests {
             PaymentStatus::Partial
         );
         let documents = reopened.list_documents().unwrap();
-        assert_eq!(documents.len(), 8);
+        assert_eq!(documents.len(), 10);
         assert!(documents.iter().any(|document| {
             document.document_type == DocumentType::CommercialInvoice && document.version == 2
         }));
@@ -4058,6 +4168,14 @@ mod tests {
         }));
         assert!(documents.iter().any(|document| {
             document.document_type == DocumentType::InspectionCertificate
+                && document.status == DocumentStatus::Draft
+        }));
+        assert!(documents.iter().any(|document| {
+            document.document_type == DocumentType::FumigationCertificate
+                && document.status == DocumentStatus::Draft
+        }));
+        assert!(documents.iter().any(|document| {
+            document.document_type == DocumentType::BeneficiaryCertificate
                 && document.status == DocumentStatus::Draft
         }));
         drop(reopened);
