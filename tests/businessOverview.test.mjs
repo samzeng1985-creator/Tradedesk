@@ -17,6 +17,7 @@ function order(id, currency, sourceCaseLineId, quantity, amountMinor, milestoneS
   return {
     id, number: id, businessCaseId: "case-1", businessCaseNumber: "TD-1", supplierId: id,
     supplierName: id, status: "in_production", currency, expectedDate: "2026-08-01", notes: "",
+    exchangeRate: currency === "USD" ? 1 : 0, exchangeRateDate: "",
     totalAmountMinor: amountMinor, completedQuantity: 0, readyQuantity: 0,
     lines: [{
       id: `${id}-line`, sourceCaseLineId, productId: sourceCaseLineId, sku: sourceCaseLineId,
@@ -52,10 +53,24 @@ test("aggregates profit, coverage and cross-process risks for one business case"
   assert.equal(result.shipmentCoverage, 50);
   assert.equal(result.receivedPercent, 30);
   assert.equal(result.foreignCurrencyOrders.length, 1);
+  assert.equal(result.unconvertedOrders.length, 1);
   assert.ok(result.risks.some((risk) => risk.category === "成本币种"));
   assert.ok(result.risks.some((risk) => risk.category === "生产异常"));
   assert.ok(result.risks.some((risk) => risk.category === "收款逾期"));
   assert.ok(result.risks.some((risk) => risk.category === "单证校验"));
+});
+
+test("converts CNY purchases into the USD business currency using the saved snapshot rate", () => {
+  const cnyOrder = {
+    ...order("po-cny", "CNY", "line-1", 10, 360_000),
+    exchangeRate: 7.2,
+    exchangeRateDate: "2026-08-11",
+  };
+  const result = buildBusinessOverview(businessCase, [cnyOrder], [], [], [], [], "2026-08-11");
+  assert.equal(result.purchaseTotalMinor, 50_000);
+  assert.equal(result.grossProfitMinor, 50_000);
+  assert.equal(result.unconvertedOrders.length, 0);
+  assert.ok(!result.risks.some((risk) => risk.category === "成本币种"));
 });
 
 test("does not flag future fulfillment work while a case is still in quotation", () => {

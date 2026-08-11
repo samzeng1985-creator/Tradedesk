@@ -19,7 +19,7 @@ use crate::domain::{
     ShipmentLine, ShipmentStatus, Supplier, SupplierInput, TradeDocument, WorkspaceSummary,
 };
 
-const SCHEMA_VERSION: i64 = 13;
+const SCHEMA_VERSION: i64 = 14;
 
 const MILESTONE_STAGES: [(&str, &str); 6] = [
     ("raw_material", "原料准备"),
@@ -338,6 +338,8 @@ impl EncryptedDatabase {
                 supplier_name_snapshot TEXT NOT NULL,
                 status TEXT NOT NULL DEFAULT 'draft',
                 currency TEXT NOT NULL,
+                exchange_rate REAL NOT NULL DEFAULT 0,
+                exchange_rate_date TEXT NOT NULL DEFAULT '',
                 expected_date TEXT NOT NULL DEFAULT '',
                 notes TEXT NOT NULL DEFAULT '',
                 total_amount_minor INTEGER NOT NULL DEFAULT 0,
@@ -515,6 +517,18 @@ impl EncryptedDatabase {
             "trade_case_lines",
             "source_type",
             "TEXT NOT NULL DEFAULT 'product'",
+        )?;
+        ensure_column(
+            &transaction,
+            "purchase_orders",
+            "exchange_rate",
+            "REAL NOT NULL DEFAULT 0",
+        )?;
+        ensure_column(
+            &transaction,
+            "purchase_orders",
+            "exchange_rate_date",
+            "TEXT NOT NULL DEFAULT ''",
         )?;
 
         transaction.execute_batch(
@@ -1831,7 +1845,8 @@ impl EncryptedDatabase {
     pub fn get_purchase_order(&self, id: &str) -> rusqlite::Result<PurchaseOrder> {
         let mut purchase_order = self.connection.query_row(
             "SELECT id, number, trade_case_id, trade_case_number_snapshot, supplier_id,
-                    supplier_name_snapshot, status, currency, expected_date, notes,
+                    supplier_name_snapshot, status, currency, exchange_rate, exchange_rate_date,
+                    expected_date, notes,
                     total_amount_minor
              FROM purchase_orders WHERE id = ?1 AND active = 1",
             params![id],
@@ -1848,9 +1863,11 @@ impl EncryptedDatabase {
                     supplier_name: row.get(5)?,
                     status,
                     currency: row.get(7)?,
-                    expected_date: row.get(8)?,
-                    notes: row.get(9)?,
-                    total_amount_minor: row.get(10)?,
+                    exchange_rate: row.get(8)?,
+                    exchange_rate_date: row.get(9)?,
+                    expected_date: row.get(10)?,
+                    notes: row.get(11)?,
+                    total_amount_minor: row.get(12)?,
                     completed_quantity: 0.0,
                     ready_quantity: 0.0,
                     lines: Vec::new(),
@@ -1935,11 +1952,24 @@ impl EncryptedDatabase {
         }
 
         let transaction = self.connection.unchecked_transaction()?;
-        let case_number = transaction.query_row(
-            "SELECT number FROM trade_cases WHERE id = ?1 AND active = 1",
+        let (case_number, case_currency) = transaction.query_row(
+            "SELECT number, currency FROM trade_cases WHERE id = ?1 AND active = 1",
             params![input.business_case_id],
-            |row| row.get::<_, String>(0),
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
         )?;
+        let case_currency = case_currency.trim().to_uppercase();
+        let purchase_currency = input.currency.trim().to_uppercase();
+        let exchange_rate = if purchase_currency == case_currency {
+            1.0
+        } else {
+            if !input.exchange_rate.is_finite()
+                || input.exchange_rate <= 0.0
+                || input.exchange_rate_date.trim().is_empty()
+            {
+                return Err(rusqlite::Error::InvalidQuery);
+            }
+            input.exchange_rate
+        };
         let supplier_name = transaction.query_row(
             "SELECT legal_name FROM suppliers WHERE id = ?1 AND active = 1",
             params![input.supplier_id],
@@ -1987,8 +2017,8 @@ impl EncryptedDatabase {
             "INSERT INTO purchase_orders(
                 id, number, trade_case_id, trade_case_number_snapshot, supplier_id,
                 supplier_name_snapshot, status, currency, expected_date, notes,
-                total_amount_minor, active
-             ) VALUES(?1, ?2, ?3, ?4, ?5, ?6, 'draft', ?7, ?8, ?9, ?10, 1)",
+                exchange_rate, exchange_rate_date, total_amount_minor, active
+             ) VALUES(?1, ?2, ?3, ?4, ?5, ?6, 'draft', ?7, ?8, ?9, ?10, ?11, ?12, 1)",
             params![
                 id,
                 input.number.trim(),
@@ -1996,9 +2026,15 @@ impl EncryptedDatabase {
                 case_number,
                 input.supplier_id,
                 supplier_name,
-                input.currency.trim().to_uppercase(),
+                purchase_currency,
                 input.expected_date.trim(),
                 input.notes.trim(),
+                exchange_rate,
+                if case_currency == purchase_currency {
+                    ""
+                } else {
+                    input.exchange_rate_date.trim()
+                },
                 total_amount_minor,
             ],
         )?;
@@ -2076,11 +2112,26 @@ impl EncryptedDatabase {
         }
 
         let transaction = self.connection.unchecked_transaction()?;
-        let case_id = transaction.query_row(
-            "SELECT trade_case_id FROM purchase_orders WHERE id = ?1 AND active = 1",
+        let (case_id, case_currency) = transaction.query_row(
+            "SELECT po.trade_case_id, tc.currency
+             FROM purchase_orders po JOIN trade_cases tc ON tc.id = po.trade_case_id
+             WHERE po.id = ?1 AND po.active = 1",
             params![input.id],
-            |row| row.get::<_, String>(0),
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
         )?;
+        let case_currency = case_currency.trim().to_uppercase();
+        let purchase_currency = input.currency.trim().to_uppercase();
+        let exchange_rate = if purchase_currency == case_currency {
+            1.0
+        } else {
+            if !input.exchange_rate.is_finite()
+                || input.exchange_rate <= 0.0
+                || input.exchange_rate_date.trim().is_empty()
+            {
+                return Err(rusqlite::Error::InvalidQuery);
+            }
+            input.exchange_rate
+        };
         let supplier_name = transaction.query_row(
             "SELECT legal_name FROM suppliers WHERE id = ?1 AND active = 1",
             params![input.supplier_id],
@@ -2177,12 +2228,19 @@ impl EncryptedDatabase {
 
         transaction.execute(
             "UPDATE purchase_orders SET supplier_id = ?1, supplier_name_snapshot = ?2,
-                    currency = ?3, expected_date = ?4, notes = ?5, total_amount_minor = ?6
-             WHERE id = ?7 AND active = 1",
+                    currency = ?3, exchange_rate = ?4, exchange_rate_date = ?5,
+                    expected_date = ?6, notes = ?7, total_amount_minor = ?8
+             WHERE id = ?9 AND active = 1",
             params![
                 input.supplier_id,
                 supplier_name,
-                input.currency.trim().to_uppercase(),
+                purchase_currency,
+                exchange_rate,
+                if case_currency == purchase_currency {
+                    ""
+                } else {
+                    input.exchange_rate_date.trim()
+                },
                 input.expected_date.trim(),
                 input.notes.trim(),
                 total_amount_minor,
@@ -3711,9 +3769,12 @@ fn update_case_purchase_amount(
 ) -> rusqlite::Result<()> {
     transaction.execute(
         "UPDATE trade_cases SET purchase_amount_minor = (
-            SELECT COALESCE(SUM(total_amount_minor), 0)
-            FROM purchase_orders
-            WHERE trade_case_id = ?1 AND active = 1 AND status <> 'cancelled'
+            SELECT COALESCE(SUM(CASE
+                WHEN po.currency = tc.currency THEN po.total_amount_minor
+                WHEN po.exchange_rate > 0 THEN ROUND(po.total_amount_minor / po.exchange_rate)
+                ELSE 0 END), 0)
+            FROM purchase_orders po JOIN trade_cases tc ON tc.id = po.trade_case_id
+            WHERE po.trade_case_id = ?1 AND po.active = 1 AND po.status <> 'cancelled'
          ) WHERE id = ?1",
         params![case_id],
     )?;
@@ -4126,6 +4187,8 @@ mod tests {
                     business_case_id: business_case.id.clone(),
                     supplier_id: supplier.id,
                     currency: "USD".into(),
+                    exchange_rate: 1.0,
+                    exchange_rate_date: String::new(),
                     expected_date: "2026-09-01".into(),
                     notes: "first purchase".into(),
                     lines: vec![crate::domain::PurchaseOrderLineInput {
@@ -4144,6 +4207,8 @@ mod tests {
                         business_case_id: business_case.id.clone(),
                         supplier_id: purchase_order.supplier_id.clone(),
                         currency: "USD".into(),
+                        exchange_rate: 1.0,
+                        exchange_rate_date: String::new(),
                         expected_date: "2026-09-01".into(),
                         notes: String::new(),
                         lines: vec![crate::domain::PurchaseOrderLineInput {
@@ -4174,6 +4239,8 @@ mod tests {
                     id: purchase_order.id.clone(),
                     supplier_id: purchase_order.supplier_id.clone(),
                     currency: purchase_order.currency.clone(),
+                    exchange_rate: 1.0,
+                    exchange_rate_date: String::new(),
                     expected_date: purchase_order.expected_date.clone(),
                     notes: "corrected purchase price".into(),
                     lines: vec![crate::domain::PurchaseOrderLineInput {
@@ -4186,6 +4253,52 @@ mod tests {
             assert_eq!(purchase_order.number, "PO-2026-0001");
             assert_eq!(purchase_order.total_amount_minor, 2_000);
             assert_eq!(purchase_order.notes, "corrected purchase price");
+            let cny_purchase = database
+                .update_purchase_order(crate::domain::PurchaseOrderUpdateInput {
+                    id: purchase_order.id.clone(),
+                    supplier_id: purchase_order.supplier_id.clone(),
+                    currency: "CNY".into(),
+                    exchange_rate: 7.2,
+                    exchange_rate_date: "2026-08-11".into(),
+                    expected_date: purchase_order.expected_date.clone(),
+                    notes: "CNY purchase with USD conversion".into(),
+                    lines: vec![crate::domain::PurchaseOrderLineInput {
+                        source_case_line_id: business_case.lines[0].id.clone(),
+                        quantity: 12.5,
+                        unit_cost_minor: 1_152,
+                    }],
+                })
+                .unwrap();
+            assert_eq!(cny_purchase.exchange_rate, 7.2);
+            assert_eq!(cny_purchase.exchange_rate_date, "2026-08-11");
+            assert_eq!(cny_purchase.total_amount_minor, 14_400);
+            assert_eq!(
+                database
+                    .connection
+                    .query_row(
+                        "SELECT purchase_amount_minor FROM trade_cases WHERE id = ?1",
+                        params![business_case.id],
+                        |row| row.get::<_, i64>(0),
+                    )
+                    .unwrap(),
+                2_000
+            );
+            let purchase_order = database
+                .update_purchase_order(crate::domain::PurchaseOrderUpdateInput {
+                    id: cny_purchase.id.clone(),
+                    supplier_id: cny_purchase.supplier_id.clone(),
+                    currency: "USD".into(),
+                    exchange_rate: 1.0,
+                    exchange_rate_date: String::new(),
+                    expected_date: cny_purchase.expected_date.clone(),
+                    notes: "corrected purchase price".into(),
+                    lines: vec![crate::domain::PurchaseOrderLineInput {
+                        source_case_line_id: business_case.lines[0].id.clone(),
+                        quantity: 12.5,
+                        unit_cost_minor: 160,
+                    }],
+                })
+                .unwrap();
             let cost_estimate = database
                 .save_cost_estimate(crate::domain::CostEstimateInput {
                     id: None,
@@ -4343,6 +4456,8 @@ mod tests {
                         business_case_id: business_case.id.clone(),
                         supplier_id: purchase_order.supplier_id.clone(),
                         currency: "USD".into(),
+                        exchange_rate: 1.0,
+                        exchange_rate_date: String::new(),
                         expected_date: "2026-09-02".into(),
                         notes: String::new(),
                         lines: vec![crate::domain::PurchaseOrderLineInput {
@@ -4828,7 +4943,7 @@ mod tests {
                     |row| row.get::<_, String>(0),
                 )
                 .unwrap(),
-            "13"
+            "14"
         );
         drop(database);
         let _ = std::fs::remove_file(&path);
@@ -4883,7 +4998,7 @@ mod tests {
                     |row| row.get::<_, String>(0),
                 )
                 .unwrap(),
-            "13"
+            "14"
         );
         drop(database);
         let _ = std::fs::remove_file(&path);

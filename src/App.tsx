@@ -443,7 +443,7 @@ export default function App() {
   const currentCase = businessCases.find((item) => item.id === overviewCaseId) ?? businessCases[0] ?? null;
   const overview = buildBusinessOverview(currentCase, purchaseOrders, shipmentBatches, paymentPlans, documents, costEstimates);
   const {
-    orders: currentOrders, foreignCurrencyOrders, milestones: currentMilestones,
+    orders: currentOrders, foreignCurrencyOrders, unconvertedOrders, milestones: currentMilestones,
     shipments: currentShipments, purchaseTotalMinor, grossProfitMinor, margin,
     plannedPaymentMinor, receivedPaymentMinor, receivedPercent, purchaseCoverage, latestEstimate,
     productionProgress, shipmentCoverage, blockedMilestones, risks: overviewRisks,
@@ -485,7 +485,7 @@ export default function App() {
           <span className="brand-mark">TD</span>
           <span>
             <strong>TradeDesk</strong>
-            <small>Local · 0.21.1</small>
+            <small>Local · 0.21.2</small>
           </span>
         </div>
 
@@ -569,14 +569,14 @@ export default function App() {
                 <small>{currentCase?.currency ?? "暂无业务单"}</small>
               </article>
               <article>
-                <span>{latestEstimate ? "完整估算成本" : "同币采购成本"}</span>
-                <strong>{money(latestEstimate?.totalCostMinor ?? purchaseTotalMinor, currentCase?.currency ?? "USD")}</strong>
-                <small>{latestEstimate ? `${latestEstimate.number} · 目标毛利 ${(latestEstimate.targetMarginBps / 100).toFixed(2)}%` : foreignCurrencyOrders.length ? `${foreignCurrencyOrders.length} 张异币采购未计入` : `${currentOrders.length} 张有效采购单`}</small>
+                <span>折算采购成本</span>
+                <strong>{money(purchaseTotalMinor, currentCase?.currency ?? "USD")}</strong>
+                <small>{unconvertedOrders.length ? `${unconvertedOrders.length} 张异币采购缺少汇率` : foreignCurrencyOrders.length ? `${foreignCurrencyOrders.length} 张异币采购已折算` : `${currentOrders.length} 张有效采购单`}</small>
               </article>
               <article className={grossProfitMinor < 0 ? "metric-danger" : ""}>
                 <span>暂估毛利</span>
-                <strong>{latestEstimate ? money(grossProfitMinor, currentCase?.currency ?? "USD") : foreignCurrencyOrders.length ? "待折算" : currentOrders.length ? money(grossProfitMinor, currentCase?.currency ?? "USD") : "待估算"}</strong>
-                <small>{latestEstimate ? `完整成本口径 · 暂估毛利率 ${margin}%` : currentOrders.length && !foreignCurrencyOrders.length ? purchaseCoverage < 100 ? `仅基于已录成本 · 采购覆盖 ${purchaseCoverage}%` : `暂估毛利率 ${margin}%` : "建立成本估算后计算"}</small>
+                <strong>{latestEstimate ? money(grossProfitMinor, currentCase?.currency ?? "USD") : unconvertedOrders.length ? "待折算" : currentOrders.length ? money(grossProfitMinor, currentCase?.currency ?? "USD") : "待估算"}</strong>
+                <small>{latestEstimate ? `${latestEstimate.number} 完整成本口径 · 暂估毛利率 ${margin}%` : currentOrders.length && !unconvertedOrders.length ? purchaseCoverage < 100 ? `仅基于已录成本 · 采购覆盖 ${purchaseCoverage}%` : `暂估毛利率 ${margin}%` : "建立成本估算或补齐采购汇率后计算"}</small>
               </article>
               <article>
                 <span>已收款</span>

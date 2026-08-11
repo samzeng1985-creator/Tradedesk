@@ -13,7 +13,7 @@ import type {
 } from "./domain";
 import { CurrencySelect, formatMoney } from "./currencies";
 import { AttachmentPanel } from "./AttachmentPanel";
-import { nextPurchaseSplitNumber } from "./numbering";
+import { nextPurchaseSplitNumber, todayIso } from "./numbering";
 
 interface FulfillmentCenterProps {
   orders: PurchaseOrder[];
@@ -68,6 +68,8 @@ function PurchaseEditor({ record, orders, cases, suppliers, onClose, onCreate, o
   const [caseId, setCaseId] = useState(record?.businessCaseId ?? "");
   const [supplierId, setSupplierId] = useState(record?.supplierId ?? "");
   const [currency, setCurrency] = useState(record?.currency ?? "USD");
+  const [exchangeRate, setExchangeRate] = useState(record && record.exchangeRate > 0 ? String(record.exchangeRate) : "");
+  const [exchangeRateDate, setExchangeRateDate] = useState(record?.exchangeRateDate ?? todayIso());
   const [expectedDate, setExpectedDate] = useState(record?.expectedDate ?? "");
   const [notes, setNotes] = useState(record?.notes ?? "");
   const [saving, setSaving] = useState(false);
@@ -103,6 +105,19 @@ function PurchaseEditor({ record, orders, cases, suppliers, onClose, onCreate, o
   }
 
   const [lines, setLines] = useState<DraftPurchaseLine[]>(initialCase ? buildLines(initialCase, record) : []);
+  const selectedCase = cases.find((item) => item.id === caseId);
+  const foreignCurrency = !!selectedCase && currency !== selectedCase.currency;
+
+  function changeCurrency(value: string) {
+    setCurrency(value);
+    if (value === selectedCase?.currency) {
+      setExchangeRate("1");
+      setExchangeRateDate("");
+    } else {
+      setExchangeRate("");
+      setExchangeRateDate(todayIso());
+    }
+  }
 
   function selectCase(id: string) {
     setCaseId(id);
@@ -112,6 +127,8 @@ function PurchaseEditor({ record, orders, cases, suppliers, onClose, onCreate, o
       return;
     }
     setCurrency(selected.currency);
+    setExchangeRate("1");
+    setExchangeRateDate("");
     setExpectedDate(selected.shipmentDate);
     setNumber(nextPurchaseSplitNumber(selected, orders));
     setLines(buildLines(selected, null));
@@ -142,6 +159,10 @@ function PurchaseEditor({ record, orders, cases, suppliers, onClose, onCreate, o
       setError("采购数量必须大于 0、不能超过可采购数量，采购单价必须大于 0。");
       return;
     }
+    if (foreignCurrency && (Number(exchangeRate) <= 0 || !exchangeRateDate)) {
+      setError(`采购币种与销售币种不同，请填写 1 ${selectedCase?.currency} 可兑换多少 ${currency} 及汇率日期。`);
+      return;
+    }
     setSaving(true);
     setError("");
     try {
@@ -150,8 +171,9 @@ function PurchaseEditor({ record, orders, cases, suppliers, onClose, onCreate, o
           quantity: Number(line.quantity),
           unitCostMinor: Math.round(Number(line.unitCost) * 100),
         }));
-      if (record) await onUpdate({ id: record.id, supplierId, currency, expectedDate, notes, lines: purchaseLines });
-      else await onCreate({ number, businessCaseId: caseId, supplierId, currency, expectedDate, notes, lines: purchaseLines });
+      const rate = foreignCurrency ? Number(exchangeRate) : 1;
+      if (record) await onUpdate({ id: record.id, supplierId, currency, exchangeRate: rate, exchangeRateDate: foreignCurrency ? exchangeRateDate : "", expectedDate, notes, lines: purchaseLines });
+      else await onCreate({ number, businessCaseId: caseId, supplierId, currency, exchangeRate: rate, exchangeRateDate: foreignCurrency ? exchangeRateDate : "", expectedDate, notes, lines: purchaseLines });
       onClose();
     } catch (reason) {
       setError(String(reason));
@@ -168,7 +190,9 @@ function PurchaseEditor({ record, orders, cases, suppliers, onClose, onCreate, o
           <label>采购单号（保存后不可修改）<input required readOnly value={number} placeholder="选择业务单后自动生成" /></label>
           <label>来源业务单 *<select required disabled={!!record} value={caseId} onChange={(event) => selectCase(event.target.value)}><option value="">请选择业务单</option>{cases.map((item) => <option value={item.id} key={item.id}>{item.number} · {item.customerName}</option>)}</select></label>
           <label>供应商 *<select required value={supplierId} onChange={(event) => setSupplierId(event.target.value)}><option value="">请选择供应商</option>{suppliers.map((item) => <option value={item.id} key={item.id}>{item.code} · {item.legalName}</option>)}</select></label>
-          <label>采购币种 *<CurrencySelect value={currency} onChange={setCurrency} /></label>
+          <label>采购币种 *<CurrencySelect value={currency} onChange={changeCurrency} /></label>
+          <label>采购折算汇率 {foreignCurrency ? "*" : ""}<input required={foreignCurrency} disabled={!foreignCurrency} type="number" min="0.000001" step="0.000001" value={foreignCurrency ? exchangeRate : "1"} onChange={(event) => setExchangeRate(event.target.value)} /><small className="field-hint">1 {selectedCase?.currency ?? "销售币种"} = {foreignCurrency ? exchangeRate || "—" : "1"} {currency}</small></label>
+          <label>汇率日期 {foreignCurrency ? "*" : ""}<input required={foreignCurrency} disabled={!foreignCurrency} type="date" value={foreignCurrency ? exchangeRateDate : ""} onChange={(event) => setExchangeRateDate(event.target.value)} /><small className="field-hint">保存本次采购的人工牌价快照</small></label>
           <label>预计交货日 *<input required type="date" value={expectedDate} onChange={(event) => setExpectedDate(event.target.value)} /></label>
           <label>备注<input value={notes} onChange={(event) => setNotes(event.target.value)} /></label>
         </div>
@@ -276,7 +300,7 @@ export function FulfillmentCenter({ orders, cases, suppliers, onCreate, onUpdate
           const totalQuantity = order.lines.reduce((sum, line) => sum + line.quantity, 0);
           return <article className="purchase-order-card" key={order.id}>
             <header className="purchase-order-header">
-              <div><span className="eyebrow">{order.businessCaseNumber}</span><h3>{order.number}</h3><p>{order.supplierName} · 预计交货 {order.expectedDate || "未设置"}</p></div>
+              <div><span className="eyebrow">{order.businessCaseNumber}</span><h3>{order.number}</h3><p>{order.supplierName} · 预计交货 {order.expectedDate || "未设置"}{order.exchangeRateDate ? ` · 汇率 ${order.exchangeRate}（${order.exchangeRateDate}）` : ""}</p></div>
               <div className="purchase-order-actions"><strong>{formatMoney(order.totalAmountMinor, order.currency)}</strong><div><button className="button button-secondary" onClick={() => setPurchaseEditor(order)}>编辑</button><button className="button button-secondary" onClick={() => setAttachmentOrder(order)}>附件</button></div><select aria-label={`${order.number}状态`} value={order.status} onChange={(event) => changeStatus(order.id, event.target.value as PurchaseStatus)}>{Object.entries(purchaseStatusLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></div>
             </header>
             <div className="purchase-summary"><span>采购 {totalQuantity}</span><span>生产完成 {order.completedQuantity}</span><span>可发货 {order.readyQuantity}</span><span>{order.lines.length} 个产品行</span></div>

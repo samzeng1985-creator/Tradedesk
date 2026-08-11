@@ -302,6 +302,8 @@ export interface PurchaseOrder {
   supplierName: string;
   status: PurchaseStatus;
   currency: string;
+  exchangeRate: number;
+  exchangeRateDate: string;
   expectedDate: string;
   notes: string;
   totalAmountMinor: number;
@@ -315,6 +317,8 @@ export interface PurchaseOrderInput {
   businessCaseId: string;
   supplierId: string;
   currency: string;
+  exchangeRate: number;
+  exchangeRateDate: string;
   expectedDate: string;
   notes: string;
   lines: PurchaseOrderLineInput[];
@@ -324,6 +328,8 @@ export interface PurchaseOrderUpdateInput {
   id: string;
   supplierId: string;
   currency: string;
+  exchangeRate: number;
+  exchangeRateDate: string;
   expectedDate: string;
   notes: string;
   lines: PurchaseOrderLineInput[];
