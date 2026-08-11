@@ -445,7 +445,9 @@ export type DocumentType =
   | "trade_contract"
   | "shipping_marks"
   | "shipper_instruction"
-  | "customs_declaration";
+  | "customs_declaration"
+  | "bill_of_lading"
+  | "insurance_policy";
 export type DocumentStatus = "draft" | "issued" | "voided";
 export type ValidationSeverity = "error" | "warning";
 
@@ -499,6 +501,22 @@ export interface DocumentPayload {
   billOfLadingType: string;
   customsSupervisionCode: string;
   customsDeclarationElements: string;
+  notifyParty: string;
+  notifyPartyAddress: string;
+  carrier: string;
+  billOfLadingNumber: string;
+  placeOfReceipt: string;
+  placeOfDelivery: string;
+  containerNumbers: string;
+  sealNumbers: string;
+  insuranceCompany: string;
+  policyNumber: string;
+  insuredValueMinor: number;
+  insuranceMarkupPercent: number;
+  premiumRatePercent: number;
+  premiumMinor: number;
+  insuranceCoverage: string;
+  claimsPayableAt: string;
   lines: DocumentLineSnapshot[];
 }
 

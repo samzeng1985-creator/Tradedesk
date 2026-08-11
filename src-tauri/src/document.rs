@@ -25,6 +25,8 @@ const SHIPPER_INSTRUCTION_TEMPLATE: &str =
     include_str!("../../templates/base/shipper-instruction.typ");
 const CUSTOMS_DECLARATION_TEMPLATE: &str =
     include_str!("../../templates/base/customs-declaration.typ");
+const BILL_OF_LADING_TEMPLATE: &str = include_str!("../../templates/base/bill-of-lading.typ");
+const INSURANCE_POLICY_TEMPLATE: &str = include_str!("../../templates/base/insurance-policy.typ");
 const CONFIGURATION_SHEET_TEMPLATE: &str =
     include_str!("../../templates/base/configuration-sheet.typ");
 
@@ -215,6 +217,7 @@ pub fn validate(document: &TradeDocument) -> Vec<DocumentValidationIssue> {
             | DocumentType::ShippingMarks
             | DocumentType::ShipperInstruction
             | DocumentType::CustomsDeclaration
+            | DocumentType::BillOfLading
     );
     for (index, line) in document.payload.lines.iter().enumerate() {
         if line.description.trim().is_empty() || line.quantity <= 0.0 || !line.quantity.is_finite()
@@ -252,16 +255,23 @@ pub fn validate(document: &TradeDocument) -> Vec<DocumentValidationIssue> {
     }
     if matches!(
         document.document_type,
-        DocumentType::ShipperInstruction | DocumentType::CustomsDeclaration
+        DocumentType::ShipperInstruction
+            | DocumentType::CustomsDeclaration
+            | DocumentType::BillOfLading
+            | DocumentType::InsurancePolicy
     ) && document.payload.transport_mode.trim().is_empty()
     {
         error("transport_mode_required", "运输方式不能为空");
     }
-    if document.document_type == DocumentType::ShipperInstruction
-        && (document.payload.port_of_loading.trim().is_empty()
-            || document.payload.port_of_discharge.trim().is_empty())
+    if matches!(
+        document.document_type,
+        DocumentType::ShipperInstruction
+            | DocumentType::BillOfLading
+            | DocumentType::InsurancePolicy
+    ) && (document.payload.port_of_loading.trim().is_empty()
+        || document.payload.port_of_discharge.trim().is_empty())
     {
-        error("ports_required", "货代委托书必须填写装运港和目的港");
+        error("ports_required", "运输或保险资料必须填写装运港和目的港");
     }
     let subtotal = document
         .payload
@@ -272,16 +282,44 @@ pub fn validate(document: &TradeDocument) -> Vec<DocumentValidationIssue> {
     if document.payload.discount_minor < 0 || document.payload.discount_minor > subtotal {
         error("invalid_discount", "折扣不能为负数或超过产品小计");
     }
+    if document.document_type == DocumentType::BillOfLading {
+        if document.payload.carrier.trim().is_empty() {
+            error("carrier_required", "提单补料必须填写承运人或船公司");
+        }
+        if document.payload.bill_of_lading_type.trim().is_empty() {
+            error("bill_type_required", "提单补料必须选择提单类型");
+        }
+    }
+    if document.document_type == DocumentType::InsurancePolicy {
+        if document.payload.insurance_company.trim().is_empty() {
+            error("insurance_company_required", "保险申请必须填写保险公司");
+        }
+        if document.payload.insurance_coverage.trim().is_empty() {
+            error("insurance_coverage_required", "保险申请必须填写承保险别");
+        }
+        if document.payload.insured_value_minor <= 0 {
+            error("insured_value_required", "保险金额必须大于 0");
+        }
+        let incoterm = document.payload.incoterm.trim().to_ascii_uppercase();
+        if (incoterm.starts_with("CIF") || incoterm.starts_with("CIP"))
+            && document.payload.insured_value_minor < subtotal - document.payload.discount_minor
+        {
+            error("insured_value_too_low", "CIF/CIP 保险金额不能低于货值");
+        }
+    }
     if !matches!(
         document.document_type,
         DocumentType::PackingList | DocumentType::ShippingMarks
     ) {
         for (index, line) in document.payload.lines.iter().enumerate() {
             if line.hs_code.trim().is_empty() {
-                if document.document_type == DocumentType::CustomsDeclaration {
+                if matches!(
+                    document.document_type,
+                    DocumentType::CustomsDeclaration | DocumentType::InsurancePolicy
+                ) {
                     error(
                         "hs_code_missing",
-                        &format!("报关资料第 {} 行必须填写 HS 编码", index + 1),
+                        &format!("报关或保险资料第 {} 行必须填写 HS 编码", index + 1),
                     );
                 } else {
                     hs_warnings.push(DocumentValidationIssue {
@@ -329,32 +367,38 @@ pub fn cross_validate(
     match document.document_type {
         DocumentType::CommercialInvoice => {
             if let Some(item) = peer(DocumentType::PackingList) {
-                pairs.push((item, false, false));
+                pairs.push((item, false, false, false, false));
             }
             if let Some(item) = peer(DocumentType::CustomsDeclaration) {
-                pairs.push((item, true, true));
+                pairs.push((item, true, true, true, false));
+            }
+            if let Some(item) = peer(DocumentType::InsurancePolicy) {
+                pairs.push((item, false, false, true, false));
             }
         }
         DocumentType::PackingList => {
             if let Some(item) = peer(DocumentType::CommercialInvoice) {
-                pairs.push((item, false, false));
+                pairs.push((item, false, false, false, false));
             }
             if let Some(item) = peer(DocumentType::ShipperInstruction) {
-                pairs.push((item, true, false));
+                pairs.push((item, true, false, false, true));
             }
             if let Some(item) = peer(DocumentType::ShippingMarks) {
-                pairs.push((item, false, false));
+                pairs.push((item, false, false, false, false));
             }
             if let Some(item) = peer(DocumentType::CustomsDeclaration) {
-                pairs.push((item, true, false));
+                pairs.push((item, true, false, false, false));
+            }
+            if let Some(item) = peer(DocumentType::BillOfLading) {
+                pairs.push((item, true, false, false, true));
             }
         }
         DocumentType::CustomsDeclaration => {
             if let Some(item) = peer(DocumentType::CommercialInvoice) {
-                pairs.push((item, false, true));
+                pairs.push((item, false, true, true, false));
             }
             if let Some(item) = peer(DocumentType::PackingList) {
-                pairs.push((item, true, false));
+                pairs.push((item, true, false, false, false));
             }
         }
         DocumentType::ShipperInstruction | DocumentType::ShippingMarks => {
@@ -363,14 +407,45 @@ pub fn cross_validate(
                     item,
                     document.document_type == DocumentType::ShipperInstruction,
                     false,
+                    false,
+                    document.document_type == DocumentType::ShipperInstruction,
                 ));
+            }
+            if document.document_type == DocumentType::ShipperInstruction
+                && let Some(item) = peer(DocumentType::BillOfLading)
+            {
+                pairs.push((item, true, false, false, true));
+            }
+        }
+        DocumentType::BillOfLading => {
+            if let Some(item) = peer(DocumentType::PackingList) {
+                pairs.push((item, true, false, false, true));
+            }
+            if let Some(item) = peer(DocumentType::ShipperInstruction) {
+                pairs.push((item, true, false, false, true));
+            }
+        }
+        DocumentType::InsurancePolicy => {
+            if let Some(item) = peer(DocumentType::CommercialInvoice) {
+                pairs.push((item, false, false, true, false));
+            }
+            if let Some(item) = peer(DocumentType::BillOfLading) {
+                pairs.push((item, false, false, false, true));
             }
         }
         _ => {}
     }
     let mut issues = Vec::new();
-    for (other, compare_weight, compare_amount) in pairs {
-        compare_document_pair(document, other, compare_weight, compare_amount, &mut issues);
+    for (other, compare_physical, compare_amount, compare_hs, compare_transport) in pairs {
+        compare_document_pair(
+            document,
+            other,
+            compare_physical,
+            compare_amount,
+            compare_hs,
+            compare_transport,
+            &mut issues,
+        );
     }
     issues
 }
@@ -378,8 +453,10 @@ pub fn cross_validate(
 fn compare_document_pair(
     document: &TradeDocument,
     other: &TradeDocument,
-    compare_weight: bool,
+    compare_physical: bool,
     compare_amount: bool,
+    compare_hs: bool,
+    compare_transport: bool,
     issues: &mut Vec<DocumentValidationIssue>,
 ) {
     let quantities = |value: &TradeDocument| {
@@ -408,19 +485,35 @@ fn compare_document_pair(
             message: format!("与单证 {} 的产品数量不一致，请核对后再签发", other.number),
         });
     }
-    if compare_weight {
-        let weights = |value: &TradeDocument| {
-            value.payload.lines.iter().fold((0.0, 0.0), |sum, line| {
-                (sum.0 + line.net_weight_kg, sum.1 + line.gross_weight_kg)
-            })
+    if compare_physical {
+        let physical = |value: &TradeDocument| {
+            value
+                .payload
+                .lines
+                .iter()
+                .fold((0_i64, 0.0, 0.0, 0.0), |sum, line| {
+                    (
+                        sum.0 + line.packages,
+                        sum.1 + line.net_weight_kg,
+                        sum.2 + line.gross_weight_kg,
+                        sum.3 + line.cbm,
+                    )
+                })
         };
-        let current = weights(document);
-        let compared = weights(other);
-        if (current.0 - compared.0).abs() > 0.001 || (current.1 - compared.1).abs() > 0.001 {
+        let current = physical(document);
+        let compared = physical(other);
+        if (current.1 - compared.1).abs() > 0.001 || (current.2 - compared.2).abs() > 0.001 {
             issues.push(DocumentValidationIssue {
                 severity: ValidationSeverity::Error,
                 code: "cross_document_weight_mismatch".to_owned(),
                 message: format!("与单证 {} 的净重或毛重不一致", other.number),
+            });
+        }
+        if current.0 != compared.0 || (current.3 - compared.3).abs() > 0.001 {
+            issues.push(DocumentValidationIssue {
+                severity: ValidationSeverity::Error,
+                code: "cross_document_package_mismatch".to_owned(),
+                message: format!("与单证 {} 的总件数或 CBM 不一致", other.number),
             });
         }
     }
@@ -441,6 +534,8 @@ fn compare_document_pair(
                 message: format!("与单证 {} 的币种或申报总额不一致", other.number),
             });
         }
+    }
+    if compare_hs {
         for line in &document.payload.lines {
             if let Some(other_line) = other
                 .payload
@@ -457,6 +552,53 @@ fn compare_document_pair(
                     message: format!("产品 {} 与单证 {} 的 HS 编码不一致", line.sku, other.number),
                 });
             }
+        }
+    }
+    if compare_transport {
+        let fields = [
+            (
+                "装运港",
+                document.payload.port_of_loading.trim(),
+                other.payload.port_of_loading.trim(),
+            ),
+            (
+                "目的港",
+                document.payload.port_of_discharge.trim(),
+                other.payload.port_of_discharge.trim(),
+            ),
+            (
+                "船名/航次",
+                document.payload.vessel_voyage.trim(),
+                other.payload.vessel_voyage.trim(),
+            ),
+            (
+                "装运日期",
+                document.payload.shipment_date.trim(),
+                other.payload.shipment_date.trim(),
+            ),
+            (
+                "唛头",
+                document.payload.shipping_marks.trim(),
+                other.payload.shipping_marks.trim(),
+            ),
+        ];
+        let mismatches = fields
+            .iter()
+            .filter(|(_, current, compared)| {
+                !current.is_empty() && !compared.is_empty() && current != compared
+            })
+            .map(|(label, _, _)| *label)
+            .collect::<Vec<_>>();
+        if !mismatches.is_empty() {
+            issues.push(DocumentValidationIssue {
+                severity: ValidationSeverity::Error,
+                code: "cross_document_transport_mismatch".to_owned(),
+                message: format!(
+                    "与单证 {} 的运输字段不一致：{}",
+                    other.number,
+                    mismatches.join("、")
+                ),
+            });
         }
     }
 }
@@ -508,7 +650,7 @@ pub fn export_csv(document: &TradeDocument, output_dir: &Path) -> Result<PathBuf
     fs::create_dir_all(output_dir).map_err(|error| format!("无法创建单证导出目录：{error}"))?;
     let output_path = output_dir.join(format!("{}.csv", export_stem(document)));
     let mut rows = vec![
-        "document_type,document_number,business_case,issue_date,currency,transport_mode,vessel_voyage,booking_reference,freight_terms,bill_of_lading_type,shipping_marks,customs_supervision_code,customs_declaration_elements".to_owned(),
+        "document_type,document_number,business_case,issue_date,currency,transport_mode,vessel_voyage,booking_reference,freight_terms,bill_of_lading_type,bill_of_lading_number,carrier,notify_party,place_of_receipt,place_of_delivery,container_numbers,seal_numbers,shipping_marks,insurance_company,policy_number,insured_value,insurance_markup_percent,premium_rate_percent,premium,insurance_coverage,claims_payable_at,customs_supervision_code,customs_declaration_elements".to_owned(),
         [
             csv(document.document_type.as_str()),
             csv(&document.number),
@@ -520,7 +662,22 @@ pub fn export_csv(document: &TradeDocument, output_dir: &Path) -> Result<PathBuf
             csv(&document.payload.booking_reference),
             csv(&document.payload.freight_terms),
             csv(&document.payload.bill_of_lading_type),
+            csv(&document.payload.bill_of_lading_number),
+            csv(&document.payload.carrier),
+            csv(&document.payload.notify_party),
+            csv(&document.payload.place_of_receipt),
+            csv(&document.payload.place_of_delivery),
+            csv(&document.payload.container_numbers),
+            csv(&document.payload.seal_numbers),
             csv(&document.payload.shipping_marks),
+            csv(&document.payload.insurance_company),
+            csv(&document.payload.policy_number),
+            minor(document.payload.insured_value_minor),
+            document.payload.insurance_markup_percent.to_string(),
+            document.payload.premium_rate_percent.to_string(),
+            minor(document.payload.premium_minor),
+            csv(&document.payload.insurance_coverage),
+            csv(&document.payload.claims_payable_at),
             csv(&document.payload.customs_supervision_code),
             csv(&document.payload.customs_declaration_elements),
         ]
@@ -889,6 +1046,8 @@ fn template(document: &TradeDocument) -> &'static str {
         DocumentType::ShippingMarks => SHIPPING_MARKS_TEMPLATE,
         DocumentType::ShipperInstruction => SHIPPER_INSTRUCTION_TEMPLATE,
         DocumentType::CustomsDeclaration => CUSTOMS_DECLARATION_TEMPLATE,
+        DocumentType::BillOfLading => BILL_OF_LADING_TEMPLATE,
+        DocumentType::InsurancePolicy => INSURANCE_POLICY_TEMPLATE,
     }
 }
 
@@ -902,6 +1061,8 @@ fn export_stem(document: &TradeDocument) -> String {
         DocumentType::ShippingMarks => "ShippingMarks",
         DocumentType::ShipperInstruction => "ShipperInstruction",
         DocumentType::CustomsDeclaration => "CustomsDeclaration",
+        DocumentType::BillOfLading => "BillOfLading",
+        DocumentType::InsurancePolicy => "InsuranceApplication",
     };
     let raw = format!(
         "{}_{}_{}_V{}_{}",

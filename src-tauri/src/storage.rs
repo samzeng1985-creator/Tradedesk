@@ -2364,7 +2364,9 @@ impl EncryptedDatabase {
             DocumentType::PackingList
             | DocumentType::ShippingMarks
             | DocumentType::ShipperInstruction
-            | DocumentType::CustomsDeclaration => &shipping_address,
+            | DocumentType::CustomsDeclaration
+            | DocumentType::BillOfLading
+            | DocumentType::InsurancePolicy => &shipping_address,
             DocumentType::CommercialInvoice | DocumentType::ProformaInvoice => &billing_address,
             _ => &customer_address,
         };
@@ -2412,13 +2414,23 @@ impl EncryptedDatabase {
                 cbm: 0.0,
             });
         }
+        let sales_total_minor = lines.iter().map(|line| line.amount_minor).sum::<i64>();
+        let normalized_incoterm = business_case.incoterm.trim().to_ascii_uppercase();
+        let insurance_markup_percent =
+            if normalized_incoterm.starts_with("CIF") || normalized_incoterm.starts_with("CIP") {
+                10.0
+            } else {
+                0.0
+            };
+        let insured_value_minor =
+            (sales_total_minor as f64 * (1.0 + insurance_markup_percent / 100.0)).round() as i64;
         let payload = DocumentPayload {
             seller: company_name,
             seller_address: String::new(),
             buyer: business_case.customer_name.clone(),
-            buyer_address,
+            buyer_address: buyer_address.clone(),
             origin_country: "China".to_owned(),
-            destination_country,
+            destination_country: destination_country.clone(),
             port_of_loading: String::new(),
             port_of_discharge: String::new(),
             incoterm: business_case.incoterm.clone(),
@@ -2443,6 +2455,22 @@ impl EncryptedDatabase {
             bill_of_lading_type: "Original B/L".to_owned(),
             customs_supervision_code: String::new(),
             customs_declaration_elements: String::new(),
+            notify_party: business_case.customer_name.clone(),
+            notify_party_address: buyer_address.clone(),
+            carrier: String::new(),
+            bill_of_lading_number: String::new(),
+            place_of_receipt: String::new(),
+            place_of_delivery: String::new(),
+            container_numbers: String::new(),
+            seal_numbers: String::new(),
+            insurance_company: String::new(),
+            policy_number: String::new(),
+            insured_value_minor,
+            insurance_markup_percent,
+            premium_rate_percent: 0.0,
+            premium_minor: 0,
+            insurance_coverage: "Institute Cargo Clauses (A)".to_owned(),
+            claims_payable_at: destination_country.clone(),
             lines,
         };
         let payload_json = serde_json::to_string(&payload).map_err(json_error)?;
@@ -2491,18 +2519,73 @@ impl EncryptedDatabase {
                         | DocumentType::ShippingMarks
                         | DocumentType::ShipperInstruction
                         | DocumentType::CustomsDeclaration
+                        | DocumentType::BillOfLading
+                        | DocumentType::InsurancePolicy
                 ) | (
                     DocumentType::PackingList,
                     DocumentType::ShippingMarks
                         | DocumentType::ShipperInstruction
                         | DocumentType::CustomsDeclaration
-                )
+                        | DocumentType::BillOfLading
+                        | DocumentType::InsurancePolicy
+                ) | (
+                    DocumentType::ShipperInstruction,
+                    DocumentType::BillOfLading | DocumentType::InsurancePolicy
+                ) | (DocumentType::BillOfLading, DocumentType::InsurancePolicy)
             )
         {
             return Err(rusqlite::Error::InvalidQuery);
         }
         let id = Uuid::new_v4().to_string();
-        let payload_json = serde_json::to_string(&source.payload).map_err(json_error)?;
+        let mut payload = source.payload.clone();
+        if input.target_document_type == DocumentType::BillOfLading {
+            if payload.notify_party.trim().is_empty() {
+                payload.notify_party.clone_from(&payload.buyer);
+            }
+            if payload.notify_party_address.trim().is_empty() {
+                payload
+                    .notify_party_address
+                    .clone_from(&payload.buyer_address);
+            }
+            if payload.place_of_receipt.trim().is_empty() {
+                payload
+                    .place_of_receipt
+                    .clone_from(&payload.port_of_loading);
+            }
+            if payload.place_of_delivery.trim().is_empty() {
+                payload
+                    .place_of_delivery
+                    .clone_from(&payload.port_of_discharge);
+            }
+        }
+        if input.target_document_type == DocumentType::InsurancePolicy {
+            let incoterm = payload.incoterm.trim().to_ascii_uppercase();
+            if payload.insurance_markup_percent <= 0.0
+                && (incoterm.starts_with("CIF") || incoterm.starts_with("CIP"))
+            {
+                payload.insurance_markup_percent = 10.0;
+            }
+            if payload.insured_value_minor <= 0 {
+                let cargo_value = payload
+                    .lines
+                    .iter()
+                    .map(|line| line.amount_minor)
+                    .sum::<i64>()
+                    - payload.discount_minor;
+                payload.insured_value_minor = (cargo_value as f64
+                    * (1.0 + payload.insurance_markup_percent / 100.0))
+                    .round() as i64;
+            }
+            if payload.insurance_coverage.trim().is_empty() {
+                payload.insurance_coverage = "Institute Cargo Clauses (A)".to_owned();
+            }
+            if payload.claims_payable_at.trim().is_empty() {
+                payload
+                    .claims_payable_at
+                    .clone_from(&payload.destination_country);
+            }
+        }
+        let payload_json = serde_json::to_string(&payload).map_err(json_error)?;
         self.connection.execute(
             "INSERT INTO documents(
                 id, document_type, number, trade_case_id, trade_case_number_snapshot,
@@ -2567,6 +2650,20 @@ impl EncryptedDatabase {
         if payload.discount_minor < 0 || payload.discount_minor > subtotal {
             return Err(rusqlite::Error::InvalidQuery);
         }
+        if payload.insured_value_minor < 0
+            || payload.premium_minor < 0
+            || !payload.insurance_markup_percent.is_finite()
+            || payload.insurance_markup_percent < 0.0
+            || payload.insurance_markup_percent > 1000.0
+            || !payload.premium_rate_percent.is_finite()
+            || payload.premium_rate_percent < 0.0
+            || payload.premium_rate_percent > 100.0
+        {
+            return Err(rusqlite::Error::InvalidQuery);
+        }
+        payload.premium_minor = (payload.insured_value_minor as f64 * payload.premium_rate_percent
+            / 100.0)
+            .round() as i64;
         let payload_json = serde_json::to_string(&payload).map_err(json_error)?;
         let changed = self.connection.execute(
             "UPDATE documents SET number = ?1, language = ?2, issue_date = ?3,
@@ -2636,7 +2733,9 @@ impl EncryptedDatabase {
             | DocumentType::PackingList
             | DocumentType::ShippingMarks
             | DocumentType::ShipperInstruction
-            | DocumentType::CustomsDeclaration => {
+            | DocumentType::CustomsDeclaration
+            | DocumentType::BillOfLading
+            | DocumentType::InsurancePolicy => {
                 transaction.execute(
                     "UPDATE trade_cases SET stage = 'documents' WHERE id = ?1",
                     params![document.business_case_id],
@@ -3632,6 +3731,30 @@ mod tests {
                     .all(|issue| { issue.severity != crate::domain::ValidationSeverity::Error })
             );
             let issued = database.issue_document(&saved.id).unwrap();
+            let bill_draft = database
+                .convert_document(ConvertDocumentInput {
+                    source_document_id: issued.id.clone(),
+                    target_document_type: DocumentType::BillOfLading,
+                    number: "BL-20260811-0001".into(),
+                    language: "zh_en".into(),
+                    issue_date: "2026-08-11".into(),
+                })
+                .unwrap();
+            assert_eq!(bill_draft.payload.notify_party, issued.payload.buyer);
+            let insurance_draft = database
+                .convert_document(ConvertDocumentInput {
+                    source_document_id: issued.id.clone(),
+                    target_document_type: DocumentType::InsurancePolicy,
+                    number: "INS-20260811-0001".into(),
+                    language: "zh_en".into(),
+                    issue_date: "2026-08-11".into(),
+                })
+                .unwrap();
+            assert_eq!(insurance_draft.payload.insured_value_minor, 3_000);
+            assert_eq!(
+                insurance_draft.payload.insurance_coverage,
+                "Institute Cargo Clauses (A)"
+            );
             assert_eq!(issued.status, DocumentStatus::Issued);
             if let Some(typst) = crate::document::find_typst(std::path::Path::new("")) {
                 let render_root =
@@ -3674,6 +3797,8 @@ mod tests {
                     DocumentType::ShippingMarks,
                     DocumentType::ShipperInstruction,
                     DocumentType::CustomsDeclaration,
+                    DocumentType::BillOfLading,
+                    DocumentType::InsurancePolicy,
                 ] {
                     let mut template_document = issued.clone();
                     template_document.document_type = document_type;
@@ -3742,6 +3867,34 @@ mod tests {
                     .iter()
                     .any(|issue| issue.code == "cross_document_hs_mismatch")
             );
+            let mut packing_validation = issued.clone();
+            packing_validation.id = "packing-validation".into();
+            packing_validation.document_type = DocumentType::PackingList;
+            packing_validation.payload.port_of_loading = "Shanghai".into();
+            let mut bill_validation = packing_validation.clone();
+            bill_validation.id = "bill-validation".into();
+            bill_validation.document_type = DocumentType::BillOfLading;
+            assert!(
+                crate::document::cross_validate(
+                    &bill_validation,
+                    std::slice::from_ref(&packing_validation)
+                )
+                .is_empty()
+            );
+            bill_validation.payload.lines[0].gross_weight_kg += 1.0;
+            bill_validation.payload.lines[0].cbm += 1.0;
+            bill_validation.payload.port_of_loading = "Ningbo".into();
+            let bill_issues = crate::document::cross_validate(
+                &bill_validation,
+                std::slice::from_ref(&packing_validation),
+            );
+            for code in [
+                "cross_document_weight_mismatch",
+                "cross_document_package_mismatch",
+                "cross_document_transport_mismatch",
+            ] {
+                assert!(bill_issues.iter().any(|issue| issue.code == code));
+            }
             assert!(
                 database
                     .save_document(SaveDocumentInput {
@@ -3763,7 +3916,7 @@ mod tests {
             assert_eq!(database.summary().unwrap().products, 1);
             assert_eq!(database.summary().unwrap().active_cases, 1);
             assert_eq!(database.summary().unwrap().purchase_orders, 1);
-            assert_eq!(database.summary().unwrap().documents, 3);
+            assert_eq!(database.summary().unwrap().documents, 5);
         }
         let reopened =
             EncryptedDatabase::open(&path, Zeroizing::new("test-password".to_owned())).unwrap();
@@ -3785,7 +3938,7 @@ mod tests {
             PaymentStatus::Partial
         );
         let documents = reopened.list_documents().unwrap();
-        assert_eq!(documents.len(), 4);
+        assert_eq!(documents.len(), 6);
         assert!(documents.iter().any(|document| {
             document.document_type == DocumentType::CommercialInvoice && document.version == 2
         }));
@@ -3796,6 +3949,14 @@ mod tests {
         assert!(documents.iter().any(|document| {
             document.document_type == DocumentType::ProformaInvoice
                 && document.status == DocumentStatus::Issued
+        }));
+        assert!(documents.iter().any(|document| {
+            document.document_type == DocumentType::BillOfLading
+                && document.status == DocumentStatus::Draft
+        }));
+        assert!(documents.iter().any(|document| {
+            document.document_type == DocumentType::InsurancePolicy
+                && document.status == DocumentStatus::Draft
         }));
         drop(reopened);
 

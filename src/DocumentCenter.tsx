@@ -42,6 +42,8 @@ const typeLabels: Record<DocumentType, string> = {
   shipping_marks: "运输唛头",
   shipper_instruction: "发货人委托书",
   customs_declaration: "报关资料",
+  bill_of_lading: "提单补料",
+  insurance_policy: "保险申请资料",
 };
 
 const statusLabels: Record<DocumentStatus, string> = {
@@ -59,6 +61,8 @@ const prefixes: Record<DocumentType, string> = {
   shipping_marks: "MARK",
   shipper_instruction: "SI",
   customs_declaration: "CUS",
+  bill_of_lading: "BL",
+  insurance_policy: "INS",
 };
 
 const documentTypes: DocumentType[] = [
@@ -70,6 +74,8 @@ const documentTypes: DocumentType[] = [
   "shipping_marks",
   "shipper_instruction",
   "customs_declaration",
+  "bill_of_lading",
+  "insurance_policy",
 ];
 
 function nextNumber(documents: TradeDocument[], type: DocumentType, issueDate = todayIso()) {
@@ -97,7 +103,7 @@ function numberValue(value: string) {
 }
 
 function canConvertDocument(type: DocumentType) {
-  return ["commercial_quotation", "proforma_invoice", "commercial_invoice", "packing_list"].includes(type);
+  return ["commercial_quotation", "proforma_invoice", "commercial_invoice", "packing_list", "shipper_instruction", "bill_of_lading"].includes(type);
 }
 
 function CreateDocumentModal({
@@ -159,8 +165,12 @@ function ConvertDocumentModal({ source, documents, onClose, onConvert }: {
     : source.documentType === "proforma_invoice"
       ? ["trade_contract", "commercial_invoice"]
       : source.documentType === "commercial_invoice"
-        ? ["packing_list", "shipping_marks", "shipper_instruction", "customs_declaration"]
-        : ["shipping_marks", "shipper_instruction", "customs_declaration"];
+        ? ["packing_list", "shipping_marks", "shipper_instruction", "customs_declaration", "bill_of_lading", "insurance_policy"]
+        : source.documentType === "packing_list"
+          ? ["shipping_marks", "shipper_instruction", "customs_declaration", "bill_of_lading", "insurance_policy"]
+          : source.documentType === "shipper_instruction"
+            ? ["bill_of_lading", "insurance_policy"]
+            : ["insurance_policy"];
   const [target, setTarget] = useState<DocumentType>(targets[0]);
   const [number, setNumber] = useState(nextNumber(documents, targets[0]));
   const [issueDate, setIssueDate] = useState(todayIso());
@@ -199,17 +209,17 @@ function ConvertDocumentModal({ source, documents, onClose, onConvert }: {
 function Preview({ document, payload, company, signingAsset }: { document: TradeDocument; payload: DocumentPayload; company?: CompanyRecord; signingAsset?: CompanySigningAsset }) {
   const total = payload.lines.reduce((sum, line) => sum + line.amountMinor, 0);
   const payable = total - payload.discountMinor;
-  const packing = ["packing_list", "shipping_marks", "shipper_instruction", "customs_declaration"].includes(document.documentType);
+  const packing = ["packing_list", "shipping_marks", "shipper_instruction", "customs_declaration", "bill_of_lading"].includes(document.documentType);
   const contract = document.documentType === "trade_contract";
   const quotation = document.documentType === "commercial_quotation";
   const proforma = document.documentType === "proforma_invoice";
-  const title = document.documentType === "shipping_marks" ? "SHIPPING MARKS" : document.documentType === "shipper_instruction" ? "SHIPPER'S INSTRUCTION" : document.documentType === "customs_declaration" ? "CUSTOMS DECLARATION DATA" : contract ? "SALES CONTRACT" : packing ? "DETAILED PACKING LIST" : quotation ? "COMMERCIAL QUOTATION" : proforma ? "PROFORMA INVOICE" : "COMMERCIAL INVOICE";
+  const title = document.documentType === "shipping_marks" ? "SHIPPING MARKS" : document.documentType === "shipper_instruction" ? "SHIPPER'S INSTRUCTION" : document.documentType === "customs_declaration" ? "CUSTOMS DECLARATION DATA" : document.documentType === "bill_of_lading" ? "BILL OF LADING INSTRUCTIONS" : document.documentType === "insurance_policy" ? "CARGO INSURANCE APPLICATION" : contract ? "SALES CONTRACT" : packing ? "DETAILED PACKING LIST" : quotation ? "COMMERCIAL QUOTATION" : proforma ? "PROFORMA INVOICE" : "COMMERCIAL INVOICE";
   return <div className="document-paper landscape">
     <header>{company?.logoDataUrl && <img className="preview-logo" src={company.logoDataUrl} alt="公司 Logo" />}<h2>{title}</h2><p>{typeLabels[document.documentType]} · {document.number} · V{document.version}</p>{document.status === "draft" && <strong>DRAFT / 草稿</strong>}</header>
     <div className="preview-parties"><div><b>{packing ? "SHIPPER" : "SELLER / EXPORTER"}</b><span>{payload.seller}</span><small>{payload.sellerAddress}</small></div><div><b>{packing ? "CONSIGNEE" : "BUYER / CONSIGNEE"}</b><span>{payload.buyer}</span><small>{payload.buyerAddress}</small></div></div>
     <div className="preview-meta"><span><b>No.</b>{document.number}</span><span><b>Date</b>{document.issueDate}</span><span><b>Reference</b>{document.businessCaseNumber}</span><span><b>Incoterm</b>{payload.incoterm}</span>{quotation ? <span><b>Valid until</b>{payload.validUntil}</span> : <><span><b>Loading</b>{payload.portOfLoading}</span><span><b>Discharge</b>{payload.portOfDischarge}</span></>}</div>
     {document.documentType === "shipping_marks" && <section><h3>SHIPPING MARKS</h3><p>{payload.shippingMarks}</p></section>}
-    {(document.documentType === "shipper_instruction" || document.documentType === "customs_declaration") && <div className="preview-meta"><span><b>Transport</b>{payload.transportMode}</span><span><b>Vessel / Voyage</b>{payload.vesselVoyage || "—"}</span>{document.documentType === "shipper_instruction" ? <><span><b>Booking</b>{payload.bookingReference || "—"}</span><span><b>Freight / B/L</b>{payload.freightTerms} / {payload.billOfLadingType}</span></> : <><span><b>Supervision</b>{payload.customsSupervisionCode || "—"}</span><span><b>Declaration</b>{payload.customsDeclarationElements || "—"}</span></>}</div>}
+    {["shipper_instruction", "customs_declaration", "bill_of_lading", "insurance_policy"].includes(document.documentType) && <div className="preview-meta"><span><b>Transport</b>{payload.transportMode}</span><span><b>Vessel / Voyage</b>{payload.vesselVoyage || "—"}</span>{document.documentType === "customs_declaration" ? <><span><b>Supervision</b>{payload.customsSupervisionCode || "—"}</span><span><b>Declaration</b>{payload.customsDeclarationElements || "—"}</span></> : document.documentType === "insurance_policy" ? <><span><b>Insurer</b>{payload.insuranceCompany || "—"}</span><span><b>Insured value</b>{money(payload.insuredValueMinor, document.currency)}</span></> : <><span><b>Booking / B/L</b>{payload.bookingReference || "—"} / {payload.billOfLadingNumber || "—"}</span><span><b>Freight / B/L type</b>{payload.freightTerms} / {payload.billOfLadingType}</span></>}</div>}
     <table><thead><tr><th>No.</th><th>SKU / Description</th><th>Qty</th>{packing ? <><th>Packages</th><th>Net kg</th><th>Gross kg</th><th>CBM</th></> : <><th>Unit price</th><th>Amount</th></>}</tr></thead><tbody>{payload.lines.map((line, index) => <tr key={`${line.productId}-${index}`}><td>{index + 1}</td><td><b>{line.sku}</b> · {line.description}{line.model && <small> · {line.model}</small>}</td><td>{line.quantity} {line.unit}</td>{packing ? <><td>{line.packages} {line.packageType}</td><td>{line.netWeightKg}</td><td>{line.grossWeightKg}</td><td>{line.cbm}</td></> : <><td>{money(line.unitPriceMinor, document.currency)}</td><td>{money(line.amountMinor, document.currency)}</td></>}</tr>)}</tbody>{!packing && <tfoot><tr><td colSpan={4}>TOTAL</td><td>{money(payable, document.currency)}</td></tr></tfoot>}</table>
     {!packing && payload.discountMinor > 0 && <section><h3>DISCOUNT</h3><p>{money(payload.discountMinor, document.currency)} · Total after discount: {money(payable, document.currency)}</p></section>}
     {contract && <section><h3>GENERAL TERMS</h3><p>{payload.contractTerms || "General trade terms shall be confirmed in writing by both parties."}</p></section>}
@@ -223,6 +233,7 @@ function LineEditor({ line, packing, onChange }: { line: DocumentLineSnapshot; p
   return <div className="document-line-form">
     <div className="document-line-name"><strong>{line.sku}</strong><input value={line.description} onChange={(event) => set({ description: event.target.value })} /><span>{line.model || "无型号"} · HS {line.hsCode || "未填写"}</span></div>
     <label>数量<input type="number" min="0.001" step="0.001" value={line.quantity} onChange={(event) => set({ quantity: numberValue(event.target.value) })} /></label>
+    <label>HS 编码<input value={line.hsCode} onChange={(event) => set({ hsCode: event.target.value })} /></label>
     {packing ? <>
       <label>箱数<input type="number" min="1" step="1" value={line.packages} onChange={(event) => set({ packages: numberValue(event.target.value) })} /></label>
       <label>包装<input value={line.packageType} onChange={(event) => set({ packageType: event.target.value })} /></label>
@@ -260,14 +271,22 @@ function DocumentEditor({ initial, companyRegistry, onClose, onSave, onIssue, on
   const selectedCompany = companyRegistry?.companies.find((item) => item.id === companyId) ?? companyRegistry?.companies[0];
   const selectedAsset = selectedCompany?.signingAssets.find((item) => item.id === signingAssetId);
   const editable = document.status === "draft";
-  const packing = ["packing_list", "shipping_marks", "shipper_instruction", "customs_declaration"].includes(document.documentType);
+  const packing = ["packing_list", "shipping_marks", "shipper_instruction", "customs_declaration", "bill_of_lading"].includes(document.documentType);
   const quotation = document.documentType === "commercial_quotation";
   const invoiceLike = document.documentType === "commercial_invoice" || document.documentType === "proforma_invoice";
   const shippingMarks = document.documentType === "shipping_marks";
   const shipperInstruction = document.documentType === "shipper_instruction";
   const customsDeclaration = document.documentType === "customs_declaration";
-  const amountDocument = !["packing_list", "shipping_marks", "shipper_instruction"].includes(document.documentType);
+  const billOfLading = document.documentType === "bill_of_lading";
+  const insurancePolicy = document.documentType === "insurance_policy";
+  const amountDocument = !["packing_list", "shipping_marks", "shipper_instruction", "bill_of_lading"].includes(document.documentType);
+  const cargoValueMinor = payload.lines.reduce((sum, line) => sum + line.amountMinor, 0) - payload.discountMinor;
   const setPayloadField = (patch: Partial<DocumentPayload>) => setPayload((current) => ({ ...current, ...patch }));
+  const updateInsurance = (insuredValueMinor: number, ratePercent = payload.premiumRatePercent) => setPayloadField({
+    insuredValueMinor,
+    premiumRatePercent: ratePercent,
+    premiumMinor: Math.round(insuredValueMinor * ratePercent / 100),
+  });
   const draftInput = (): SaveDocumentInput => ({ id: document.id, number, issueDate, language, payload });
 
   useEffect(() => {
@@ -382,9 +401,9 @@ function DocumentEditor({ initial, companyRegistry, onClose, onSave, onIssue, on
         <fieldset disabled={!editable}><div className="form-grid two-columns"><label>单证编号<input value={number} onChange={(event) => setNumber(event.target.value)} /></label><label>签发日期<input type="date" value={issueDate} onChange={(event) => setIssueDate(event.target.value)} /></label><label>输出语言<select value={language} onChange={(event) => setLanguage(event.target.value)}><option value="zh_en">中英双语</option><option value="en">英文</option><option value="ru">俄文</option></select></label><label>来源业务单<input value={document.businessCaseNumber} readOnly /></label></div>
         <h3>买卖双方</h3><div className="form-grid two-columns"><label>卖方/出口商<input value={payload.seller} onChange={(event) => setPayloadField({ seller: event.target.value })} /></label><label>买方/收货人<input value={payload.buyer} onChange={(event) => setPayloadField({ buyer: event.target.value })} /></label><label>卖方地址<textarea value={payload.sellerAddress} onChange={(event) => setPayloadField({ sellerAddress: event.target.value })} /></label><label>买方地址<textarea value={payload.buyerAddress} onChange={(event) => setPayloadField({ buyerAddress: event.target.value })} /></label></div>
         <h3>贸易与运输</h3><div className="form-grid two-columns"><label>原产国<input value={payload.originCountry} onChange={(event) => setPayloadField({ originCountry: event.target.value })} /></label><label>目的国<input value={payload.destinationCountry} onChange={(event) => setPayloadField({ destinationCountry: event.target.value })} /></label><label>装运港<input value={payload.portOfLoading} onChange={(event) => setPayloadField({ portOfLoading: event.target.value })} /></label><label>目的港<input value={payload.portOfDischarge} onChange={(event) => setPayloadField({ portOfDischarge: event.target.value })} /></label><label>贸易术语<input value={payload.incoterm} onChange={(event) => setPayloadField({ incoterm: event.target.value })} /></label><label>付款条款<input value={payload.paymentTerms} onChange={(event) => setPayloadField({ paymentTerms: event.target.value })} /></label><label>装运日期<input type="date" value={payload.shipmentDate} onChange={(event) => setPayloadField({ shipmentDate: event.target.value })} /></label><label>客户 PO<input value={payload.poReference} onChange={(event) => setPayloadField({ poReference: event.target.value })} /></label>{quotation && <label>报价有效期<input type="date" value={payload.validUntil} onChange={(event) => setPayloadField({ validUntil: event.target.value })} /></label>}</div>
-        {(shippingMarks || shipperInstruction || customsDeclaration) && <><h3>履约资料</h3><div className="form-grid two-columns">{shippingMarks && <label className="field-wide">正唛内容<textarea rows={4} value={payload.shippingMarks} onChange={(event) => setPayloadField({ shippingMarks: event.target.value })} /></label>}{(shipperInstruction || customsDeclaration) && <label>运输方式<input value={payload.transportMode} onChange={(event) => setPayloadField({ transportMode: event.target.value })} /></label>}{(shipperInstruction || customsDeclaration) && <label>船名/航次<input value={payload.vesselVoyage} onChange={(event) => setPayloadField({ vesselVoyage: event.target.value })} /></label>}{shipperInstruction && <label>订舱参考号<input value={payload.bookingReference} onChange={(event) => setPayloadField({ bookingReference: event.target.value })} /></label>}{shipperInstruction && <label>运费条款<input value={payload.freightTerms} onChange={(event) => setPayloadField({ freightTerms: event.target.value })} /></label>}{shipperInstruction && <label>提单类型<input value={payload.billOfLadingType} onChange={(event) => setPayloadField({ billOfLadingType: event.target.value })} /></label>}{customsDeclaration && <label>监管方式代码<input value={payload.customsSupervisionCode} onChange={(event) => setPayloadField({ customsSupervisionCode: event.target.value })} /></label>}{customsDeclaration && <label className="field-wide">申报要素<input value={payload.customsDeclarationElements} onChange={(event) => setPayloadField({ customsDeclarationElements: event.target.value })} placeholder="品牌、用途、材质、规格等" /></label>}</div></>}
+        {(shippingMarks || shipperInstruction || customsDeclaration || billOfLading || insurancePolicy) && <><h3>履约资料</h3><div className="form-grid two-columns">{(shippingMarks || billOfLading) && <label className="field-wide">正唛内容<textarea rows={4} value={payload.shippingMarks} onChange={(event) => setPayloadField({ shippingMarks: event.target.value })} /></label>}{(shipperInstruction || customsDeclaration || billOfLading || insurancePolicy) && <label>运输方式<input value={payload.transportMode} onChange={(event) => setPayloadField({ transportMode: event.target.value })} /></label>}{(shipperInstruction || customsDeclaration || billOfLading || insurancePolicy) && <label>船名/航次<input value={payload.vesselVoyage} onChange={(event) => setPayloadField({ vesselVoyage: event.target.value })} /></label>}{(shipperInstruction || billOfLading) && <label>订舱参考号<input value={payload.bookingReference} onChange={(event) => setPayloadField({ bookingReference: event.target.value })} /></label>}{(shipperInstruction || billOfLading) && <label>运费条款<input value={payload.freightTerms} onChange={(event) => setPayloadField({ freightTerms: event.target.value })} /></label>}{(shipperInstruction || billOfLading) && <label>提单类型<select value={payload.billOfLadingType} onChange={(event) => setPayloadField({ billOfLadingType: event.target.value })}><option>Original B/L</option><option>Telex Release</option><option>Sea Waybill</option></select></label>}{billOfLading && <><label>提单号/草稿号<input value={payload.billOfLadingNumber} onChange={(event) => setPayloadField({ billOfLadingNumber: event.target.value })} /></label><label>承运人/船公司<input value={payload.carrier} onChange={(event) => setPayloadField({ carrier: event.target.value })} /></label><label>通知方<input value={payload.notifyParty} onChange={(event) => setPayloadField({ notifyParty: event.target.value })} /></label><label>通知方地址<input value={payload.notifyPartyAddress} onChange={(event) => setPayloadField({ notifyPartyAddress: event.target.value })} /></label><label>收货地<input value={payload.placeOfReceipt} onChange={(event) => setPayloadField({ placeOfReceipt: event.target.value })} /></label><label>交货地<input value={payload.placeOfDelivery} onChange={(event) => setPayloadField({ placeOfDelivery: event.target.value })} /></label><label>集装箱号<input value={payload.containerNumbers} onChange={(event) => setPayloadField({ containerNumbers: event.target.value })} /></label><label>封条号<input value={payload.sealNumbers} onChange={(event) => setPayloadField({ sealNumbers: event.target.value })} /></label></>}{insurancePolicy && <><label>保险公司<input value={payload.insuranceCompany} onChange={(event) => setPayloadField({ insuranceCompany: event.target.value })} /></label><label>保单号/申请号<input value={payload.policyNumber} onChange={(event) => setPayloadField({ policyNumber: event.target.value })} /></label><label>承保险别<input value={payload.insuranceCoverage} onChange={(event) => setPayloadField({ insuranceCoverage: event.target.value })} /></label><label>赔款偿付地点<input value={payload.claimsPayableAt} onChange={(event) => setPayloadField({ claimsPayableAt: event.target.value })} /></label><label>保险加成 %<input type="number" min="0" step="0.01" value={payload.insuranceMarkupPercent} onChange={(event) => { const markup = numberValue(event.target.value); const insured = Math.round(cargoValueMinor * (1 + markup / 100)); setPayloadField({ insuranceMarkupPercent: markup, insuredValueMinor: insured, premiumMinor: Math.round(insured * payload.premiumRatePercent / 100) }); }} /></label><label>保险金额（{document.currency}）<input type="number" min="0" step="0.01" value={(payload.insuredValueMinor / 100).toFixed(2)} onChange={(event) => updateInsurance(Math.round(numberValue(event.target.value) * 100))} /></label><label>保险费率 %<input type="number" min="0" step="0.0001" value={payload.premiumRatePercent} onChange={(event) => updateInsurance(payload.insuredValueMinor, numberValue(event.target.value))} /></label><label>预计保费（{document.currency}）<input value={(payload.premiumMinor / 100).toFixed(2)} readOnly /></label></>}{customsDeclaration && <label>监管方式代码<input value={payload.customsSupervisionCode} onChange={(event) => setPayloadField({ customsSupervisionCode: event.target.value })} /></label>}{customsDeclaration && <label className="field-wide">申报要素<input value={payload.customsDeclarationElements} onChange={(event) => setPayloadField({ customsDeclarationElements: event.target.value })} placeholder="品牌、用途、材质、规格等" /></label>}</div></>}
         <h3>产品明细</h3><div className="document-lines">{payload.lines.map((line, index) => <LineEditor line={line} packing={packing} onChange={(updated) => setPayloadField({ lines: payload.lines.map((item, itemIndex) => itemIndex === index ? updated : item) })} key={`${line.productId}-${index}`} />)}</div>
-        {amountDocument && <label>折扣金额（{document.currency}）<input type="number" min="0" step="0.01" value={(payload.discountMinor / 100).toFixed(2)} onChange={(event) => setPayloadField({ discountMinor: Math.round(numberValue(event.target.value) * 100) })} /></label>}
+        {amountDocument && <label>折扣金额（{document.currency}）<input type="number" min="0" step="0.01" value={(payload.discountMinor / 100).toFixed(2)} onChange={(event) => { const discountMinor = Math.round(numberValue(event.target.value) * 100); if (insurancePolicy) { const value = payload.lines.reduce((sum, line) => sum + line.amountMinor, 0) - discountMinor; const insured = Math.round(value * (1 + payload.insuranceMarkupPercent / 100)); setPayloadField({ discountMinor, insuredValueMinor: insured, premiumMinor: Math.round(insured * payload.premiumRatePercent / 100) }); } else { setPayloadField({ discountMinor }); } }} /></label>}
         {invoiceLike && <label>银行资料<textarea rows={3} value={payload.bankDetails} onChange={(event) => setPayloadField({ bankDetails: event.target.value })} /></label>}
         {document.documentType === "trade_contract" && <label>合同通用条款<textarea rows={6} value={payload.contractTerms} onChange={(event) => setPayloadField({ contractTerms: event.target.value })} /></label>}
         <label>备注<textarea rows={4} value={payload.notes} onChange={(event) => setPayloadField({ notes: event.target.value })} /></label></fieldset>

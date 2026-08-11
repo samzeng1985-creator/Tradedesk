@@ -141,6 +141,8 @@ pub enum DocumentType {
     ShippingMarks,
     ShipperInstruction,
     CustomsDeclaration,
+    BillOfLading,
+    InsurancePolicy,
 }
 
 impl DocumentType {
@@ -154,6 +156,8 @@ impl DocumentType {
             Self::ShippingMarks => "shipping_marks",
             Self::ShipperInstruction => "shipper_instruction",
             Self::CustomsDeclaration => "customs_declaration",
+            Self::BillOfLading => "bill_of_lading",
+            Self::InsurancePolicy => "insurance_policy",
         }
     }
 
@@ -167,6 +171,8 @@ impl DocumentType {
             "shipping_marks" => Some(Self::ShippingMarks),
             "shipper_instruction" => Some(Self::ShipperInstruction),
             "customs_declaration" => Some(Self::CustomsDeclaration),
+            "bill_of_lading" => Some(Self::BillOfLading),
+            "insurance_policy" => Some(Self::InsurancePolicy),
             _ => None,
         }
     }
@@ -264,6 +270,38 @@ pub struct DocumentPayload {
     pub customs_supervision_code: String,
     #[serde(default)]
     pub customs_declaration_elements: String,
+    #[serde(default)]
+    pub notify_party: String,
+    #[serde(default)]
+    pub notify_party_address: String,
+    #[serde(default)]
+    pub carrier: String,
+    #[serde(default)]
+    pub bill_of_lading_number: String,
+    #[serde(default)]
+    pub place_of_receipt: String,
+    #[serde(default)]
+    pub place_of_delivery: String,
+    #[serde(default)]
+    pub container_numbers: String,
+    #[serde(default)]
+    pub seal_numbers: String,
+    #[serde(default)]
+    pub insurance_company: String,
+    #[serde(default)]
+    pub policy_number: String,
+    #[serde(default)]
+    pub insured_value_minor: i64,
+    #[serde(default)]
+    pub insurance_markup_percent: f64,
+    #[serde(default)]
+    pub premium_rate_percent: f64,
+    #[serde(default)]
+    pub premium_minor: i64,
+    #[serde(default)]
+    pub insurance_coverage: String,
+    #[serde(default)]
+    pub claims_payable_at: String,
     pub lines: Vec<DocumentLineSnapshot>,
 }
 
