@@ -28,6 +28,11 @@ jobs:
         run: .\scripts\prepare-typst-runtime.ps1
       - run: cargo test --manifest-path src-tauri/Cargo.toml
       - run: pnpm tauri build --bundles nsis --ci
+      - name: Smoke test Windows install and uninstall
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem src-tauri\target\release\bundle\nsis\*.exe | Select-Object -First 1
+          .\scripts\test-windows-installer.ps1 -CurrentInstaller $installer.FullName -ReportPath src-tauri\target\release\bundle\nsis\installer-smoke-report.json
       - name: Write Windows checksums
         shell: pwsh
         run: |
@@ -40,6 +45,7 @@ jobs:
           path: |
             src-tauri/target/release/bundle/nsis/*.exe
             src-tauri/target/release/bundle/nsis/SHA256SUMS.txt
+            src-tauri/target/release/bundle/nsis/installer-smoke-report.json
           if-no-files-found: error
 
   macos-dmg:
@@ -59,6 +65,7 @@ jobs:
       - run: bash scripts/setup-macos-dev.sh
       - run: cargo test --manifest-path src-tauri/Cargo.toml
       - run: pnpm tauri build --bundles app,dmg --ci --no-sign
+      - run: bash scripts/verify-macos-bundle.sh
       - name: Write macOS checksums
         run: shasum -a 256 src-tauri/target/release/bundle/dmg/*.dmg > src-tauri/target/release/bundle/dmg/SHA256SUMS.txt
       - uses: actions/upload-artifact@v4
