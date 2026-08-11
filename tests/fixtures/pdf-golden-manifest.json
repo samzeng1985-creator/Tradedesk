@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "release": "0.26.0",
+  "defaults": {
+    "minPages": 1,
+    "maxPages": 5,
+    "minTextCharacters": 20
+  },
+  "files": [
+    "commercial_quotation.pdf",
+    "proforma_invoice.pdf",
+    "commercial_invoice.pdf",
+    "packing_list.pdf",
+    "trade_contract.pdf",
+    "shipping_marks.pdf",
+    "shipper_instruction.pdf",
+    "customs_declaration.pdf",
+    "bill_of_lading.pdf",
+    "insurance_policy.pdf",
+    "certificate_of_origin.pdf",
+    "inspection_certificate.pdf",
+    "fumigation_certificate.pdf",
+    "beneficiary_certificate.pdf",
+    "configuration-sheet-en.pdf",
+    "configuration-sheet-ru.pdf",
+    "configuration-sheet-fr.pdf",
+    "configuration-sheet-es.pdf",
+    "configuration-sheet-pt.pdf",
+    "configuration-sheet-ar.pdf",
+    "purchase-order.pdf"
+  ]
+}

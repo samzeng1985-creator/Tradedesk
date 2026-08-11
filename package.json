@@ -1,13 +1,14 @@
 {
   "name": "trade-desk-local",
   "private": true,
-  "version": "0.25.0",
+  "version": "0.26.0",
   "packageManager": "pnpm@11.9.0",
   "type": "module",
   "scripts": {
     "dev": "vite --configLoader runner",
     "build": "tsc -b && vite build --configLoader runner",
     "test": "node --experimental-strip-types --test tests/businessOverview.test.mjs tests/decimalInput.test.mjs",
+    "qa:release": "python scripts/run-release-qa.py",
     "prepare:runtime:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/prepare-typst-runtime.ps1",
     "release:windows": "pnpm prepare:runtime:windows && tauri build --bundles nsis --ci",
     "preview": "vite preview --configLoader runner",

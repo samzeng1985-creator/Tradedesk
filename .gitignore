@@ -5,6 +5,8 @@ target/
 src-tauri/target/
 work/
 *.tsbuildinfo
+__pycache__/
+*.pyc
 *.db
 *.db-shm
 *.db-wal

@@ -4867,13 +4867,12 @@ mod tests {
                         &std::fs::read(&configuration_export.path).unwrap()[..5],
                         b"%PDF-"
                     );
-                    if language == "en"
-                        && let Ok(qa_dir) = std::env::var("TRADEDESK_PDF_QA_DIR")
-                    {
+                    if let Ok(qa_dir) = std::env::var("TRADEDESK_PDF_QA_DIR") {
                         std::fs::create_dir_all(&qa_dir).unwrap();
                         std::fs::copy(
                             &configuration_export.path,
-                            std::path::Path::new(&qa_dir).join("configuration-sheet.pdf"),
+                            std::path::Path::new(&qa_dir)
+                                .join(format!("configuration-sheet-{language}.pdf")),
                         )
                         .unwrap();
                     }
@@ -5123,6 +5122,361 @@ mod tests {
             EncryptedDatabase::open(&path, Zeroizing::new("wrong-password".to_owned())).is_err()
         );
         let _ = std::fs::remove_file(&path);
+    }
+
+    fn create_legacy_release_database(path: &Path, version: i64) {
+        let connection = Connection::open(path).unwrap();
+        connection
+            .pragma_update(None, "key", "test-password")
+            .unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE workspace_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+                 CREATE TABLE products (
+                    id TEXT PRIMARY KEY, sku TEXT NOT NULL UNIQUE, name_zh TEXT NOT NULL,
+                    name_en TEXT NOT NULL, hs_code TEXT NOT NULL DEFAULT '',
+                    unit TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1
+                 );
+                 CREATE TABLE customers (
+                    id TEXT PRIMARY KEY, code TEXT NOT NULL UNIQUE, legal_name TEXT NOT NULL,
+                    market TEXT NOT NULL DEFAULT '', currency TEXT NOT NULL DEFAULT 'USD',
+                    active INTEGER NOT NULL DEFAULT 1
+                 );
+                 CREATE TABLE suppliers (
+                    id TEXT PRIMARY KEY, code TEXT NOT NULL UNIQUE, legal_name TEXT NOT NULL,
+                    lead_time_days INTEGER NOT NULL DEFAULT 0, active INTEGER NOT NULL DEFAULT 1
+                 );
+                 CREATE TABLE trade_cases (
+                    id TEXT PRIMARY KEY, number TEXT NOT NULL UNIQUE,
+                    customer_id TEXT NOT NULL REFERENCES customers(id), stage TEXT NOT NULL,
+                    currency TEXT NOT NULL, sales_amount_minor INTEGER NOT NULL DEFAULT 0,
+                    purchase_amount_minor INTEGER NOT NULL DEFAULT 0
+                 );
+                 INSERT INTO products(id, sku, name_zh, name_en, hs_code, unit, active)
+                    VALUES('legacy-product', 'LEGACY-SKU', '历史产品', 'Legacy product', '850220', 'Set', 1);
+                 INSERT INTO customers(id, code, legal_name, market, currency, active)
+                    VALUES('legacy-customer', 'LEGACY-CUS', 'Legacy Buyer LLC', 'US', 'USD', 1);
+                 INSERT INTO suppliers(id, code, legal_name, lead_time_days, active)
+                    VALUES('legacy-supplier', 'LEGACY-SUP', 'Legacy Supplier Ltd.', 30, 1);
+                 INSERT INTO trade_cases(
+                    id, number, customer_id, stage, currency, sales_amount_minor,
+                    purchase_amount_minor
+                 ) VALUES(
+                    'legacy-case', 'TD-LEGACY-0001', 'legacy-customer', 'quotation', 'USD',
+                    1250000, 0
+                 );",
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO workspace_meta(key, value) VALUES('schema_version', ?1)",
+                params![version.to_string()],
+            )
+            .unwrap();
+
+        if version >= 7 {
+            connection
+                .execute_batch(
+                    "CREATE TABLE config_components (
+                        id TEXT PRIMARY KEY, code TEXT NOT NULL UNIQUE, category TEXT NOT NULL,
+                        name TEXT NOT NULL, specification TEXT NOT NULL DEFAULT '',
+                        default_quantity REAL NOT NULL DEFAULT 1, unit TEXT NOT NULL,
+                        unit_price_minor INTEGER NOT NULL DEFAULT 0,
+                        currency TEXT NOT NULL DEFAULT 'CNY', brand TEXT NOT NULL DEFAULT '',
+                        notes TEXT NOT NULL DEFAULT '', active INTEGER NOT NULL DEFAULT 1
+                     );
+                     INSERT INTO config_components(
+                        id, code, category, name, specification, default_quantity, unit,
+                        unit_price_minor, currency, brand, notes, active
+                     ) VALUES(
+                        'legacy-component', 'LEGACY-COMP', '发动机', '燃气发动机', 'K19N',
+                        1, 'Set', 8800000, 'CNY', 'Legacy Brand', '', 1
+                     );",
+                )
+                .unwrap();
+        }
+
+        if version >= 12 {
+            connection
+                .execute_batch(
+                    "CREATE TABLE attachments (
+                        id TEXT PRIMARY KEY, entity_type TEXT NOT NULL,
+                        entity_id TEXT NOT NULL DEFAULT '', file_name TEXT NOT NULL,
+                        mime_type TEXT NOT NULL DEFAULT 'application/octet-stream',
+                        content BLOB NOT NULL, size_bytes INTEGER NOT NULL,
+                        sha256 TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                     );
+                     INSERT INTO attachments(
+                        id, entity_type, entity_id, file_name, mime_type, content,
+                        size_bytes, sha256
+                     ) VALUES(
+                        'legacy-attachment', 'business_case', 'legacy-case', 'legacy.txt',
+                        'text/plain', X'6C6567616379', 6,
+                        'c49fea7425fa7f8699897a97c159c6690267d9003bb78c53ac9dbf8f759c6018'
+                     );",
+                )
+                .unwrap();
+        }
+
+        if version >= 14 {
+            connection
+                .execute_batch(
+                    "CREATE TABLE purchase_orders (
+                        id TEXT PRIMARY KEY, number TEXT NOT NULL UNIQUE,
+                        trade_case_id TEXT NOT NULL REFERENCES trade_cases(id),
+                        trade_case_number_snapshot TEXT NOT NULL,
+                        supplier_id TEXT NOT NULL REFERENCES suppliers(id),
+                        supplier_name_snapshot TEXT NOT NULL,
+                        status TEXT NOT NULL DEFAULT 'draft', currency TEXT NOT NULL,
+                        expected_date TEXT NOT NULL DEFAULT '', notes TEXT NOT NULL DEFAULT '',
+                        total_amount_minor INTEGER NOT NULL DEFAULT 0,
+                        active INTEGER NOT NULL DEFAULT 1
+                     );
+                     INSERT INTO purchase_orders(
+                        id, number, trade_case_id, trade_case_number_snapshot, supplier_id,
+                        supplier_name_snapshot, status, currency, expected_date, notes,
+                        total_amount_minor, active
+                     ) VALUES(
+                        'legacy-po', 'PO-LEGACY-0001', 'legacy-case', 'TD-LEGACY-0001',
+                        'legacy-supplier', 'Legacy Supplier Ltd.', 'confirmed', 'CNY',
+                        '2026-09-30', '', 8800000, 1
+                     );",
+                )
+                .unwrap();
+        }
+    }
+
+    #[test]
+    fn migrates_release_schema_matrix_without_data_loss() {
+        for version in [4_i64, 7, 12, 14] {
+            let path = std::env::temp_dir().join(format!(
+                "tradedesk-release-v{version}-{}.db",
+                Uuid::new_v4()
+            ));
+            create_legacy_release_database(&path, version);
+
+            let database =
+                EncryptedDatabase::open(&path, Zeroizing::new("test-password".to_owned())).unwrap();
+            assert_eq!(database.list_products().unwrap()[0].sku, "LEGACY-SKU");
+            assert_eq!(
+                database.list_customers().unwrap()[0].legal_name,
+                "Legacy Buyer LLC"
+            );
+            assert_eq!(
+                database.list_suppliers().unwrap()[0].legal_name,
+                "Legacy Supplier Ltd."
+            );
+            assert_eq!(
+                database.list_business_cases().unwrap()[0].number,
+                "TD-LEGACY-0001"
+            );
+            if version >= 7 {
+                assert_eq!(
+                    database.list_config_components().unwrap()[0].code,
+                    "LEGACY-COMP"
+                );
+            }
+            if version >= 12 {
+                assert_eq!(
+                    database.list_attachments().unwrap()[0].file_name,
+                    "legacy.txt"
+                );
+            }
+            if version >= 14 {
+                let order = &database.list_purchase_orders().unwrap()[0];
+                assert_eq!(order.number, "PO-LEGACY-0001");
+                assert_eq!(order.exchange_rate, 0.0);
+            }
+            assert_eq!(
+                database
+                    .connection
+                    .query_row(
+                        "SELECT value FROM workspace_meta WHERE key = 'schema_version'",
+                        [],
+                        |row| row.get::<_, String>(0),
+                    )
+                    .unwrap(),
+                SCHEMA_VERSION.to_string()
+            );
+            assert_eq!(
+                database
+                    .connection
+                    .query_row("PRAGMA integrity_check", [], |row| row.get::<_, String>(0))
+                    .unwrap(),
+                "ok"
+            );
+            let mut foreign_key_check = database
+                .connection
+                .prepare("PRAGMA foreign_key_check")
+                .unwrap();
+            assert!(
+                foreign_key_check
+                    .query([])
+                    .unwrap()
+                    .next()
+                    .unwrap()
+                    .is_none()
+            );
+            drop(foreign_key_check);
+            drop(database);
+
+            let header = std::fs::read(&path).unwrap();
+            assert_ne!(&header[..16], b"SQLite format 3\0");
+            std::fs::remove_file(path).unwrap();
+        }
+    }
+
+    #[test]
+    #[ignore = "release performance baseline"]
+    fn release_large_dataset_performance() {
+        const PRODUCT_COUNT: usize = 10_000;
+        const CUSTOMER_COUNT: usize = 3_000;
+        const SUPPLIER_COUNT: usize = 1_000;
+
+        let path =
+            std::env::temp_dir().join(format!("tradedesk-performance-{}.db", Uuid::new_v4()));
+        let database =
+            EncryptedDatabase::open(&path, Zeroizing::new("test-password".to_owned())).unwrap();
+        let insert_started = std::time::Instant::now();
+        {
+            let transaction = database.connection.unchecked_transaction().unwrap();
+            {
+                let mut statement = transaction
+                    .prepare(
+                        "INSERT INTO products(
+                            id, sku, name_zh, name_en, model, hs_code, unit,
+                            gross_weight_kg, record_type, active
+                         ) VALUES(?1, ?2, ?3, ?4, ?5, '850220', 'Set', 0, 'standard', 1)",
+                    )
+                    .unwrap();
+                for index in 0..PRODUCT_COUNT {
+                    statement
+                        .execute(params![
+                            format!("perf-product-{index:05}"),
+                            format!("PERF-{index:05}"),
+                            format!("性能测试产品 {index:05}"),
+                            format!("Performance product {index:05}"),
+                            format!("MODEL-{index:05}")
+                        ])
+                        .unwrap();
+                }
+            }
+            {
+                let mut statement = transaction
+                    .prepare(
+                        "INSERT INTO customers(
+                            id, code, legal_name, market, currency, payment_terms,
+                            address, shipping_address, billing_address, purchase_intent,
+                            customer_analysis, strengths, weaknesses, contacts, active
+                         ) VALUES(?1, ?2, ?3, 'US', 'USD', 'T/T', '', '', '', '', '', '', '', '', 1)",
+                    )
+                    .unwrap();
+                for index in 0..CUSTOMER_COUNT {
+                    statement
+                        .execute(params![
+                            format!("perf-customer-{index:05}"),
+                            format!("CUS-{index:05}"),
+                            format!("Performance Customer {index:05}")
+                        ])
+                        .unwrap();
+                }
+            }
+            {
+                let mut statement = transaction
+                    .prepare(
+                        "INSERT INTO suppliers(
+                            id, code, legal_name, address, contacts, bank_details, currency,
+                            payment_terms, lead_time_days, on_time_rate, qualification_notes, active
+                         ) VALUES(?1, ?2, ?3, '', '', '', 'CNY', 'T/T', 30, 95, '', 1)",
+                    )
+                    .unwrap();
+                for index in 0..SUPPLIER_COUNT {
+                    statement
+                        .execute(params![
+                            format!("perf-supplier-{index:05}"),
+                            format!("SUP-{index:05}"),
+                            format!("Performance Supplier {index:05}")
+                        ])
+                        .unwrap();
+                }
+            }
+            transaction.commit().unwrap();
+        }
+        let insert_seconds = insert_started.elapsed().as_secs_f64();
+
+        let products_started = std::time::Instant::now();
+        let products = database.list_products().unwrap();
+        let products_seconds = products_started.elapsed().as_secs_f64();
+        let customers_started = std::time::Instant::now();
+        let customers = database.list_customers().unwrap();
+        let customers_seconds = customers_started.elapsed().as_secs_f64();
+        let suppliers_started = std::time::Instant::now();
+        let suppliers = database.list_suppliers().unwrap();
+        let suppliers_seconds = suppliers_started.elapsed().as_secs_f64();
+        let search_started = std::time::Instant::now();
+        let matched_products = products
+            .iter()
+            .filter(|product| {
+                product.sku.contains("09999") || product.name_en.to_lowercase().contains("09999")
+            })
+            .count();
+        let search_seconds = search_started.elapsed().as_secs_f64();
+
+        assert_eq!(products.len(), PRODUCT_COUNT);
+        assert_eq!(customers.len(), CUSTOMER_COUNT);
+        assert_eq!(suppliers.len(), SUPPLIER_COUNT);
+        assert_eq!(matched_products, 1);
+        assert!(
+            insert_seconds < 30.0,
+            "bulk insert took {insert_seconds:.3}s"
+        );
+        assert!(
+            products_seconds < 5.0,
+            "listing products took {products_seconds:.3}s"
+        );
+        assert!(
+            customers_seconds < 5.0,
+            "listing customers took {customers_seconds:.3}s"
+        );
+        assert!(
+            suppliers_seconds < 10.0,
+            "listing suppliers took {suppliers_seconds:.3}s"
+        );
+        assert!(
+            search_seconds < 1.0,
+            "filtering products took {search_seconds:.3}s"
+        );
+        database
+            .connection
+            .execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")
+            .unwrap();
+        let database_bytes = std::fs::metadata(&path).unwrap().len();
+        let report = serde_json::json!({
+            "dataset": {
+                "products": PRODUCT_COUNT,
+                "customers": CUSTOMER_COUNT,
+                "suppliers": SUPPLIER_COUNT
+            },
+            "seconds": {
+                "encryptedBulkInsert": insert_seconds,
+                "listProducts": products_seconds,
+                "listCustomers": customers_seconds,
+                "listSuppliers": suppliers_seconds,
+                "inMemoryProductSearch": search_seconds
+            },
+            "databaseBytes": database_bytes,
+            "status": "passed"
+        });
+        println!("TRADEDESK_PERFORMANCE={report}");
+        if let Ok(report_path) = std::env::var("TRADEDESK_PERF_REPORT") {
+            let report_path = std::path::Path::new(&report_path);
+            if let Some(parent) = report_path.parent() {
+                std::fs::create_dir_all(parent).unwrap();
+            }
+            std::fs::write(report_path, serde_json::to_vec_pretty(&report).unwrap()).unwrap();
+        }
+        drop(database);
+        std::fs::remove_file(path).unwrap();
     }
 
     #[test]
