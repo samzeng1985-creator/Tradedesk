@@ -1,12 +1,13 @@
 {
   "name": "trade-desk-local",
   "private": true,
-  "version": "0.19.2",
+  "version": "0.20.0",
   "packageManager": "pnpm@11.9.0",
   "type": "module",
   "scripts": {
     "dev": "vite --configLoader runner",
     "build": "tsc -b && vite build --configLoader runner",
+    "test": "node --experimental-strip-types --test tests/businessOverview.test.mjs",
     "preview": "vite preview --configLoader runner",
     "tauri": "tauri"
   },

@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { businessCaseApi, documentApi, fulfillmentApi, logisticsApi, masterApi, workspaceApi } from "./api";
+import { buildBusinessOverview } from "./businessOverview";
 import { BusinessCaseCenter } from "./BusinessCaseCenter";
 import { CompanySettings } from "./CompanySettings";
 import { ComponentLibrary, ConfigurableProductLibrary } from "./ConfigurableProductCenter";
@@ -133,6 +134,7 @@ export default function App() {
   const [shipmentBatches, setShipmentBatches] = useState<ShipmentBatch[]>([]);
   const [paymentPlans, setPaymentPlans] = useState<PaymentPlan[]>([]);
   const [documents, setDocuments] = useState<TradeDocument[]>([]);
+  const [overviewCaseId, setOverviewCaseId] = useState("");
   const [masterQuery, setMasterQuery] = useState("");
   const [editorOpen, setEditorOpen] = useState(false);
   const [editingRecord, setEditingRecord] = useState<MasterRecord | null>(null);
@@ -147,6 +149,11 @@ export default function App() {
       .then(([exists, pending]) => { setWorkspaceExists(exists); setRestorePending(pending); })
       .finally(() => setWorkspaceChecking(false));
   }, []);
+
+  useEffect(() => {
+    if (businessCases.some((item) => item.id === overviewCaseId)) return;
+    setOverviewCaseId(businessCases[0]?.id ?? "");
+  }, [businessCases, overviewCaseId]);
 
   async function loadMasterData() {
     const [nextProducts, nextComponents, nextComponentOptions, nextConfigurations, nextCustomers, nextSuppliers, nextCases, nextOrders, nextPartners, nextShipments, nextPayments, nextDocuments, summary] = await Promise.all([
@@ -410,22 +417,14 @@ export default function App() {
     return result.path;
   }
 
-  const currentCase = businessCases[0] ?? null;
-  const currentOrders = currentCase
-    ? purchaseOrders.filter((order) => order.businessCaseId === currentCase.id && order.status !== "cancelled")
-    : [];
-  const currentMilestones = currentOrders.flatMap((order) => order.lines.flatMap((line) =>
-    line.milestones.map((milestone) => ({ ...milestone, supplierName: order.supplierName, sku: line.sku })),
-  ));
-  const purchaseTotalMinor = currentOrders.reduce((sum, order) => sum + order.totalAmountMinor, 0);
-  const productionProgress = currentMilestones.length
-    ? Math.round(currentMilestones.reduce((sum, milestone) => sum + milestone.progress, 0) / currentMilestones.length)
-    : 0;
-
-  const margin = useMemo(() => {
-    if (!currentCase?.totalAmountMinor) return 0;
-    return Math.round(((currentCase.totalAmountMinor - purchaseTotalMinor) / currentCase.totalAmountMinor) * 100);
-  }, [currentCase, purchaseTotalMinor]);
+  const currentCase = businessCases.find((item) => item.id === overviewCaseId) ?? businessCases[0] ?? null;
+  const overview = buildBusinessOverview(currentCase, purchaseOrders, shipmentBatches, paymentPlans, documents);
+  const {
+    orders: currentOrders, foreignCurrencyOrders, milestones: currentMilestones,
+    shipments: currentShipments, purchaseTotalMinor, grossProfitMinor, margin,
+    plannedPaymentMinor, receivedPaymentMinor, receivedPercent, purchaseCoverage,
+    productionProgress, shipmentCoverage, blockedMilestones, risks: overviewRisks,
+  } = overview;
 
   const normalizedQuery = masterQuery.trim().toLocaleLowerCase();
   const filteredProducts = products.filter((item) =>
@@ -463,7 +462,7 @@ export default function App() {
           <span className="brand-mark">TD</span>
           <span>
             <strong>TradeDesk</strong>
-            <small>Local · 0.19.2</small>
+            <small>Local · 0.20.0</small>
           </span>
         </div>
 
@@ -524,36 +523,59 @@ export default function App() {
               {currentCase ? <>
                 <div className="case-heading">
                   <div>
-                    <span className="eyebrow">最近业务单</span>
+                    <span className="eyebrow">业务利润与风险</span>
                     <h2>{currentCase.number}</h2>
                     <p>{currentCase.customerName} · 计划发货 {currentCase.shipmentDate || "未设置"}</p>
                   </div>
-                  <button className="button button-primary" onClick={() => setView("cases")}>打开业务单</button>
+                  <div className="overview-case-actions">
+                    <label><span>查看业务单</span><select value={currentCase.id} onChange={(event) => setOverviewCaseId(event.target.value)}>{businessCases.map((item) => <option value={item.id} key={item.id}>{item.number} · {item.customerName}</option>)}</select></label>
+                    <button className="button button-primary" onClick={() => setView("cases")}>打开业务单</button>
+                  </div>
                 </div>
                 <Pipeline stage={currentCase.stage} />
               </> : <div className="empty-overview"><span className="eyebrow">开始第一笔业务</span><h2>建立业务单后即可跟踪采购与生产</h2><button className="button button-primary" onClick={() => setView("cases")}>前往业务单</button></div>}
             </section>
 
-            <section className="metric-grid" aria-label="业务指标">
+            <section className="metric-grid overview-metrics" aria-label="业务利润与履约指标">
               <article>
                 <span>销售金额</span>
                 <strong>{money(currentCase?.totalAmountMinor ?? 0, currentCase?.currency ?? "USD")}</strong>
-                <small>{currentCase ? currentCase.number : "暂无业务单"}</small>
+                <small>{currentCase?.currency ?? "暂无业务单"}</small>
               </article>
               <article>
-                <span>采购成本</span>
+                <span>同币采购成本</span>
                 <strong>{money(purchaseTotalMinor, currentCase?.currency ?? "USD")}</strong>
-                <small>{currentOrders.length ? `预计毛利率 ${margin}%` : "尚未下推采购"}</small>
+                <small>{foreignCurrencyOrders.length ? `${foreignCurrencyOrders.length} 张异币采购未计入` : `${currentOrders.length} 张有效采购单`}</small>
+              </article>
+              <article className={grossProfitMinor < 0 ? "metric-danger" : ""}>
+                <span>暂估毛利</span>
+                <strong>{foreignCurrencyOrders.length ? "待折算" : currentOrders.length ? money(grossProfitMinor, currentCase?.currency ?? "USD") : "待采购"}</strong>
+                <small>{currentOrders.length && !foreignCurrencyOrders.length ? purchaseCoverage < 100 ? `仅基于已录成本 · 采购覆盖 ${purchaseCoverage}%` : `暂估毛利率 ${margin}%` : "录入完整采购成本后计算"}</small>
+              </article>
+              <article>
+                <span>已收款</span>
+                <strong>{money(receivedPaymentMinor, currentCase?.currency ?? "USD")}</strong>
+                <small>{receivedPercent}% · 计划 {money(plannedPaymentMinor, currentCase?.currency ?? "USD")}</small>
+              </article>
+              <article>
+                <span>采购覆盖</span>
+                <strong>{purchaseCoverage}%</strong>
+                <small>{new Set(currentOrders.map((order) => order.supplierId)).size} 个供应商</small>
               </article>
               <article>
                 <span>生产进度</span>
                 <strong>{productionProgress}%</strong>
-                <small>{new Set(currentOrders.map((order) => order.supplierId)).size} 个供应商</small>
+                <small>{blockedMilestones.length ? `${blockedMilestones.length} 个阻断节点` : "暂无阻断节点"}</small>
               </article>
               <article>
-                <span>生产风险</span>
-                <strong>{workspace.productionRisks}</strong>
-                <small>{workspace.productionRisks ? "存在阻断节点" : "暂无异常节点"}</small>
+                <span>已发运覆盖</span>
+                <strong>{shipmentCoverage}%</strong>
+                <small>{currentShipments.length} 个装运批次</small>
+              </article>
+              <article className={overviewRisks.some((risk) => risk.kind === "critical") ? "metric-danger" : ""}>
+                <span>风险事项</span>
+                <strong>{overviewRisks.length}</strong>
+                <small>{overviewRisks.filter((risk) => risk.kind === "critical").length} 个阻断风险</small>
               </article>
             </section>
 
@@ -599,12 +621,8 @@ export default function App() {
                   </div>
                 </div>
                 <div className="issue-list">
-                  {currentMilestones.filter((item) => item.status === "blocked").slice(0, 2).map((item) => <article className="issue issue-warning" key={item.id}><span>生产异常</span><strong>{item.sku} · {item.label}</strong><p>{item.issue || "请向供应商确认恢复日期。"}</p></article>)}
-                  <article className="issue">
-                    <span>采购覆盖</span>
-                    <strong>{currentOrders.length ? `${currentOrders.length} 张采购单正在执行` : "业务单尚未下推采购"}</strong>
-                    <p>{currentOrders.length ? `当前可发货数量 ${currentOrders.reduce((sum, order) => sum + order.readyQuantity, 0)}` : "按供应商拆分产品行后即可开始生产跟踪。"}</p>
-                  </article>
+                  {overviewRisks.slice(0, 6).map((risk, index) => <article className={`issue issue-${risk.kind}`} key={`${risk.category}-${index}`}><span>{risk.category}</span><strong>{risk.title}</strong><p>{risk.detail}</p></article>)}
+                  {!overviewRisks.length && <article className="issue issue-success"><span>业务健康</span><strong>当前没有待处理风险</strong><p>采购、生产、装运、收款和单证校验均未发现阻断事项。</p></article>}
                   <button className="button button-primary button-wide" onClick={prepareDocuments}>
                     生成待制单证
                   </button>
