@@ -22,6 +22,9 @@ done
 [[ -x "$main_executable" ]] || { echo "Application binary is not executable" >&2; exit 1; }
 [[ -x "$resource_dir/typst" ]] || { echo "Bundled Typst is not executable" >&2; exit 1; }
 
+codesign --verify --deep --strict --verbose=2 "$app_path"
+codesign --display --verbose=2 "$app_path" 2>&1
+
 expected_version="$(node -p "require('$project_root/package.json').version")"
 bundle_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app_path/Contents/Info.plist")"
 [[ "$bundle_version" == "$expected_version" ]] || {

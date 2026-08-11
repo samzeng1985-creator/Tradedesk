@@ -91,10 +91,10 @@ pnpm release:windows
 
 ```bash
 bash scripts/setup-macos-dev.sh
-pnpm tauri build --bundles app,dmg --ci --no-sign
+pnpm tauri build --bundles app,dmg --ci
 ```
 
-无签名构建仅用于内部测试。对外发布前，Windows 必须使用正式代码签名证书签名；macOS 必须使用 Developer ID Application 证书签名并完成 Apple 公证。
+macOS 内部测试包默认使用 ad-hoc 签名，首次打开仍需在“隐私与安全性”中确认。对外发布前，Windows 必须使用正式代码签名证书签名；macOS 必须使用 Developer ID Application 证书签名并完成 Apple 公证。
 
 ## 单证使用路径
 

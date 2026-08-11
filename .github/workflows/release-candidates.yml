@@ -1,4 +1,4 @@
-name: Unsigned release candidates
+name: Internal release candidates
 
 on:
   workflow_dispatch:
@@ -89,13 +89,13 @@ jobs:
             printf 'Architecture: '
             uname -m
           } > output/release-qa/0.26.0/platform-${{ matrix.architecture }}.txt
-      - run: pnpm tauri build --bundles app,dmg --ci --no-sign
+      - run: pnpm tauri build --bundles app,dmg --ci
       - run: bash scripts/verify-macos-bundle.sh
       - name: Write macOS checksums
         run: shasum -a 256 src-tauri/target/release/bundle/dmg/*.dmg > src-tauri/target/release/bundle/dmg/SHA256SUMS.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: TradeDesk-macOS-${{ matrix.architecture }}-unsigned
+          name: TradeDesk-macOS-${{ matrix.architecture }}-adhoc-signed
           path: |
             src-tauri/target/release/bundle/dmg/*.dmg
             src-tauri/target/release/bundle/dmg/SHA256SUMS.txt
