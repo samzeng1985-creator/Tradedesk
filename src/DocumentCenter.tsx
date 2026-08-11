@@ -241,7 +241,7 @@ function Preview({ document, payload, company, signingAsset }: { document: Trade
 function LineEditor({ line, packing, onChange }: { line: DocumentLineSnapshot; packing: boolean; onChange: (line: DocumentLineSnapshot) => void }) {
   const set = (patch: Partial<DocumentLineSnapshot>) => onChange({ ...line, ...patch });
   return <div className="document-line-form">
-    <div className="document-line-name"><strong>{line.sku}</strong><input value={line.description} onChange={(event) => set({ description: event.target.value })} /><span>{line.model || "无型号"} · HS {line.hsCode || "未填写"}</span></div>
+    <div className="document-line-name"><label>品名 / 描述<input value={line.description} onChange={(event) => set({ description: event.target.value })} /></label><span><strong>{line.sku}</strong> · {line.model || "无型号"} · HS {line.hsCode || "未填写"}</span></div>
     <label>数量<input type="number" min="0.001" step="0.001" value={line.quantity} onChange={(event) => set({ quantity: numberValue(event.target.value) })} /></label>
     <label>HS 编码<input value={line.hsCode} onChange={(event) => set({ hsCode: event.target.value })} /></label>
     {packing ? <>

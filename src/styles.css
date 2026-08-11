@@ -325,10 +325,9 @@ tbody tr:hover { background: #fafbfc; }
 .validation-list .error { color: #991b1b; background: #fef2f2; border: 1px solid #fecaca; }
 .validation-list .warning { color: #92400e; background: #fffbeb; border: 1px solid #fde68a; }
 .document-lines { display: grid; gap: 10px; }
-.document-line-form { display: grid; grid-template-columns: minmax(190px, 1.5fr) repeat(3, minmax(90px, .65fr)); gap: 9px; align-items: end; padding: 11px; background: #f8fafc; border: 1px solid #e3e8ef; border-radius: 9px; }
-.document-line-name strong, .document-line-name span { display: block; }
-.document-line-name input { width: 100%; margin: 5px 0; border: 1px solid #cfd7e3; border-radius: 7px; padding: 8px; }
-.document-line-name span { color: #64748b; font-size: 10px; }
+.document-line-form { display: grid; grid-template-columns: minmax(190px, 1.5fr) repeat(3, minmax(90px, .65fr)); gap: 9px; align-items: start; padding: 11px; background: #f8fafc; border: 1px solid #e3e8ef; border-radius: 9px; }
+.document-line-name > span { display: block; margin-top: 6px; color: #64748b; font-size: 10px; line-height: 1.4; }
+.document-line-name > span strong { color: #334155; }
 .document-preview-panel { padding: 24px; background: #dfe3e8; }
 .document-paper { width: min(100%, 780px); min-height: 1080px; margin: 0 auto; padding: 44px 46px; color: #111827; background: white; box-shadow: 0 3px 14px rgba(15, 23, 42, .12); font-family: Arial, "Microsoft YaHei", sans-serif; font-size: 11px; }
 .document-paper.landscape { width: min(100%, 980px); min-height: 690px; }
