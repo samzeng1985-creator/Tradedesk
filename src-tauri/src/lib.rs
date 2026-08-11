@@ -670,6 +670,69 @@ fn update_purchase_order(
     with_database(state, |database| database.update_purchase_order(input))
 }
 
+fn export_purchase_order_pdf_file(
+    id: &str,
+    company_id: &str,
+    signing_asset_id: &str,
+    state: &State<'_, AppState>,
+) -> Result<DocumentExportResult, String> {
+    let (order, sales_currency, company_profile) = with_database(state.clone(), |database| {
+        let order = database.get_purchase_order(id)?;
+        let sales_currency = database
+            .get_business_case(&order.business_case_id)?
+            .currency;
+        let company_profile = database.resolve_company_profile(company_id, signing_asset_id)?;
+        Ok((order, sales_currency, company_profile))
+    })?;
+    let typst_path = state
+        .typst_path
+        .as_ref()
+        .ok_or("未找到 Typst PDF 渲染器，请重新运行开发环境安装脚本。")?;
+    document::export_purchase_order_pdf(
+        &order,
+        &sales_currency,
+        &company_profile,
+        typst_path,
+        &state.render_cache_dir.join("purchase-order").join(id),
+        &state.export_dir,
+    )
+}
+
+#[tauri::command]
+fn export_purchase_order_pdf(
+    id: String,
+    company_id: String,
+    signing_asset_id: String,
+    state: State<'_, AppState>,
+) -> Result<DocumentExportResult, String> {
+    export_purchase_order_pdf_file(&id, &company_id, &signing_asset_id, &state)
+}
+
+#[tauri::command]
+fn export_purchase_order_csv(id: String, state: State<'_, AppState>) -> Result<String, String> {
+    let (order, sales_currency) = with_database(state.clone(), |database| {
+        let order = database.get_purchase_order(&id)?;
+        let sales_currency = database
+            .get_business_case(&order.business_case_id)?
+            .currency;
+        Ok((order, sales_currency))
+    })?;
+    document::export_purchase_order_csv(&order, &sales_currency, &state.export_dir)
+        .map(|path| path.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
+fn print_purchase_order(
+    id: String,
+    company_id: String,
+    signing_asset_id: String,
+    state: State<'_, AppState>,
+) -> Result<DocumentExportResult, String> {
+    let result = export_purchase_order_pdf_file(&id, &company_id, &signing_asset_id, &state)?;
+    document::open_file(std::path::Path::new(&result.path))?;
+    Ok(result)
+}
+
 #[tauri::command]
 fn update_purchase_order_status(
     id: String,
@@ -942,6 +1005,9 @@ pub fn run() {
             list_purchase_orders,
             create_purchase_order,
             update_purchase_order,
+            export_purchase_order_pdf,
+            export_purchase_order_csv,
+            print_purchase_order,
             update_purchase_order_status,
             update_production_milestone,
             list_partners,

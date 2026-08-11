@@ -266,7 +266,7 @@ tbody tr:hover { background: #fafbfc; }
 .purchase-order-header p { margin: 0; color: #64748b; font-size: 13px; }
 .purchase-order-actions { display: grid; justify-items: end; gap: 8px; }
 .purchase-order-actions > strong { font-size: 17px; }
-.purchase-order-actions > div { display: flex; gap: 7px; }
+.purchase-order-actions > div { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 7px; }
 .purchase-order-actions select { border: 1px solid #d8dee7; border-radius: 8px; padding: 7px 9px; color: #4c1d95; background: #f5f3ff; font-weight: 650; }
 .purchase-summary { display: flex; flex-wrap: wrap; gap: 8px 18px; padding: 11px 18px; color: #64748b; background: #fafbfc; font-size: 12px; }
 .purchase-products { display: grid; gap: 0; }
@@ -418,6 +418,8 @@ tbody tr:hover { background: #fafbfc; }
 .master-transfer-toolbar span { margin-top: 4px; color: #64748b; font-size: 11px; }
 .configuration-output-toolbar { align-items: flex-end; }
 .configuration-output-toolbar .toolbar-buttons { flex-wrap: wrap; }
+.purchase-output-toolbar { align-items: flex-end; }
+.purchase-output-toolbar .toolbar-buttons { flex-wrap: wrap; justify-content: flex-end; }
 
 .recovery-backdrop { z-index: 200; }
 .recovery-card { max-width: 620px; }
@@ -535,6 +537,7 @@ tbody tr:hover { background: #fafbfc; }
   .purchase-draft-line .line-check { grid-column: 1 / -1; }
   .purchase-order-header { flex-direction: column; }
   .purchase-order-actions { justify-items: start; }
+  .purchase-order-actions > div { justify-content: flex-start; }
   .milestone-grid { grid-template-columns: repeat(2, minmax(110px, 1fr)); }
   .case-editor-footer { align-items: stretch; flex-direction: column; }
   .two-columns, .document-filters { grid-template-columns: 1fr; }

@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import type { FormEvent } from "react";
 import type {
   BusinessCase,
+  CompanyRegistry,
   MilestoneStatus,
   ProductionMilestone,
   ProductionMilestoneInput,
@@ -19,8 +20,12 @@ interface FulfillmentCenterProps {
   orders: PurchaseOrder[];
   cases: BusinessCase[];
   suppliers: Supplier[];
+  companyRegistry: CompanyRegistry | null;
   onCreate: (input: PurchaseOrderInput) => Promise<void>;
   onUpdate: (input: PurchaseOrderUpdateInput) => Promise<void>;
+  onExportPdf: (id: string, companyId: string, signingAssetId: string) => Promise<string>;
+  onExportCsv: (id: string) => Promise<string>;
+  onPrint: (id: string, companyId: string, signingAssetId: string) => Promise<string>;
   onStatus: (id: string, status: PurchaseStatus) => Promise<void>;
   onMilestone: (input: ProductionMilestoneInput) => Promise<void>;
 }
@@ -273,11 +278,17 @@ function MilestoneEditor({ milestone, lineQuantity, onClose, onSave }: {
   </div>;
 }
 
-export function FulfillmentCenter({ orders, cases, suppliers, onCreate, onUpdate, onStatus, onMilestone }: FulfillmentCenterProps) {
+export function FulfillmentCenter({ orders, cases, suppliers, companyRegistry, onCreate, onUpdate, onExportPdf, onExportCsv, onPrint, onStatus, onMilestone }: FulfillmentCenterProps) {
   const [purchaseEditor, setPurchaseEditor] = useState<PurchaseOrder | "new" | null>(null);
   const [editingMilestone, setEditingMilestone] = useState<{ milestone: ProductionMilestone; quantity: number } | null>(null);
   const [attachmentOrder, setAttachmentOrder] = useState<PurchaseOrder | null>(null);
   const [query, setQuery] = useState("");
+  const [companyId, setCompanyId] = useState(companyRegistry?.defaultCompanyId ?? "");
+  const [signingAssetId, setSigningAssetId] = useState("");
+  const [busy, setBusy] = useState("");
+  const [message, setMessage] = useState("");
+  const activeCompanyId = companyId || companyRegistry?.defaultCompanyId || "";
+  const selectedCompany = companyRegistry?.companies.find((item) => item.id === activeCompanyId) ?? companyRegistry?.companies[0];
   const normalizedQuery = query.trim().toLocaleLowerCase();
   const filtered = orders.filter((order) => [order.number, order.businessCaseNumber, order.supplierName]
     .some((value) => value.toLocaleLowerCase().includes(normalizedQuery)));
@@ -290,18 +301,36 @@ export function FulfillmentCenter({ orders, cases, suppliers, onCreate, onUpdate
     }
   }
 
+  async function output(order: PurchaseOrder, action: "pdf" | "csv" | "print") {
+    setBusy(`${order.id}-${action}`);
+    setMessage("");
+    try {
+      const path = action === "pdf"
+        ? await onExportPdf(order.id, activeCompanyId, signingAssetId)
+        : action === "csv"
+          ? await onExportCsv(order.id)
+          : await onPrint(order.id, activeCompanyId, signingAssetId);
+      setMessage(`${action === "print" ? "已打开打印用 PDF" : "已导出采购单"}：${path}`);
+    } catch (reason) {
+      setMessage(`采购单导出失败：${String(reason)}`);
+    } finally {
+      setBusy("");
+    }
+  }
+
   return <>
     <section className="panel fulfillment-center">
       <div className="panel-heading"><div><h2>采购与生产中心</h2><p>业务单按供应商拆分采购，并跟踪影响发货的六个关键节点</p></div><button className="button button-primary" disabled={!cases.length || !suppliers.length} onClick={() => setPurchaseEditor("new")}>新建采购单</button></div>
       {(!cases.length || !suppliers.length) && <div className="empty-callout">请先录入业务单和供应商，再创建采购单。</div>}
-      <div className="table-toolbar"><label><span className="sr-only">搜索采购单</span><input placeholder="按采购单号、业务单或供应商搜索" value={query} onChange={(event) => setQuery(event.target.value)} /></label><span className="record-count">{filtered.length} 张采购单</span></div>
+      <div className="table-toolbar purchase-output-toolbar"><label><span className="sr-only">搜索采购单</span><input placeholder="按采购单号、业务单或供应商搜索" value={query} onChange={(event) => setQuery(event.target.value)} /></label><div className="toolbar-buttons"><label className="export-language">采购方<select value={activeCompanyId} onChange={(event) => { setCompanyId(event.target.value); setSigningAssetId(""); }}>{companyRegistry?.companies.map((item) => <option value={item.id} key={item.id}>{item.companyName}</option>)}</select></label><label className="export-language">签章<select value={signingAssetId} onChange={(event) => setSigningAssetId(event.target.value)}><option value="">不使用</option>{selectedCompany?.signingAssets.map((item) => <option value={item.id} key={item.id}>{item.kind === "stamp" ? "电子章" : "电子签名"} · {item.name}</option>)}</select></label><span className="record-count">{filtered.length} 张采购单</span></div></div>
+      {message && <div className="document-message">{message}</div>}
       <div className="purchase-order-list">
         {filtered.map((order) => {
           const totalQuantity = order.lines.reduce((sum, line) => sum + line.quantity, 0);
           return <article className="purchase-order-card" key={order.id}>
             <header className="purchase-order-header">
               <div><span className="eyebrow">{order.businessCaseNumber}</span><h3>{order.number}</h3><p>{order.supplierName} · 预计交货 {order.expectedDate || "未设置"}{order.exchangeRateDate ? ` · 汇率 ${order.exchangeRate}（${order.exchangeRateDate}）` : ""}</p></div>
-              <div className="purchase-order-actions"><strong>{formatMoney(order.totalAmountMinor, order.currency)}</strong><div><button className="button button-secondary" onClick={() => setPurchaseEditor(order)}>编辑</button><button className="button button-secondary" onClick={() => setAttachmentOrder(order)}>附件</button></div><select aria-label={`${order.number}状态`} value={order.status} onChange={(event) => changeStatus(order.id, event.target.value as PurchaseStatus)}>{Object.entries(purchaseStatusLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></div>
+              <div className="purchase-order-actions"><strong>{formatMoney(order.totalAmountMinor, order.currency)}</strong><div><button className="button button-secondary" onClick={() => setPurchaseEditor(order)}>编辑</button><button className="button button-secondary" onClick={() => setAttachmentOrder(order)}>附件</button><button className="button button-secondary" disabled={!!busy || !companyRegistry} onClick={() => void output(order, "pdf")}>{busy === `${order.id}-pdf` ? "导出中…" : "PDF"}</button><button className="button button-secondary" disabled={!!busy} onClick={() => void output(order, "csv")}>{busy === `${order.id}-csv` ? "导出中…" : "CSV"}</button><button className="button button-secondary" disabled={!!busy || !companyRegistry} onClick={() => void output(order, "print")}>{busy === `${order.id}-print` ? "打开中…" : "打印"}</button></div><select aria-label={`${order.number}状态`} value={order.status} onChange={(event) => changeStatus(order.id, event.target.value as PurchaseStatus)}>{Object.entries(purchaseStatusLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></div>
             </header>
             <div className="purchase-summary"><span>采购 {totalQuantity}</span><span>生产完成 {order.completedQuantity}</span><span>可发货 {order.readyQuantity}</span><span>{order.lines.length} 个产品行</span></div>
             <div className="purchase-products">

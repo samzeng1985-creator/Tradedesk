@@ -153,6 +153,11 @@ export const fulfillmentApi = {
     invoke<PurchaseOrder>("create_purchase_order", { input }),
   update: (input: PurchaseOrderUpdateInput) =>
     invoke<PurchaseOrder>("update_purchase_order", { input }),
+  exportPdf: (id: string, companyId: string, signingAssetId: string) =>
+    invoke<DocumentExportResult>("export_purchase_order_pdf", { id, companyId, signingAssetId }),
+  exportCsv: (id: string) => invoke<string>("export_purchase_order_csv", { id }),
+  print: (id: string, companyId: string, signingAssetId: string) =>
+    invoke<DocumentExportResult>("print_purchase_order", { id, companyId, signingAssetId }),
   updateStatus: (id: string, status: PurchaseStatus) =>
     invoke<PurchaseOrder>("update_purchase_order_status", { id, status }),
   updateMilestone: (input: ProductionMilestoneInput) =>

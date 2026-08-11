@@ -358,6 +358,20 @@ export default function App() {
     await loadMasterData();
   }
 
+  async function exportPurchaseOrderPdf(id: string, companyId: string, signingAssetId: string) {
+    const result = await fulfillmentApi.exportPdf(id, companyId, signingAssetId);
+    return result.path;
+  }
+
+  async function exportPurchaseOrderCsv(id: string) {
+    return fulfillmentApi.exportCsv(id);
+  }
+
+  async function printPurchaseOrder(id: string, companyId: string, signingAssetId: string) {
+    const result = await fulfillmentApi.print(id, companyId, signingAssetId);
+    return result.path;
+  }
+
   async function updatePurchaseStatus(id: string, status: PurchaseStatus) {
     await fulfillmentApi.updateStatus(id, status);
     await loadMasterData();
@@ -485,7 +499,7 @@ export default function App() {
           <span className="brand-mark">TD</span>
           <span>
             <strong>TradeDesk</strong>
-            <small>Local · 0.21.2</small>
+            <small>Local · 0.22.0</small>
           </span>
         </div>
 
@@ -752,8 +766,12 @@ export default function App() {
             orders={purchaseOrders}
             cases={businessCases}
             suppliers={suppliers}
+            companyRegistry={companyRegistry}
             onCreate={createPurchaseOrder}
             onUpdate={updatePurchaseOrder}
+            onExportPdf={exportPurchaseOrderPdf}
+            onExportCsv={exportPurchaseOrderCsv}
+            onPrint={printPurchaseOrder}
             onStatus={updatePurchaseStatus}
             onMilestone={updateProductionMilestone}
           />

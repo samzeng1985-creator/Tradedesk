@@ -10,7 +10,7 @@ use sha2::{Digest, Sha256};
 
 use crate::domain::{
     CompanyProfile, CompanyRegistry, ConfigurableProduct, DocumentExportResult, DocumentType,
-    DocumentValidationIssue, TradeDocument, ValidationSeverity,
+    DocumentValidationIssue, PurchaseOrder, PurchaseStatus, TradeDocument, ValidationSeverity,
 };
 
 const COMMERCIAL_INVOICE_TEMPLATE: &str =
@@ -37,6 +37,7 @@ const BENEFICIARY_CERTIFICATE_TEMPLATE: &str =
     include_str!("../../templates/base/beneficiary-certificate.typ");
 const CONFIGURATION_SHEET_TEMPLATE: &str =
     include_str!("../../templates/base/configuration-sheet.typ");
+const PURCHASE_ORDER_TEMPLATE: &str = include_str!("../../templates/base/purchase-order.typ");
 const TEMPLATE_HELPERS: &str = include_str!("../../templates/base/helpers.typ");
 
 #[derive(Serialize)]
@@ -1191,6 +1192,164 @@ pub fn export_configuration_csv(
     Ok(output_path)
 }
 
+pub fn export_purchase_order_pdf(
+    order: &PurchaseOrder,
+    sales_currency: &str,
+    company_profile: &CompanyProfile,
+    typst_path: &Path,
+    work_dir: &Path,
+    output_dir: &Path,
+) -> Result<DocumentExportResult, String> {
+    fs::create_dir_all(work_dir).map_err(|error| format!("无法创建采购单临时目录：{error}"))?;
+    fs::create_dir_all(output_dir).map_err(|error| format!("无法创建采购单导出目录：{error}"))?;
+    let data_path = work_dir.join("purchase-order.json");
+    let template_path = work_dir.join("purchase-order.typ");
+    let output_path = output_dir.join(format!("{}.pdf", purchase_order_stem(order)));
+    let branding = prepare_branding(company_profile, work_dir)?;
+    let payload = serde_json::to_vec_pretty(&serde_json::json!({
+        "purchaseOrder": order,
+        "salesCurrency": sales_currency,
+        "statusLabel": purchase_status_label(&order.status),
+        "branding": branding,
+    }))
+    .map_err(|error| format!("无法生成采购单快照：{error}"))?;
+    fs::write(&data_path, payload).map_err(|error| format!("无法写入采购单快照：{error}"))?;
+    fs::write(work_dir.join("helpers.typ"), TEMPLATE_HELPERS)
+        .map_err(|error| format!("无法写入采购单排版助手：{error}"))?;
+    fs::write(&template_path, PURCHASE_ORDER_TEMPLATE)
+        .map_err(|error| format!("无法写入采购单模板：{error}"))?;
+    let output = Command::new(typst_path)
+        .arg("compile")
+        .arg("--root")
+        .arg(work_dir)
+        .arg("--pdf-standard")
+        .arg("1.7")
+        .arg(&template_path)
+        .arg(&output_path)
+        .output()
+        .map_err(|error| format!("无法启动 Typst PDF 渲染器：{error}"))?;
+    cleanup_branding_assets(work_dir);
+    if !output.status.success() {
+        return Err(format!(
+            "采购单 PDF 生成失败：{}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    let bytes =
+        fs::read(&output_path).map_err(|error| format!("无法读取生成的采购单 PDF：{error}"))?;
+    Ok(DocumentExportResult {
+        path: output_path.to_string_lossy().into_owned(),
+        sha256: format!("{:x}", Sha256::digest(&bytes)),
+        exported_at: String::new(),
+    })
+}
+
+pub fn export_purchase_order_csv(
+    order: &PurchaseOrder,
+    sales_currency: &str,
+    output_dir: &Path,
+) -> Result<PathBuf, String> {
+    fs::create_dir_all(output_dir).map_err(|error| format!("无法创建采购单导出目录：{error}"))?;
+    let output_path = output_dir.join(format!("{}.csv", purchase_order_stem(order)));
+    let fx_snapshot = if order.exchange_rate_date.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "1 {sales_currency} = {} {}",
+            order.exchange_rate, order.currency
+        )
+    };
+    let mut rows = vec![
+        [
+            "purchase_order_number",
+            "supplier",
+            "status",
+            "sales_reference",
+            "expected_date",
+            "currency",
+        ]
+        .map(csv)
+        .join(","),
+        [
+            csv(&order.number),
+            csv(&order.supplier_name),
+            csv(purchase_status_label(&order.status)),
+            csv(&order.business_case_number),
+            csv(&order.expected_date),
+            csv(&order.currency),
+        ]
+        .join(","),
+        [
+            csv("exchange_rate"),
+            csv(&fx_snapshot),
+            csv("exchange_rate_date"),
+            csv(&order.exchange_rate_date),
+            csv("notes"),
+            csv(&order.notes),
+        ]
+        .join(","),
+        String::new(),
+        [
+            "line",
+            "sku",
+            "name_zh",
+            "name_en",
+            "quantity",
+            "unit",
+            "unit_cost",
+            "amount",
+            "currency",
+        ]
+        .map(csv)
+        .join(","),
+    ];
+    for (index, line) in order.lines.iter().enumerate() {
+        rows.push(
+            [
+                (index + 1).to_string(),
+                csv(&line.sku),
+                csv(&line.name_zh),
+                csv(&line.name_en),
+                line.quantity.to_string(),
+                csv(&line.unit),
+                minor(line.unit_cost_minor),
+                minor(line.amount_minor),
+                csv(&order.currency),
+            ]
+            .join(","),
+        );
+    }
+    rows.push(
+        [
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new(),
+            csv("TOTAL"),
+            String::new(),
+            minor(order.total_amount_minor),
+            csv(&order.currency),
+        ]
+        .join(","),
+    );
+    fs::write(&output_path, format!("\u{feff}{}\r\n", rows.join("\r\n")))
+        .map_err(|error| format!("无法写入采购单 CSV：{error}"))?;
+    Ok(output_path)
+}
+
+fn purchase_status_label(status: &PurchaseStatus) -> &'static str {
+    match status {
+        PurchaseStatus::Draft => "草稿 / Draft",
+        PurchaseStatus::PendingConfirmation => "待确认 / Pending Confirmation",
+        PurchaseStatus::Confirmed => "已确认 / Confirmed",
+        PurchaseStatus::InProduction => "生产中 / In Production",
+        PurchaseStatus::ReadyToShip => "可发货 / Ready to Ship",
+        PurchaseStatus::Completed => "已完成 / Completed",
+        PurchaseStatus::Cancelled => "已取消 / Cancelled",
+    }
+}
+
 fn configuration_labels(language: &str) -> Result<ConfigurationLabels, String> {
     let labels = match language {
         "en" => ConfigurationLabels {
@@ -1435,6 +1594,13 @@ fn configuration_stem(configuration: &ConfigurableProduct) -> String {
     sanitize_stem(&format!(
         "ConfigurationSheet_{}_{}",
         configuration.code, configuration.name
+    ))
+}
+
+fn purchase_order_stem(order: &PurchaseOrder) -> String {
+    sanitize_stem(&format!(
+        "PurchaseOrder_{}_{}",
+        order.number, order.supplier_name
     ))
 }
 

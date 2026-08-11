@@ -4698,6 +4698,36 @@ mod tests {
                         .unwrap()
                         .contains("润滑油补给箱")
                 );
+                let purchase_export = crate::document::export_purchase_order_pdf(
+                    &purchase_order,
+                    &business_case.currency,
+                    &company_profile,
+                    &typst,
+                    &work_dir,
+                    &output_dir,
+                )
+                .unwrap();
+                assert_eq!(
+                    &std::fs::read(&purchase_export.path).unwrap()[..5],
+                    b"%PDF-"
+                );
+                let purchase_csv = crate::document::export_purchase_order_csv(
+                    &purchase_order,
+                    &business_case.currency,
+                    &output_dir,
+                )
+                .unwrap();
+                let purchase_csv_content = std::fs::read_to_string(purchase_csv).unwrap();
+                assert!(purchase_csv_content.contains(&purchase_order.number));
+                assert!(purchase_csv_content.contains("SKU-1"));
+                if let Ok(qa_dir) = std::env::var("TRADEDESK_PDF_QA_DIR") {
+                    std::fs::create_dir_all(&qa_dir).unwrap();
+                    std::fs::copy(
+                        &purchase_export.path,
+                        std::path::Path::new(&qa_dir).join("purchase-order.pdf"),
+                    )
+                    .unwrap();
+                }
                 let _ = std::fs::remove_dir_all(render_root);
             }
             let mut customs = issued.clone();
