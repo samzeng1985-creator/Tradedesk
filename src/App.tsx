@@ -313,6 +313,11 @@ export default function App() {
     await loadMasterData();
   }
 
+  async function updateBusinessCaseStage(id: string, stage: PipelineStage) {
+    await businessCaseApi.updateStage(id, stage);
+    await loadMasterData();
+  }
+
   async function archiveBusinessCase(id: string) {
     await businessCaseApi.archive(id);
     await loadMasterData();
@@ -458,7 +463,7 @@ export default function App() {
           <span className="brand-mark">TD</span>
           <span>
             <strong>TradeDesk</strong>
-            <small>Local · 0.19.1</small>
+            <small>Local · 0.19.2</small>
           </span>
         </div>
 
@@ -616,6 +621,7 @@ export default function App() {
             products={products}
             configurableProducts={configurableProducts}
             onSave={saveBusinessCase}
+            onUpdateStage={updateBusinessCaseStage}
             onArchive={archiveBusinessCase}
           />
         )}

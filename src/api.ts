@@ -26,6 +26,7 @@ import type {
   PartnerInput,
   PaymentPlan,
   PaymentPlanInput,
+  PipelineStage,
   Product,
   ProductInput,
   ProductionMilestone,
@@ -131,6 +132,8 @@ export const businessCaseApi = {
   list: () => invoke<BusinessCase[]>("list_business_cases"),
   save: (input: BusinessCaseInput) =>
     invoke<BusinessCase>("save_business_case", { input }),
+  updateStage: (id: string, stage: PipelineStage) =>
+    invoke<BusinessCase>("update_business_case_stage", { id, stage }),
   archive: (id: string) => invoke<void>("archive_business_case", { id }),
 };
 

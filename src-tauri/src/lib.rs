@@ -15,10 +15,10 @@ use domain::{
     CompanyRegistry, ComponentOption, ComponentOptionInput, ComponentOptionTranslationInput,
     ConfigComponent, ConfigComponentInput, ConfigurableProduct, ConfigurableProductInput,
     ConvertDocumentInput, CreateDocumentInput, Customer, CustomerInput, DocumentDraft,
-    DocumentExportResult, Partner, PartnerInput, PaymentPlan, PaymentPlanInput, Product,
-    ProductInput, ProductionMilestone, ProductionMilestoneInput, PurchaseOrder, PurchaseOrderInput,
-    PurchaseStatus, SaveDocumentInput, ShipmentBatch, ShipmentBatchInput, Supplier, SupplierInput,
-    TradeDocument, WorkspaceSummary,
+    DocumentExportResult, Partner, PartnerInput, PaymentPlan, PaymentPlanInput, PipelineStage,
+    Product, ProductInput, ProductionMilestone, ProductionMilestoneInput, PurchaseOrder,
+    PurchaseOrderInput, PurchaseStatus, SaveDocumentInput, ShipmentBatch, ShipmentBatchInput,
+    Supplier, SupplierInput, TradeDocument, WorkspaceSummary,
 };
 use storage::EncryptedDatabase;
 use tauri::{Manager, State};
@@ -620,6 +620,17 @@ fn archive_business_case(id: String, state: State<'_, AppState>) -> Result<(), S
 }
 
 #[tauri::command]
+fn update_business_case_stage(
+    id: String,
+    stage: PipelineStage,
+    state: State<'_, AppState>,
+) -> Result<BusinessCase, String> {
+    with_database(state, |database| {
+        database.update_business_case_stage(&id, stage)
+    })
+}
+
+#[tauri::command]
 fn list_purchase_orders(state: State<'_, AppState>) -> Result<Vec<PurchaseOrder>, String> {
     with_database(state, EncryptedDatabase::list_purchase_orders)
 }
@@ -896,6 +907,7 @@ pub fn run() {
             import_master_data,
             list_business_cases,
             save_business_case,
+            update_business_case_stage,
             archive_business_case,
             list_purchase_orders,
             create_purchase_order,

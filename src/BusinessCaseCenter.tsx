@@ -18,6 +18,7 @@ interface BusinessCaseCenterProps {
   products: Product[];
   configurableProducts: ConfigurableProduct[];
   onSave: (input: BusinessCaseInput) => Promise<void>;
+  onUpdateStage: (id: string, stage: PipelineStage) => Promise<void>;
   onArchive: (id: string) => Promise<void>;
 }
 
@@ -199,10 +200,12 @@ function CaseEditor({
   );
 }
 
-export function BusinessCaseCenter({ cases, customers, products, configurableProducts, onSave, onArchive }: BusinessCaseCenterProps) {
+export function BusinessCaseCenter({ cases, customers, products, configurableProducts, onSave, onUpdateStage, onArchive }: BusinessCaseCenterProps) {
   const [editing, setEditing] = useState<BusinessCase | "new" | null>(null);
   const [query, setQuery] = useState("");
   const [attachmentCase, setAttachmentCase] = useState<BusinessCase | null>(null);
+  const [pendingStages, setPendingStages] = useState<Partial<Record<string, PipelineStage>>>({});
+  const [stageError, setStageError] = useState("");
   const normalizedQuery = query.trim().toLocaleLowerCase();
   const filteredCases = cases.filter((item) =>
     [item.number, item.customerName, item.currency, item.incoterm].some((value) =>
@@ -215,12 +218,30 @@ export function BusinessCaseCenter({ cases, customers, products, configurablePro
     await onArchive(record.id);
   }
 
+  async function updateStage(record: BusinessCase, stage: PipelineStage) {
+    if (stage === record.stage) return;
+    setPendingStages((current) => ({ ...current, [record.id]: stage }));
+    setStageError("");
+    try {
+      await onUpdateStage(record.id, stage);
+    } catch (reason) {
+      setStageError(`业务单“${record.number}”状态修改失败：${String(reason)}`);
+    } finally {
+      setPendingStages((current) => {
+        const next = { ...current };
+        delete next[record.id];
+        return next;
+      });
+    }
+  }
+
   return <>
     <section className="panel business-case-panel">
       <div className="panel-heading"><div><h2>业务单中心</h2><p>客户和产品只选择一次，后续采购与单证复用同一业务快照</p></div><button className="button button-primary" disabled={!customers.length || (!products.length && !configurableProducts.length)} onClick={() => setEditing("new")}>新建业务单</button></div>
       {(!customers.length || (!products.length && !configurableProducts.length)) && <div className="empty-callout">请先在“主数据”中录入客户，以及至少一个标准产品或已完成自选配置。</div>}
       <div className="table-toolbar"><label><span className="sr-only">搜索业务单</span><input placeholder="按单号、客户、币种或贸易术语搜索" value={query} onChange={(event) => setQuery(event.target.value)} /></label><span className="record-count">{filteredCases.length} 条业务单</span></div>
-      <div className="table-wrap"><table><thead><tr><th>业务单号</th><th>客户</th><th>状态</th><th>贸易术语</th><th>计划发货</th><th>金额</th><th>操作</th></tr></thead><tbody>{filteredCases.map((item) => <tr key={item.id}><td><strong>{item.number}</strong><small className="table-subtitle">{item.lines.length} 个产品行</small></td><td>{item.customerName}</td><td><span className="case-stage">{stageLabels[item.stage]}</span></td><td>{item.incoterm || "—"}</td><td>{item.shipmentDate || "—"}</td><td>{formatMoney(item.totalAmountMinor, item.currency)}</td><td><div className="row-actions"><button onClick={() => setEditing(item)}>编辑</button><button onClick={() => setAttachmentCase(item)}>附件</button><button onClick={() => archive(item)}>归档</button></div></td></tr>)}</tbody></table></div>
+      {stageError && <div className="form-error case-stage-error" role="alert">{stageError}</div>}
+      <div className="table-wrap"><table><thead><tr><th>业务单号</th><th>客户</th><th>状态</th><th>贸易术语</th><th>计划发货</th><th>金额</th><th>操作</th></tr></thead><tbody>{filteredCases.map((item) => <tr key={item.id}><td><strong>{item.number}</strong><small className="table-subtitle">{item.lines.length} 个产品行</small></td><td>{item.customerName}</td><td><select className="case-stage-select" aria-label={`修改业务单 ${item.number} 的状态`} value={pendingStages[item.id] ?? item.stage} disabled={pendingStages[item.id] !== undefined} onChange={(event) => void updateStage(item, event.target.value as PipelineStage)}>{Object.entries(stageLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></td><td>{item.incoterm || "—"}</td><td>{item.shipmentDate || "—"}</td><td>{formatMoney(item.totalAmountMinor, item.currency)}</td><td><div className="row-actions"><button onClick={() => setEditing(item)}>编辑</button><button onClick={() => setAttachmentCase(item)}>附件</button><button onClick={() => archive(item)}>归档</button></div></td></tr>)}</tbody></table></div>
       {!filteredCases.length && <div className="empty-table">{cases.length ? "没有符合条件的业务单" : "还没有业务单，请从第一笔真实订单开始"}</div>}
     </section>
     {editing && <CaseEditor record={editing === "new" ? null : editing} cases={cases} customers={customers} products={products} configurableProducts={configurableProducts} onClose={() => setEditing(null)} onSave={onSave} />}

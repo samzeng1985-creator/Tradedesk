@@ -1556,6 +1556,28 @@ impl EncryptedDatabase {
         self.audit("business_case", id, "archive")
     }
 
+    pub fn update_business_case_stage(
+        &self,
+        id: &str,
+        stage: PipelineStage,
+    ) -> rusqlite::Result<BusinessCase> {
+        let transaction = self.connection.unchecked_transaction()?;
+        let changed = transaction.execute(
+            "UPDATE trade_cases SET stage = ?2 WHERE id = ?1 AND active = 1",
+            params![id, stage.as_str()],
+        )?;
+        if changed == 0 {
+            return Err(rusqlite::Error::QueryReturnedNoRows);
+        }
+        transaction.execute(
+            "INSERT INTO audit_events(entity_type, entity_id, action, payload_json)
+             VALUES('business_case', ?1, 'update_stage', ?2)",
+            params![id, format!(r#"{{"stage":"{}"}}"#, stage.as_str())],
+        )?;
+        transaction.commit()?;
+        self.get_business_case(id)
+    }
+
     pub fn list_purchase_orders(&self) -> rusqlite::Result<Vec<PurchaseOrder>> {
         let ids = {
             let mut statement = self.connection.prepare(
@@ -3604,6 +3626,13 @@ mod tests {
                 })
                 .unwrap();
             assert_eq!(business_case.total_amount_minor, 3_000);
+            let updated_stage = database
+                .update_business_case_stage(&business_case.id, PipelineStage::Production)
+                .unwrap();
+            assert_eq!(updated_stage.stage, PipelineStage::Production);
+            let business_case = database
+                .update_business_case_stage(&business_case.id, PipelineStage::Quotation)
+                .unwrap();
             let quote = database
                 .create_document(CreateDocumentInput {
                     business_case_id: business_case.id.clone(),

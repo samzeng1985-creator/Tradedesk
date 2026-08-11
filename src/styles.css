@@ -210,7 +210,11 @@ tbody tr:hover { background: #fafbfc; }
 .empty-callout { margin-top: 18px; padding: 12px 14px; color: #92400e; background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; font-size: 13px; }
 .record-count { color: #64748b; font-size: 12px; }
 .empty-table { color: #64748b; text-align: center; padding: 52px 16px; border-top: 1px solid #edf0f4; }
-.case-stage { display: inline-flex; color: #5b21b6; background: #ede9fe; padding: 5px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; }
+.case-stage-select { min-width: 92px; border: 1px solid #ddd6fe; border-radius: 999px; padding: 6px 26px 6px 10px; color: #5b21b6; background-color: #f5f3ff; font-size: 11px; font-weight: 700; cursor: pointer; }
+.case-stage-select:hover { border-color: #a78bfa; background-color: #ede9fe; }
+.case-stage-select:focus { outline: 3px solid rgba(124, 58, 237, .16); border-color: #8b5cf6; }
+.case-stage-select:disabled { opacity: .65; cursor: wait; }
+.case-stage-error { margin: 12px 0 0; }
 .case-editor { width: min(1100px, 100%); }
 .case-fields { margin-bottom: 24px; }
 .editor-form select { min-height: 39px; }
