@@ -39,6 +39,7 @@ import type {
   ProductionMilestoneInput,
   PurchaseOrder,
   PurchaseOrderInput,
+  PurchaseOrderUpdateInput,
   PurchaseStatus,
   RecordStatus,
   SaveDocumentInput,
@@ -352,6 +353,11 @@ export default function App() {
     await loadMasterData();
   }
 
+  async function updatePurchaseOrder(input: PurchaseOrderUpdateInput) {
+    await fulfillmentApi.update(input);
+    await loadMasterData();
+  }
+
   async function updatePurchaseStatus(id: string, status: PurchaseStatus) {
     await fulfillmentApi.updateStatus(id, status);
     await loadMasterData();
@@ -479,7 +485,7 @@ export default function App() {
           <span className="brand-mark">TD</span>
           <span>
             <strong>TradeDesk</strong>
-            <small>Local · 0.21.0</small>
+            <small>Local · 0.21.1</small>
           </span>
         </div>
 
@@ -747,6 +753,7 @@ export default function App() {
             cases={businessCases}
             suppliers={suppliers}
             onCreate={createPurchaseOrder}
+            onUpdate={updatePurchaseOrder}
             onStatus={updatePurchaseStatus}
             onMilestone={updateProductionMilestone}
           />

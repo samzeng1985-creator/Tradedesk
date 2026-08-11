@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { buildBusinessOverview } from "../src/businessOverview.ts";
+import { nextPurchaseSplitNumber } from "../src/numbering.ts";
 
 const businessCase = {
   id: "case-1", number: "TD-1", customerId: "customer-1", customerName: "Buyer",
@@ -76,4 +77,15 @@ test("uses the latest complete cost estimate for profit and target quote risk", 
   assert.equal(result.margin, 20);
   assert.ok(result.risks.some((risk) => risk.category === "报价毛利"));
   assert.ok(!result.risks.some((risk) => risk.category === "成本估算"));
+});
+
+test("numbers supplier-split purchase orders inside their business case only", () => {
+  const caseRecord = { id: "case-1", number: "TD-20260810-0001" };
+  const orders = [
+    { businessCaseId: "case-1", number: "PO-20260810-0001-1" },
+    { businessCaseId: "case-1", number: "PO-20260810-0001-2" },
+    { businessCaseId: "case-2", number: "PO-20260810-0001-9" },
+    { businessCaseId: "case-1", number: "QUO-20260810-0001" },
+  ];
+  assert.equal(nextPurchaseSplitNumber(caseRecord, orders), "PO-20260810-0001-3");
 });

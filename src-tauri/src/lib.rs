@@ -17,8 +17,9 @@ use domain::{
     ConvertDocumentInput, CostEstimate, CostEstimateInput, CreateDocumentInput, Customer,
     CustomerInput, DocumentDraft, DocumentExportResult, Partner, PartnerInput, PaymentPlan,
     PaymentPlanInput, PipelineStage, Product, ProductInput, ProductionMilestone,
-    ProductionMilestoneInput, PurchaseOrder, PurchaseOrderInput, PurchaseStatus, SaveDocumentInput,
-    ShipmentBatch, ShipmentBatchInput, Supplier, SupplierInput, TradeDocument, WorkspaceSummary,
+    ProductionMilestoneInput, PurchaseOrder, PurchaseOrderInput, PurchaseOrderUpdateInput,
+    PurchaseStatus, SaveDocumentInput, ShipmentBatch, ShipmentBatchInput, Supplier, SupplierInput,
+    TradeDocument, WorkspaceSummary,
 };
 use storage::EncryptedDatabase;
 use tauri::{Manager, State};
@@ -662,6 +663,14 @@ fn create_purchase_order(
 }
 
 #[tauri::command]
+fn update_purchase_order(
+    input: PurchaseOrderUpdateInput,
+    state: State<'_, AppState>,
+) -> Result<PurchaseOrder, String> {
+    with_database(state, |database| database.update_purchase_order(input))
+}
+
+#[tauri::command]
 fn update_purchase_order_status(
     id: String,
     status: PurchaseStatus,
@@ -932,6 +941,7 @@ pub fn run() {
             archive_cost_estimate,
             list_purchase_orders,
             create_purchase_order,
+            update_purchase_order,
             update_purchase_order_status,
             update_production_milestone,
             list_partners,

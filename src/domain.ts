@@ -320,6 +320,15 @@ export interface PurchaseOrderInput {
   lines: PurchaseOrderLineInput[];
 }
 
+export interface PurchaseOrderUpdateInput {
+  id: string;
+  supplierId: string;
+  currency: string;
+  expectedDate: string;
+  notes: string;
+  lines: PurchaseOrderLineInput[];
+}
+
 export interface BusinessCase {
   id: string;
   number: string;

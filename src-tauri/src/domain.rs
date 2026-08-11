@@ -825,6 +825,17 @@ pub struct PurchaseOrderInput {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct PurchaseOrderUpdateInput {
+    pub id: String,
+    pub supplier_id: String,
+    pub currency: String,
+    pub expected_date: String,
+    pub notes: String,
+    pub lines: Vec<PurchaseOrderLineInput>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct BusinessCase {
     pub id: String,
     pub number: String,

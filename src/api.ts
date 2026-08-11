@@ -35,6 +35,7 @@ import type {
   ProductionMilestoneInput,
   PurchaseOrder,
   PurchaseOrderInput,
+  PurchaseOrderUpdateInput,
   PurchaseStatus,
   Supplier,
   SupplierInput,
@@ -150,6 +151,8 @@ export const fulfillmentApi = {
   list: () => invoke<PurchaseOrder[]>("list_purchase_orders"),
   create: (input: PurchaseOrderInput) =>
     invoke<PurchaseOrder>("create_purchase_order", { input }),
+  update: (input: PurchaseOrderUpdateInput) =>
+    invoke<PurchaseOrder>("update_purchase_order", { input }),
   updateStatus: (id: string, status: PurchaseStatus) =>
     invoke<PurchaseOrder>("update_purchase_order_status", { id, status }),
   updateMilestone: (input: ProductionMilestoneInput) =>
