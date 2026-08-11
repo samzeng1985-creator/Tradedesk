@@ -10,15 +10,16 @@ use crate::domain::{
     CompanyProfile, CompanyRecord, CompanyRegistry, CompanySigningAsset, ComponentOption,
     ComponentOptionInput, ComponentOptionTranslationInput, ConfigComponent, ConfigComponentInput,
     ConfigurableProduct, ConfigurableProductInput, ConfigurableProductLine, ConvertDocumentInput,
-    CreateDocumentInput, Customer, CustomerInput, DocumentDraft, DocumentLineSnapshot,
-    DocumentPayload, DocumentStatus, DocumentType, MilestoneStatus, Partner, PartnerInput,
-    PaymentPlan, PaymentPlanInput, PaymentStatus, PipelineStage, Product, ProductInput,
-    ProductionMilestone, ProductionMilestoneInput, PurchaseOrder, PurchaseOrderInput,
-    PurchaseOrderLine, PurchaseStatus, SaveDocumentInput, ShipmentBatch, ShipmentBatchInput,
-    ShipmentLine, ShipmentStatus, Supplier, SupplierInput, TradeDocument, WorkspaceSummary,
+    CostEstimate, CostEstimateInput, CostEstimateLine, CreateDocumentInput, Customer,
+    CustomerInput, DocumentDraft, DocumentLineSnapshot, DocumentPayload, DocumentStatus,
+    DocumentType, MilestoneStatus, Partner, PartnerInput, PaymentPlan, PaymentPlanInput,
+    PaymentStatus, PipelineStage, Product, ProductInput, ProductionMilestone,
+    ProductionMilestoneInput, PurchaseOrder, PurchaseOrderInput, PurchaseOrderLine, PurchaseStatus,
+    SaveDocumentInput, ShipmentBatch, ShipmentBatchInput, ShipmentLine, ShipmentStatus, Supplier,
+    SupplierInput, TradeDocument, WorkspaceSummary,
 };
 
-const SCHEMA_VERSION: i64 = 12;
+const SCHEMA_VERSION: i64 = 13;
 
 const MILESTONE_STAGES: [(&str, &str); 6] = [
     ("raw_material", "原料准备"),
@@ -27,6 +28,19 @@ const MILESTONE_STAGES: [(&str, &str); 6] = [
     ("quality", "质检"),
     ("packing", "包装"),
     ("ready_to_ship", "可发货"),
+];
+
+const COST_CATEGORIES: [&str; 10] = [
+    "material",
+    "processing",
+    "packaging",
+    "domestic_logistics",
+    "international_freight",
+    "duty_tax",
+    "commission",
+    "insurance",
+    "certification",
+    "other",
 ];
 
 pub struct EncryptedDatabase {
@@ -452,7 +466,41 @@ impl EncryptedDatabase {
                 active INTEGER NOT NULL DEFAULT 1
              );
              CREATE INDEX IF NOT EXISTS idx_payment_plans_case
-                ON payment_plans(trade_case_id, active, due_date);",
+                ON payment_plans(trade_case_id, active, due_date);
+
+             CREATE TABLE IF NOT EXISTS cost_estimates (
+                id TEXT PRIMARY KEY,
+                number TEXT NOT NULL UNIQUE,
+                trade_case_id TEXT NOT NULL REFERENCES trade_cases(id),
+                trade_case_number_snapshot TEXT NOT NULL,
+                customer_name_snapshot TEXT NOT NULL,
+                currency TEXT NOT NULL,
+                target_margin_bps INTEGER NOT NULL DEFAULT 2500,
+                notes TEXT NOT NULL DEFAULT '',
+                total_cost_minor INTEGER NOT NULL DEFAULT 0,
+                suggested_price_minor INTEGER NOT NULL DEFAULT 0,
+                active INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+             );
+             CREATE INDEX IF NOT EXISTS idx_cost_estimates_case
+                ON cost_estimates(trade_case_id, active, updated_at DESC);
+
+             CREATE TABLE IF NOT EXISTS cost_estimate_lines (
+                id TEXT PRIMARY KEY,
+                cost_estimate_id TEXT NOT NULL REFERENCES cost_estimates(id) ON DELETE CASCADE,
+                sort_order INTEGER NOT NULL,
+                category TEXT NOT NULL,
+                description TEXT NOT NULL,
+                specification TEXT NOT NULL DEFAULT '',
+                quantity REAL NOT NULL,
+                unit TEXT NOT NULL,
+                unit_cost_minor INTEGER NOT NULL,
+                amount_minor INTEGER NOT NULL,
+                notes TEXT NOT NULL DEFAULT ''
+             );
+             CREATE INDEX IF NOT EXISTS idx_cost_estimate_lines_estimate
+                ON cost_estimate_lines(cost_estimate_id, sort_order);",
         )?;
 
         ensure_column(
@@ -1576,6 +1624,195 @@ impl EncryptedDatabase {
         )?;
         transaction.commit()?;
         self.get_business_case(id)
+    }
+
+    pub fn list_cost_estimates(&self) -> rusqlite::Result<Vec<CostEstimate>> {
+        let ids = {
+            let mut statement = self.connection.prepare(
+                "SELECT id FROM cost_estimates WHERE active = 1
+                 ORDER BY updated_at DESC, number COLLATE NOCASE DESC",
+            )?;
+            statement
+                .query_map([], |row| row.get::<_, String>(0))?
+                .collect::<rusqlite::Result<Vec<_>>>()?
+        };
+        ids.iter().map(|id| self.get_cost_estimate(id)).collect()
+    }
+
+    pub fn get_cost_estimate(&self, id: &str) -> rusqlite::Result<CostEstimate> {
+        let mut estimate = self.connection.query_row(
+            "SELECT id, number, trade_case_id, trade_case_number_snapshot,
+                    customer_name_snapshot, currency, target_margin_bps, notes,
+                    total_cost_minor, suggested_price_minor, updated_at
+             FROM cost_estimates WHERE id = ?1 AND active = 1",
+            params![id],
+            |row| {
+                Ok(CostEstimate {
+                    id: row.get(0)?,
+                    number: row.get(1)?,
+                    business_case_id: row.get(2)?,
+                    business_case_number: row.get(3)?,
+                    customer_name: row.get(4)?,
+                    currency: row.get(5)?,
+                    target_margin_bps: row.get(6)?,
+                    notes: row.get(7)?,
+                    total_cost_minor: row.get(8)?,
+                    suggested_price_minor: row.get(9)?,
+                    updated_at: row.get(10)?,
+                    lines: Vec::new(),
+                })
+            },
+        )?;
+        let mut statement = self.connection.prepare(
+            "SELECT id, category, description, specification, quantity, unit,
+                    unit_cost_minor, amount_minor, notes
+             FROM cost_estimate_lines WHERE cost_estimate_id = ?1 ORDER BY sort_order",
+        )?;
+        estimate.lines = statement
+            .query_map(params![id], |row| {
+                Ok(CostEstimateLine {
+                    id: row.get(0)?,
+                    category: row.get(1)?,
+                    description: row.get(2)?,
+                    specification: row.get(3)?,
+                    quantity: row.get(4)?,
+                    unit: row.get(5)?,
+                    unit_cost_minor: row.get(6)?,
+                    amount_minor: row.get(7)?,
+                    notes: row.get(8)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(estimate)
+    }
+
+    pub fn save_cost_estimate(&self, input: CostEstimateInput) -> rusqlite::Result<CostEstimate> {
+        require_text(&input.number)?;
+        require_text(&input.business_case_id)?;
+        if input.target_margin_bps < 0
+            || input.target_margin_bps > 9_500
+            || input.lines.is_empty()
+            || input.lines.iter().any(|line| {
+                !COST_CATEGORIES.contains(&line.category.as_str())
+                    || line.description.trim().is_empty()
+                    || line.unit.trim().is_empty()
+                    || !line.quantity.is_finite()
+                    || line.quantity <= 0.0
+                    || line.unit_cost_minor < 0
+            })
+        {
+            return Err(rusqlite::Error::InvalidQuery);
+        }
+
+        let transaction = self.connection.unchecked_transaction()?;
+        let (case_number, customer_name, currency) = transaction.query_row(
+            "SELECT number, customer_name_snapshot, currency
+             FROM trade_cases WHERE id = ?1 AND active = 1",
+            params![input.business_case_id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            },
+        )?;
+        let id = input.id.unwrap_or_else(|| Uuid::new_v4().to_string());
+        let mut prepared_lines = Vec::with_capacity(input.lines.len());
+        let mut total_cost_minor = 0_i64;
+        for line in &input.lines {
+            let amount_minor = (line.quantity * line.unit_cost_minor as f64).round() as i64;
+            total_cost_minor = total_cost_minor
+                .checked_add(amount_minor)
+                .ok_or(rusqlite::Error::InvalidQuery)?;
+            prepared_lines.push((
+                line,
+                line.id
+                    .clone()
+                    .unwrap_or_else(|| Uuid::new_v4().to_string()),
+                amount_minor,
+            ));
+        }
+        let denominator = 10_000_i128 - input.target_margin_bps as i128;
+        let suggested = ((total_cost_minor as i128 * 10_000) + denominator / 2) / denominator;
+        let suggested_price_minor =
+            i64::try_from(suggested).map_err(|_| rusqlite::Error::InvalidQuery)?;
+
+        transaction.execute(
+            "INSERT INTO cost_estimates(
+                id, number, trade_case_id, trade_case_number_snapshot,
+                customer_name_snapshot, currency, target_margin_bps, notes,
+                total_cost_minor, suggested_price_minor, active, updated_at
+             ) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 1, CURRENT_TIMESTAMP)
+             ON CONFLICT(id) DO UPDATE SET
+                number = excluded.number,
+                trade_case_id = excluded.trade_case_id,
+                trade_case_number_snapshot = excluded.trade_case_number_snapshot,
+                customer_name_snapshot = excluded.customer_name_snapshot,
+                currency = excluded.currency,
+                target_margin_bps = excluded.target_margin_bps,
+                notes = excluded.notes,
+                total_cost_minor = excluded.total_cost_minor,
+                suggested_price_minor = excluded.suggested_price_minor,
+                active = 1,
+                updated_at = CURRENT_TIMESTAMP",
+            params![
+                id,
+                input.number.trim(),
+                input.business_case_id,
+                case_number,
+                customer_name,
+                currency,
+                input.target_margin_bps,
+                input.notes.trim(),
+                total_cost_minor,
+                suggested_price_minor,
+            ],
+        )?;
+        transaction.execute(
+            "DELETE FROM cost_estimate_lines WHERE cost_estimate_id = ?1",
+            params![id],
+        )?;
+        for (index, (line, line_id, amount_minor)) in prepared_lines.iter().enumerate() {
+            transaction.execute(
+                "INSERT INTO cost_estimate_lines(
+                    id, cost_estimate_id, sort_order, category, description,
+                    specification, quantity, unit, unit_cost_minor, amount_minor, notes
+                 ) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                params![
+                    line_id,
+                    id,
+                    index as i64,
+                    line.category,
+                    line.description.trim(),
+                    line.specification.trim(),
+                    line.quantity,
+                    line.unit.trim(),
+                    line.unit_cost_minor,
+                    amount_minor,
+                    line.notes.trim(),
+                ],
+            )?;
+        }
+        transaction.execute(
+            "INSERT INTO audit_events(entity_type, entity_id, action, payload_json)
+             VALUES('cost_estimate', ?1, 'save', '{}')",
+            params![id],
+        )?;
+        transaction.commit()?;
+        self.get_cost_estimate(&id)
+    }
+
+    pub fn archive_cost_estimate(&self, id: &str) -> rusqlite::Result<()> {
+        let changed = self.connection.execute(
+            "UPDATE cost_estimates SET active = 0, updated_at = CURRENT_TIMESTAMP
+             WHERE id = ?1 AND active = 1",
+            params![id],
+        )?;
+        if changed == 0 {
+            return Err(rusqlite::Error::QueryReturnedNoRows);
+        }
+        self.audit("cost_estimate", id, "archive")
     }
 
     pub fn list_purchase_orders(&self) -> rusqlite::Result<Vec<PurchaseOrder>> {
@@ -3691,6 +3928,40 @@ mod tests {
                 .unwrap();
             assert_eq!(purchase_order.total_amount_minor, 2_000);
             assert_eq!(purchase_order.lines[0].milestones.len(), 6);
+            let cost_estimate = database
+                .save_cost_estimate(crate::domain::CostEstimateInput {
+                    id: None,
+                    number: "CST-20260811-0001".into(),
+                    business_case_id: business_case.id.clone(),
+                    target_margin_bps: 3_000,
+                    notes: "complete quotation cost".into(),
+                    lines: vec![
+                        crate::domain::CostEstimateLineInput {
+                            id: None,
+                            category: "material".into(),
+                            description: "Purchased product".into(),
+                            specification: "SUP-1".into(),
+                            quantity: 12.5,
+                            unit: "set".into(),
+                            unit_cost_minor: 160,
+                            notes: "PO-2026-0001".into(),
+                        },
+                        crate::domain::CostEstimateLineInput {
+                            id: None,
+                            category: "international_freight".into(),
+                            description: "Ocean freight".into(),
+                            specification: "FOB surcharge".into(),
+                            quantity: 1.0,
+                            unit: "lot".into(),
+                            unit_cost_minor: 100,
+                            notes: String::new(),
+                        },
+                    ],
+                })
+                .unwrap();
+            assert_eq!(cost_estimate.currency, "USD");
+            assert_eq!(cost_estimate.total_cost_minor, 2_100);
+            assert_eq!(cost_estimate.suggested_price_minor, 3_000);
             assert!(
                 database
                     .save_business_case(BusinessCaseInput {
@@ -4203,6 +4474,10 @@ mod tests {
         let purchase_orders = reopened.list_purchase_orders().unwrap();
         assert_eq!(purchase_orders[0].number, "PO-2026-0001");
         assert_eq!(purchase_orders[0].ready_quantity, 12.5);
+        let cost_estimates = reopened.list_cost_estimates().unwrap();
+        assert_eq!(cost_estimates[0].number, "CST-20260811-0001");
+        assert_eq!(cost_estimates[0].lines.len(), 2);
+        assert_eq!(cost_estimates[0].suggested_price_minor, 3_000);
         assert_eq!(reopened.list_partners().unwrap()[0].code, "FWD-001");
         assert_eq!(reopened.list_shipment_batches().unwrap()[0].lines.len(), 1);
         assert_eq!(
@@ -4295,7 +4570,7 @@ mod tests {
                     |row| row.get::<_, String>(0),
                 )
                 .unwrap(),
-            "12"
+            "13"
         );
         drop(database);
         let _ = std::fs::remove_file(&path);
@@ -4350,7 +4625,7 @@ mod tests {
                     |row| row.get::<_, String>(0),
                 )
                 .unwrap(),
-            "12"
+            "13"
         );
         drop(database);
         let _ = std::fs::remove_file(&path);

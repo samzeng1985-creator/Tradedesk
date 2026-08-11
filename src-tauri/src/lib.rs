@@ -14,11 +14,11 @@ use domain::{
     AttachmentInput, AttachmentRecord, BackupResult, BusinessCase, BusinessCaseInput,
     CompanyRegistry, ComponentOption, ComponentOptionInput, ComponentOptionTranslationInput,
     ConfigComponent, ConfigComponentInput, ConfigurableProduct, ConfigurableProductInput,
-    ConvertDocumentInput, CreateDocumentInput, Customer, CustomerInput, DocumentDraft,
-    DocumentExportResult, Partner, PartnerInput, PaymentPlan, PaymentPlanInput, PipelineStage,
-    Product, ProductInput, ProductionMilestone, ProductionMilestoneInput, PurchaseOrder,
-    PurchaseOrderInput, PurchaseStatus, SaveDocumentInput, ShipmentBatch, ShipmentBatchInput,
-    Supplier, SupplierInput, TradeDocument, WorkspaceSummary,
+    ConvertDocumentInput, CostEstimate, CostEstimateInput, CreateDocumentInput, Customer,
+    CustomerInput, DocumentDraft, DocumentExportResult, Partner, PartnerInput, PaymentPlan,
+    PaymentPlanInput, PipelineStage, Product, ProductInput, ProductionMilestone,
+    ProductionMilestoneInput, PurchaseOrder, PurchaseOrderInput, PurchaseStatus, SaveDocumentInput,
+    ShipmentBatch, ShipmentBatchInput, Supplier, SupplierInput, TradeDocument, WorkspaceSummary,
 };
 use storage::EncryptedDatabase;
 use tauri::{Manager, State};
@@ -631,6 +631,24 @@ fn update_business_case_stage(
 }
 
 #[tauri::command]
+fn list_cost_estimates(state: State<'_, AppState>) -> Result<Vec<CostEstimate>, String> {
+    with_database(state, EncryptedDatabase::list_cost_estimates)
+}
+
+#[tauri::command]
+fn save_cost_estimate(
+    input: CostEstimateInput,
+    state: State<'_, AppState>,
+) -> Result<CostEstimate, String> {
+    with_database(state, |database| database.save_cost_estimate(input))
+}
+
+#[tauri::command]
+fn archive_cost_estimate(id: String, state: State<'_, AppState>) -> Result<(), String> {
+    with_database(state, |database| database.archive_cost_estimate(&id))
+}
+
+#[tauri::command]
 fn list_purchase_orders(state: State<'_, AppState>) -> Result<Vec<PurchaseOrder>, String> {
     with_database(state, EncryptedDatabase::list_purchase_orders)
 }
@@ -909,6 +927,9 @@ pub fn run() {
             save_business_case,
             update_business_case_stage,
             archive_business_case,
+            list_cost_estimates,
+            save_cost_estimate,
+            archive_cost_estimate,
             list_purchase_orders,
             create_purchase_order,
             update_purchase_order_status,

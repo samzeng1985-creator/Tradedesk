@@ -43,7 +43,7 @@ test("aggregates profit, coverage and cross-process risks for one business case"
   const documents = [{ id: "doc-1", businessCaseId: "case-1", status: "draft",
     validationIssues: [{ severity: "error", code: "quantity", message: "mismatch" }] }];
 
-  const result = buildBusinessOverview(businessCase, orders, shipments, payments, documents, "2026-08-11");
+  const result = buildBusinessOverview(businessCase, orders, shipments, payments, documents, [], "2026-08-11");
   assert.equal(result.purchaseTotalMinor, 40_000);
   assert.equal(result.grossProfitMinor, 60_000);
   assert.equal(result.margin, 60);
@@ -59,7 +59,21 @@ test("aggregates profit, coverage and cross-process risks for one business case"
 
 test("does not flag future fulfillment work while a case is still in quotation", () => {
   const quotation = { ...businessCase, stage: "quotation", shipmentDate: "" };
-  const result = buildBusinessOverview(quotation, [], [], [], [], "2026-08-11");
+  const result = buildBusinessOverview(quotation, [], [], [], [], [], "2026-08-11");
   assert.equal(result.purchaseCoverage, 0);
   assert.equal(result.risks.length, 0);
+});
+
+test("uses the latest complete cost estimate for profit and target quote risk", () => {
+  const estimates = [{
+    id: "cost-1", number: "CST-1", businessCaseId: "case-1", businessCaseNumber: "TD-1",
+    customerName: "Buyer", currency: "USD", targetMarginBps: 3000, notes: "",
+    totalCostMinor: 80_000, suggestedPriceMinor: 114_286, updatedAt: "2026-08-11 10:00:00", lines: [],
+  }];
+  const result = buildBusinessOverview(businessCase, [], [], [], [], estimates, "2026-08-11");
+  assert.equal(result.latestEstimate?.number, "CST-1");
+  assert.equal(result.grossProfitMinor, 20_000);
+  assert.equal(result.margin, 20);
+  assert.ok(result.risks.some((risk) => risk.category === "报价毛利"));
+  assert.ok(!result.risks.some((risk) => risk.category === "成本估算"));
 });

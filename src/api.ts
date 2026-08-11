@@ -15,6 +15,8 @@ import type {
   ConfigComponentInput,
   ConfigurableProduct,
   ConfigurableProductInput,
+  CostEstimate,
+  CostEstimateInput,
   ConvertDocumentInput,
   CreateDocumentInput,
   Customer,
@@ -135,6 +137,13 @@ export const businessCaseApi = {
   updateStage: (id: string, stage: PipelineStage) =>
     invoke<BusinessCase>("update_business_case_stage", { id, stage }),
   archive: (id: string) => invoke<void>("archive_business_case", { id }),
+};
+
+export const costEstimateApi = {
+  list: () => invoke<CostEstimate[]>("list_cost_estimates"),
+  save: (input: CostEstimateInput) =>
+    invoke<CostEstimate>("save_cost_estimate", { input }),
+  archive: (id: string) => invoke<void>("archive_cost_estimate", { id }),
 };
 
 export const fulfillmentApi = {

@@ -9,7 +9,7 @@ function sizeText(bytes: number) {
 }
 
 export function AttachmentPanel({ entityType, entityId, entityLabel, title = "附件" }: {
-  entityType: "business_case" | "purchase_order" | "production_milestone" | "document";
+  entityType: "business_case" | "purchase_order" | "production_milestone" | "document" | "cost_estimate";
   entityId: string;
   entityLabel: string;
   title?: string;

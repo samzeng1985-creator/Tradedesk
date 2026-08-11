@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
-import { businessCaseApi, documentApi, fulfillmentApi, logisticsApi, masterApi, workspaceApi } from "./api";
+import { businessCaseApi, costEstimateApi, documentApi, fulfillmentApi, logisticsApi, masterApi, workspaceApi } from "./api";
 import { buildBusinessOverview } from "./businessOverview";
 import { BusinessCaseCenter } from "./BusinessCaseCenter";
 import { CompanySettings } from "./CompanySettings";
+import { CostEstimateCenter } from "./CostEstimateCenter";
 import { ComponentLibrary, ConfigurableProductLibrary } from "./ConfigurableProductCenter";
 import { DataSecurityCenter, RecoveryKeyNotice } from "./DataSecurityCenter";
 import { DocumentCenter } from "./DocumentCenter";
@@ -27,6 +28,8 @@ import type {
   ConvertDocumentInput,
   CreateDocumentInput,
   Customer,
+  CostEstimate,
+  CostEstimateInput,
   PipelineStage,
   Partner,
   PartnerInput,
@@ -46,7 +49,7 @@ import type {
   WorkspaceSummary,
 } from "./domain";
 
-type View = "overview" | "cases" | "masters" | "fulfillment" | "logistics" | "documents" | "settings" | "security";
+type View = "overview" | "cases" | "masters" | "costs" | "fulfillment" | "logistics" | "documents" | "settings" | "security";
 
 const pipeline: Array<{ key: PipelineStage; label: string }> = [
   { key: "quotation", label: "报价" },
@@ -61,6 +64,7 @@ const viewTitles: Record<View, { title: string; subtitle: string }> = {
   overview: { title: "业务工作台", subtitle: "从订单到单证的轻量闭环" },
   cases: { title: "业务单", subtitle: "客户、产品与商业条款的统一业务快照" },
   masters: { title: "主数据", subtitle: "一次建档，多处复用" },
+  costs: { title: "成本估算", subtitle: "完整成本、目标毛利与报价底线" },
   fulfillment: { title: "采购与生产", subtitle: "只跟踪关键里程碑，不做复杂排产" },
   logistics: { title: "装运与收款", subtitle: "分批发货、物流合作方与收款节点统一管理" },
   documents: { title: "单证中心", subtitle: "版本、状态与跨单证一致性" },
@@ -129,6 +133,7 @@ export default function App() {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [businessCases, setBusinessCases] = useState<BusinessCase[]>([]);
+  const [costEstimates, setCostEstimates] = useState<CostEstimate[]>([]);
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
   const [partners, setPartners] = useState<Partner[]>([]);
   const [shipmentBatches, setShipmentBatches] = useState<ShipmentBatch[]>([]);
@@ -156,7 +161,7 @@ export default function App() {
   }, [businessCases, overviewCaseId]);
 
   async function loadMasterData() {
-    const [nextProducts, nextComponents, nextComponentOptions, nextConfigurations, nextCustomers, nextSuppliers, nextCases, nextOrders, nextPartners, nextShipments, nextPayments, nextDocuments, summary] = await Promise.all([
+    const [nextProducts, nextComponents, nextComponentOptions, nextConfigurations, nextCustomers, nextSuppliers, nextCases, nextCostEstimates, nextOrders, nextPartners, nextShipments, nextPayments, nextDocuments, summary] = await Promise.all([
       masterApi.listProducts(),
       masterApi.listConfigComponents(),
       masterApi.listComponentOptions(),
@@ -164,6 +169,7 @@ export default function App() {
       masterApi.listCustomers(),
       masterApi.listSuppliers(),
       businessCaseApi.list(),
+      costEstimateApi.list(),
       fulfillmentApi.list(),
       logisticsApi.listPartners(),
       logisticsApi.listShipments(),
@@ -178,6 +184,7 @@ export default function App() {
     setCustomers(nextCustomers);
     setSuppliers(nextSuppliers);
     setBusinessCases(nextCases);
+    setCostEstimates(nextCostEstimates);
     setPurchaseOrders(nextOrders);
     setPartners(nextPartners);
     setShipmentBatches(nextShipments);
@@ -330,6 +337,16 @@ export default function App() {
     await loadMasterData();
   }
 
+  async function saveCostEstimate(input: CostEstimateInput) {
+    await costEstimateApi.save(input);
+    await loadMasterData();
+  }
+
+  async function archiveCostEstimate(id: string) {
+    await costEstimateApi.archive(id);
+    await loadMasterData();
+  }
+
   async function createPurchaseOrder(input: PurchaseOrderInput) {
     await fulfillmentApi.create(input);
     await loadMasterData();
@@ -418,11 +435,11 @@ export default function App() {
   }
 
   const currentCase = businessCases.find((item) => item.id === overviewCaseId) ?? businessCases[0] ?? null;
-  const overview = buildBusinessOverview(currentCase, purchaseOrders, shipmentBatches, paymentPlans, documents);
+  const overview = buildBusinessOverview(currentCase, purchaseOrders, shipmentBatches, paymentPlans, documents, costEstimates);
   const {
     orders: currentOrders, foreignCurrencyOrders, milestones: currentMilestones,
     shipments: currentShipments, purchaseTotalMinor, grossProfitMinor, margin,
-    plannedPaymentMinor, receivedPaymentMinor, receivedPercent, purchaseCoverage,
+    plannedPaymentMinor, receivedPaymentMinor, receivedPercent, purchaseCoverage, latestEstimate,
     productionProgress, shipmentCoverage, blockedMilestones, risks: overviewRisks,
   } = overview;
 
@@ -462,7 +479,7 @@ export default function App() {
           <span className="brand-mark">TD</span>
           <span>
             <strong>TradeDesk</strong>
-            <small>Local · 0.20.0</small>
+            <small>Local · 0.21.0</small>
           </span>
         </div>
 
@@ -475,6 +492,9 @@ export default function App() {
           </button>
           <button className={view === "masters" ? "selected" : ""} onClick={() => setView("masters")}>
             主数据
+          </button>
+          <button className={view === "costs" ? "selected" : ""} onClick={() => setView("costs")}>
+            成本估算
           </button>
           <button
             className={view === "fulfillment" ? "selected" : ""}
@@ -543,14 +563,14 @@ export default function App() {
                 <small>{currentCase?.currency ?? "暂无业务单"}</small>
               </article>
               <article>
-                <span>同币采购成本</span>
-                <strong>{money(purchaseTotalMinor, currentCase?.currency ?? "USD")}</strong>
-                <small>{foreignCurrencyOrders.length ? `${foreignCurrencyOrders.length} 张异币采购未计入` : `${currentOrders.length} 张有效采购单`}</small>
+                <span>{latestEstimate ? "完整估算成本" : "同币采购成本"}</span>
+                <strong>{money(latestEstimate?.totalCostMinor ?? purchaseTotalMinor, currentCase?.currency ?? "USD")}</strong>
+                <small>{latestEstimate ? `${latestEstimate.number} · 目标毛利 ${(latestEstimate.targetMarginBps / 100).toFixed(2)}%` : foreignCurrencyOrders.length ? `${foreignCurrencyOrders.length} 张异币采购未计入` : `${currentOrders.length} 张有效采购单`}</small>
               </article>
               <article className={grossProfitMinor < 0 ? "metric-danger" : ""}>
                 <span>暂估毛利</span>
-                <strong>{foreignCurrencyOrders.length ? "待折算" : currentOrders.length ? money(grossProfitMinor, currentCase?.currency ?? "USD") : "待采购"}</strong>
-                <small>{currentOrders.length && !foreignCurrencyOrders.length ? purchaseCoverage < 100 ? `仅基于已录成本 · 采购覆盖 ${purchaseCoverage}%` : `暂估毛利率 ${margin}%` : "录入完整采购成本后计算"}</small>
+                <strong>{latestEstimate ? money(grossProfitMinor, currentCase?.currency ?? "USD") : foreignCurrencyOrders.length ? "待折算" : currentOrders.length ? money(grossProfitMinor, currentCase?.currency ?? "USD") : "待估算"}</strong>
+                <small>{latestEstimate ? `完整成本口径 · 暂估毛利率 ${margin}%` : currentOrders.length && !foreignCurrencyOrders.length ? purchaseCoverage < 100 ? `仅基于已录成本 · 采购覆盖 ${purchaseCoverage}%` : `暂估毛利率 ${margin}%` : "建立成本估算后计算"}</small>
               </article>
               <article>
                 <span>已收款</span>
@@ -729,6 +749,16 @@ export default function App() {
             onCreate={createPurchaseOrder}
             onStatus={updatePurchaseStatus}
             onMilestone={updateProductionMilestone}
+          />
+        )}
+
+        {view === "costs" && (
+          <CostEstimateCenter
+            estimates={costEstimates}
+            cases={businessCases}
+            purchaseOrders={purchaseOrders}
+            onSave={saveCostEstimate}
+            onArchive={archiveCostEstimate}
           />
         )}
 

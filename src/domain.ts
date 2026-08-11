@@ -348,6 +348,65 @@ export interface BusinessCaseInput {
   lines: BusinessCaseLineInput[];
 }
 
+export type CostCategory =
+  | "material"
+  | "processing"
+  | "packaging"
+  | "domestic_logistics"
+  | "international_freight"
+  | "duty_tax"
+  | "commission"
+  | "insurance"
+  | "certification"
+  | "other";
+
+export interface CostEstimateLine {
+  id: string;
+  category: CostCategory;
+  description: string;
+  specification: string;
+  quantity: number;
+  unit: string;
+  unitCostMinor: number;
+  amountMinor: number;
+  notes: string;
+}
+
+export interface CostEstimateLineInput {
+  id?: string;
+  category: CostCategory;
+  description: string;
+  specification: string;
+  quantity: number;
+  unit: string;
+  unitCostMinor: number;
+  notes: string;
+}
+
+export interface CostEstimate {
+  id: string;
+  number: string;
+  businessCaseId: string;
+  businessCaseNumber: string;
+  customerName: string;
+  currency: string;
+  targetMarginBps: number;
+  notes: string;
+  totalCostMinor: number;
+  suggestedPriceMinor: number;
+  updatedAt: string;
+  lines: CostEstimateLine[];
+}
+
+export interface CostEstimateInput {
+  id?: string;
+  number: string;
+  businessCaseId: string;
+  targetMarginBps: number;
+  notes: string;
+  lines: CostEstimateLineInput[];
+}
+
 export type PartnerType = "freight_forwarder" | "customs_broker" | "insurer" | "inspection" | "other";
 
 export interface Partner {

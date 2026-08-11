@@ -857,6 +857,61 @@ pub struct BusinessCaseInput {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct CostEstimateLine {
+    pub id: String,
+    pub category: String,
+    pub description: String,
+    pub specification: String,
+    pub quantity: f64,
+    pub unit: String,
+    pub unit_cost_minor: i64,
+    pub amount_minor: i64,
+    pub notes: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CostEstimateLineInput {
+    pub id: Option<String>,
+    pub category: String,
+    pub description: String,
+    pub specification: String,
+    pub quantity: f64,
+    pub unit: String,
+    pub unit_cost_minor: i64,
+    pub notes: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CostEstimate {
+    pub id: String,
+    pub number: String,
+    pub business_case_id: String,
+    pub business_case_number: String,
+    pub customer_name: String,
+    pub currency: String,
+    pub target_margin_bps: i64,
+    pub notes: String,
+    pub total_cost_minor: i64,
+    pub suggested_price_minor: i64,
+    pub updated_at: String,
+    pub lines: Vec<CostEstimateLine>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CostEstimateInput {
+    pub id: Option<String>,
+    pub number: String,
+    pub business_case_id: String,
+    pub target_margin_bps: i64,
+    pub notes: String,
+    pub lines: Vec<CostEstimateLineInput>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Partner {
     pub id: String,
     pub code: String,
