@@ -53,7 +53,16 @@ jobs:
           if-no-files-found: error
 
   macos-dmg:
-    runs-on: macos-latest
+    name: macOS ${{ matrix.architecture }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-latest
+            architecture: arm64
+          - runner: macos-15-intel
+            architecture: x64
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -72,13 +81,21 @@ jobs:
       - run: bash scripts/setup-macos-dev.sh
       - run: brew install poppler
       - run: python3 scripts/run-release-qa.py
+      - name: Record macOS platform
+        run: |
+          mkdir -p output/release-qa/0.26.0
+          {
+            sw_vers
+            printf 'Architecture: '
+            uname -m
+          } > output/release-qa/0.26.0/platform-${{ matrix.architecture }}.txt
       - run: pnpm tauri build --bundles app,dmg --ci --no-sign
       - run: bash scripts/verify-macos-bundle.sh
       - name: Write macOS checksums
         run: shasum -a 256 src-tauri/target/release/bundle/dmg/*.dmg > src-tauri/target/release/bundle/dmg/SHA256SUMS.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: TradeDesk-macOS-arm64-unsigned
+          name: TradeDesk-macOS-${{ matrix.architecture }}-unsigned
           path: |
             src-tauri/target/release/bundle/dmg/*.dmg
             src-tauri/target/release/bundle/dmg/SHA256SUMS.txt
