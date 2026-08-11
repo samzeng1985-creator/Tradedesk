@@ -11,6 +11,7 @@ import type {
 import { CurrencySelect, formatMoney } from "./currencies";
 import { AttachmentPanel } from "./AttachmentPanel";
 import { nextDatedNumber } from "./numbering";
+import { filterBusinessCases } from "./uiQueries";
 
 interface BusinessCaseCenterProps {
   cases: BusinessCase[];
@@ -206,12 +207,7 @@ export function BusinessCaseCenter({ cases, customers, products, configurablePro
   const [attachmentCase, setAttachmentCase] = useState<BusinessCase | null>(null);
   const [pendingStages, setPendingStages] = useState<Partial<Record<string, PipelineStage>>>({});
   const [stageError, setStageError] = useState("");
-  const normalizedQuery = query.trim().toLocaleLowerCase();
-  const filteredCases = cases.filter((item) =>
-    [item.number, item.customerName, item.currency, item.incoterm].some((value) =>
-      value.toLocaleLowerCase().includes(normalizedQuery),
-    ),
-  );
+  const filteredCases = filterBusinessCases(cases, query);
 
   async function archive(record: BusinessCase) {
     if (!window.confirm(`归档业务单“${record.number}”？历史订单行仍会保留。`)) return;

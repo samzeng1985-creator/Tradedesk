@@ -15,6 +15,7 @@ import type {
 import { CurrencySelect, formatMoney } from "./currencies";
 import { AttachmentPanel } from "./AttachmentPanel";
 import { nextPurchaseSplitNumber, todayIso } from "./numbering";
+import { filterPurchaseOrders } from "./uiQueries";
 
 interface FulfillmentCenterProps {
   orders: PurchaseOrder[];
@@ -289,9 +290,7 @@ export function FulfillmentCenter({ orders, cases, suppliers, companyRegistry, o
   const [message, setMessage] = useState("");
   const activeCompanyId = companyId || companyRegistry?.defaultCompanyId || "";
   const selectedCompany = companyRegistry?.companies.find((item) => item.id === activeCompanyId) ?? companyRegistry?.companies[0];
-  const normalizedQuery = query.trim().toLocaleLowerCase();
-  const filtered = orders.filter((order) => [order.number, order.businessCaseNumber, order.supplierName]
-    .some((value) => value.toLocaleLowerCase().includes(normalizedQuery)));
+  const filtered = filterPurchaseOrders(orders, query);
 
   async function changeStatus(id: string, status: PurchaseStatus) {
     try {

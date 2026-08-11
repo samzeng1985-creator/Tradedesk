@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "vite --configLoader runner",
     "build": "tsc -b && vite build --configLoader runner",
-    "test": "node --experimental-strip-types --test tests/businessOverview.test.mjs tests/decimalInput.test.mjs",
+    "test": "node --experimental-strip-types --test tests/businessOverview.test.mjs tests/decimalInput.test.mjs tests/uiFlows.test.mjs tests/uiPerformance.test.mjs",
     "qa:release": "python scripts/run-release-qa.py",
     "prepare:runtime:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/prepare-typst-runtime.ps1",
     "release:windows": "pnpm prepare:runtime:windows && tauri build --bundles nsis --ci",

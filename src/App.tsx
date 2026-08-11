@@ -12,6 +12,7 @@ import { LogisticsCenter } from "./LogisticsCenter";
 import { MasterEditor } from "./MasterEditor";
 import type { MasterInput, MasterRecord, MasterTab } from "./MasterEditor";
 import { UnlockScreen } from "./UnlockScreen";
+import { filterCustomers, filterProducts, filterSuppliers } from "./uiQueries";
 import type {
   BusinessCase,
   BusinessCaseInput,
@@ -475,30 +476,9 @@ export default function App() {
     productionProgress, shipmentCoverage, blockedMilestones, risks: overviewRisks,
   } = overview;
 
-  const normalizedQuery = masterQuery.trim().toLocaleLowerCase();
-  const filteredProducts = products.filter((item) =>
-    [item.sku, item.nameZh, item.nameEn, item.model, item.hsCode].some((value) =>
-      value.toLocaleLowerCase().includes(normalizedQuery),
-    ),
-  );
-  const filteredCustomers = customers.filter((item) =>
-    [
-      item.code, item.legalName, item.market, item.currency, item.address,
-      item.shippingAddress, item.billingAddress, item.purchaseIntent,
-      item.customerAnalysis, item.contacts,
-    ].some((value) =>
-      value.toLocaleLowerCase().includes(normalizedQuery),
-    ),
-  );
-  const filteredSuppliers = suppliers.filter((item) =>
-    [
-      item.code, item.legalName, item.address, item.contacts, item.currency,
-      item.paymentTerms, item.qualificationNotes,
-      ...item.productTerms.flatMap((term) => [term.productSku, term.productName]),
-    ].some((value) =>
-      value.toLocaleLowerCase().includes(normalizedQuery),
-    ),
-  );
+  const filteredProducts = filterProducts(products, masterQuery);
+  const filteredCustomers = filterCustomers(customers, masterQuery);
+  const filteredSuppliers = filterSuppliers(suppliers, masterQuery);
 
   function prepareDocuments() {
     setView("documents");

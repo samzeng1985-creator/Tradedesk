@@ -16,6 +16,7 @@ import type {
   SaveDocumentInput,
   TradeDocument,
 } from "./domain";
+import { filterDocuments } from "./uiQueries";
 
 interface DocumentCenterProps {
   companyRegistry: CompanyRegistry | null;
@@ -470,10 +471,10 @@ export function DocumentCenter(props: DocumentCenterProps) {
   const [type, setType] = useState<"all" | DocumentType>("all");
   const [status, setStatus] = useState<"all" | DocumentStatus>("all");
   const [message, setMessage] = useState("");
-  const filtered = useMemo(() => props.documents.filter((document) => {
-    const text = `${document.number} ${document.customerName} ${document.businessCaseNumber}`.toLowerCase();
-    return (type === "all" || document.documentType === type) && (status === "all" || document.status === status) && text.includes(query.toLowerCase());
-  }), [props.documents, query, status, type]);
+  const filtered = useMemo(
+    () => filterDocuments(props.documents, { query, type, status }),
+    [props.documents, query, status, type],
+  );
 
   async function create(input: CreateDocumentInput) {
     const document = await props.onCreate(input);

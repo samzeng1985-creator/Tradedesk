@@ -337,4 +337,26 @@ mod tests {
         assert!(!restore_pending(&restored_database));
         fs::remove_dir_all(root).unwrap();
     }
+
+    #[test]
+    fn invalid_backup_packages_never_replace_the_current_workspace() {
+        let root =
+            std::env::temp_dir().join(format!("tradedesk-invalid-backup-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let database = root.join("workspace.tdesk");
+        let recovery = root.join("workspace.recovery.tdesk");
+        let original_database = vec![31_u8; 512];
+        let original_recovery = vec![47_u8; 384];
+        fs::write(&database, &original_database).unwrap();
+        fs::write(&recovery, &original_recovery).unwrap();
+
+        for invalid in [vec![0_u8; 512], BACKUP_MAGIC.to_vec()] {
+            assert!(restore_backup_package(&invalid, &database, &recovery).is_err());
+            assert_eq!(fs::read(&database).unwrap(), original_database);
+            assert_eq!(fs::read(&recovery).unwrap(), original_recovery);
+            assert!(!restore_pending(&database));
+        }
+
+        fs::remove_dir_all(root).unwrap();
+    }
 }

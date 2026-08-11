@@ -14,6 +14,7 @@ import type {
 } from "./domain";
 import { CurrencySelect, formatMoney } from "./currencies";
 import { nextDatedNumber } from "./numbering";
+import { filterComponents, filterConfigurations } from "./uiQueries";
 
 interface ComponentLibraryProps {
   components: ConfigComponent[];
@@ -251,11 +252,7 @@ export function ComponentLibrary({ components, options, onSave, onArchive, onSav
   const [query, setQuery] = useState("");
   const [editing, setEditing] = useState<ConfigComponent | "new" | null>(null);
   const [managingOptions, setManagingOptions] = useState(false);
-  const normalized = query.trim().toLocaleLowerCase();
-  const filtered = components.filter((item) =>
-    [item.code, item.category, item.name, item.specification, item.brand, item.notes]
-      .some((value) => value.toLocaleLowerCase().includes(normalized)),
-  );
+  const filtered = filterComponents(components, query);
 
   async function archive(item: ConfigComponent) {
     if (!window.confirm(`停用组件“${item.name}”？已保存配置中的组件快照不会改变。`)) return;
@@ -488,8 +485,7 @@ export function ConfigurableProductLibrary({
   const [companyId, setCompanyId] = useState(companyRegistry.defaultCompanyId);
   const [signingAssetId, setSigningAssetId] = useState("");
   const selectedCompany = companyRegistry.companies.find((item) => item.id === companyId) ?? companyRegistry.companies[0];
-  const normalized = query.trim().toLocaleLowerCase();
-  const filtered = configurations.filter((item) => [item.code, item.name, item.model, item.notes, ...item.lines.flatMap((line) => [line.category, line.name, line.specification, line.brand])].some((value) => value.toLocaleLowerCase().includes(normalized)));
+  const filtered = filterConfigurations(configurations, query);
 
   async function archive(item: ConfigurableProduct) {
     if (!window.confirm(`停用配置“${item.name}”？已形成的清单数据会保留。`)) return;
