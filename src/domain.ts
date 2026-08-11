@@ -141,12 +141,30 @@ export interface Supplier {
   id: string;
   code: string;
   legalName: string;
+  address: string;
+  contacts: string;
+  bankDetails: string;
+  currency: string;
+  paymentTerms: string;
   leadTimeDays: number;
   onTimeRate: number;
+  qualificationNotes: string;
+  productTerms: SupplierProductTerm[];
   active: boolean;
 }
 
 export type SupplierInput = Omit<Supplier, "active" | "id"> & { id?: string };
+
+export interface SupplierProductTerm {
+  id: string;
+  productId: string;
+  productSku: string;
+  productName: string;
+  currency: string;
+  unitPriceMinor: number;
+  moq: number;
+  leadTimeDays: number;
+}
 
 export interface WorkspaceSummary {
   companyName: string;
@@ -526,7 +544,7 @@ export type DocumentType =
   | "inspection_certificate"
   | "fumigation_certificate"
   | "beneficiary_certificate";
-export type DocumentStatus = "draft" | "issued" | "voided";
+export type DocumentStatus = "draft" | "reviewed" | "issued" | "voided" | "archived";
 export type ValidationSeverity = "error" | "warning";
 
 export interface DocumentValidationIssue {

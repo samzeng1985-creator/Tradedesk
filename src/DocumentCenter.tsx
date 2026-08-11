@@ -24,8 +24,10 @@ interface DocumentCenterProps {
   onCreate: (input: CreateDocumentInput) => Promise<TradeDocument>;
   onConvert: (input: ConvertDocumentInput) => Promise<TradeDocument>;
   onSave: (input: SaveDocumentInput) => Promise<TradeDocument>;
+  onReview: (id: string) => Promise<TradeDocument>;
   onIssue: (id: string) => Promise<TradeDocument>;
   onVoid: (id: string, reason: string) => Promise<TradeDocument>;
+  onArchive: (id: string) => Promise<TradeDocument>;
   onNewVersion: (id: string) => Promise<TradeDocument>;
   onExportPdf: (id: string, companyId: string, signingAssetId: string) => Promise<string>;
   onExportCsv: (id: string) => Promise<string>;
@@ -52,8 +54,10 @@ const typeLabels: Record<DocumentType, string> = {
 
 const statusLabels: Record<DocumentStatus, string> = {
   draft: "草稿",
+  reviewed: "已审核",
   issued: "已签发",
   voided: "已作废",
+  archived: "已归档",
 };
 
 const prefixes: Record<DocumentType, string> = {
@@ -263,11 +267,12 @@ function LineEditor({ line, packing, onChange }: { line: DocumentLineSnapshot; p
   </div>;
 }
 
-function DocumentEditor({ initial, companyRegistry, onClose, onSave, onIssue, onExportPdf, onExportCsv, onPrint }: {
+function DocumentEditor({ initial, companyRegistry, onClose, onSave, onReview, onIssue, onExportPdf, onExportCsv, onPrint }: {
   initial: TradeDocument;
   companyRegistry: CompanyRegistry | null;
   onClose: () => void;
   onSave: (input: SaveDocumentInput) => Promise<TradeDocument>;
+  onReview: (id: string) => Promise<TradeDocument>;
   onIssue: (id: string) => Promise<TradeDocument>;
   onExportPdf: (id: string, companyId: string, signingAssetId: string) => Promise<string>;
   onExportCsv: (id: string) => Promise<string>;
@@ -378,11 +383,20 @@ function DocumentEditor({ initial, companyRegistry, onClose, onSave, onIssue, on
   async function issue() {
     setBusy("issue"); setMessage("");
     try {
-      await finishPendingAutosave();
-      const saved = await onSave({ id: document.id, number, issueDate, language, payload });
-      const updated = await onIssue(saved.id);
+      const updated = await onIssue(document.id);
       await documentDraftApi.delete(document.id);
       setDocument(updated); setPayload(structuredClone(updated.payload)); setMessage("已签发并冻结为只读版本");
+    } catch (reason) { setMessage(String(reason)); } finally { setBusy(""); }
+  }
+
+  async function review() {
+    setBusy("review"); setMessage("");
+    try {
+      await finishPendingAutosave();
+      const saved = await onSave({ id: document.id, number, issueDate, language, payload });
+      const updated = await onReview(saved.id);
+      await documentDraftApi.delete(document.id);
+      setDocument(updated); setPayload(structuredClone(updated.payload)); setMessage("审核通过；确认无误后可签发冻结");
     } catch (reason) { setMessage(String(reason)); } finally { setBusy(""); }
   }
 
@@ -413,13 +427,13 @@ function DocumentEditor({ initial, companyRegistry, onClose, onSave, onIssue, on
   }
 
   return <div className="document-editor-shell">
-    <header className="document-editor-toolbar"><div><span className="eyebrow">{typeLabels[document.documentType]} · V{document.version}</span><h2>{document.number}</h2>{editable && autosaveState && <small className="autosave-state">{autosaveState}</small>}</div><div className="document-toolbar-actions">{editable && <button className="button button-secondary" disabled={!!busy} onClick={() => void save().catch(() => undefined)}>保存草稿</button>}{editable && <button className="button button-primary" disabled={!!busy} onClick={() => void issue()}>签发冻结</button>}<button className="button button-secondary" disabled={!!busy} onClick={() => void output("pdf")}>PDF</button><button className="button button-secondary" disabled={!!busy} onClick={() => void output("csv")}>CSV</button><button className="button button-secondary" disabled={!!busy} onClick={() => void output("print")}>打印</button><button className="icon-button" onClick={() => void closeEditor()}>×</button></div></header>
+    <header className="document-editor-toolbar"><div><span className="eyebrow">{typeLabels[document.documentType]} · V{document.version}</span><h2>{document.number}</h2>{editable && autosaveState && <small className="autosave-state">{autosaveState}</small>}</div><div className="document-toolbar-actions">{editable && <button className="button button-secondary" disabled={!!busy} onClick={() => void save().catch(() => undefined)}>保存草稿</button>}{editable && <button className="button button-primary" disabled={!!busy} onClick={() => void review()}>提交审核</button>}{document.status === "reviewed" && <button className="button button-primary" disabled={!!busy} onClick={() => void issue()}>签发冻结</button>}<button className="button button-secondary" disabled={!!busy} onClick={() => void output("pdf")}>PDF</button><button className="button button-secondary" disabled={!!busy} onClick={() => void output("csv")}>CSV</button><button className="button button-secondary" disabled={!!busy} onClick={() => void output("print")}>打印</button><button className="icon-button" onClick={() => void closeEditor()}>×</button></div></header>
     {message && <div className="document-message">{message}</div>}
     <div className="document-editor-layout">
       <div className="document-form-panel">
         <div className="document-brand-selectors"><label>导出公司<select value={companyId} onChange={(event) => { setCompanyId(event.target.value); setSigningAssetId(""); }}>{companyRegistry?.companies.map((item) => <option value={item.id} key={item.id}>{item.companyName}</option>)}</select></label><label>签章（可不选）<select value={signingAssetId} onChange={(event) => setSigningAssetId(event.target.value)}><option value="">不使用签章</option>{selectedCompany?.signingAssets.map((item) => <option value={item.id} key={item.id}>{item.kind === "stamp" ? "电子章" : "电子签名"} · {item.name}</option>)}</select></label></div>
         <AttachmentPanel entityType="document" entityId={document.id} entityLabel={`${document.number} V${document.version}`} title="单证附件" />
-        {!editable && <div className="locked-callout">该版本已{document.status === "issued" ? "签发" : "作废"}，内容只读；修改请创建新版本。</div>}
+        {!editable && <div className="locked-callout">该版本{statusLabels[document.status]}，内容只读；{document.status === "reviewed" ? "可直接签发，若需修改请创建新版本。" : "修改请创建新版本。"}</div>}
         {document.validationIssues.length > 0 && <div className="validation-list">{document.validationIssues.map((issue, index) => <span className={issue.severity} key={`${issue.code}-${index}`}>{issue.severity === "error" ? "错误" : "提醒"} · {issue.message}</span>)}</div>}
         <fieldset disabled={!editable}><div className="form-grid two-columns"><label>单证编号<input value={number} onChange={(event) => setNumber(event.target.value)} /></label><label>签发日期<input type="date" value={issueDate} onChange={(event) => setIssueDate(event.target.value)} /></label><label>输出语言<select value={language} onChange={(event) => setLanguage(event.target.value)}><option value="zh_en">中英双语</option><option value="en">英文</option><option value="ru">俄文</option></select></label><label>来源业务单<input value={document.businessCaseNumber} readOnly /></label></div>
         <h3>买卖双方</h3><div className="form-grid two-columns"><label>卖方/出口商<input value={payload.seller} onChange={(event) => setPayloadField({ seller: event.target.value })} /></label><label>买方/收货人<input value={payload.buyer} onChange={(event) => setPayloadField({ buyer: event.target.value })} /></label><label>卖方地址<textarea value={payload.sellerAddress} onChange={(event) => setPayloadField({ sellerAddress: event.target.value })} /></label><label>买方地址<textarea value={payload.buyerAddress} onChange={(event) => setPayloadField({ buyerAddress: event.target.value })} /></label></div>
@@ -477,18 +491,23 @@ export function DocumentCenter(props: DocumentCenterProps) {
     try { await props.onVoid(document.id, reason); setMessage(`${document.number} V${document.version} 已作废`); } catch (error) { setMessage(String(error)); }
   }
 
+  async function archiveDocument(document: TradeDocument) {
+    if (!window.confirm(`归档 ${document.number} V${document.version}？归档后仍可查看和导出。`)) return;
+    try { await props.onArchive(document.id); setMessage(`${document.number} V${document.version} 已归档`); } catch (error) { setMessage(String(error)); }
+  }
+
   async function newVersion(document: TradeDocument) {
     try { const created = await props.onNewVersion(document.id); setEditing(created); } catch (error) { setMessage(String(error)); }
   }
 
-  if (editing) return <DocumentEditor initial={editing} companyRegistry={props.companyRegistry} onClose={() => setEditing(null)} onSave={props.onSave} onIssue={props.onIssue} onExportPdf={props.onExportPdf} onExportCsv={props.onExportCsv} onPrint={props.onPrint} />;
+  if (editing) return <DocumentEditor initial={editing} companyRegistry={props.companyRegistry} onClose={() => setEditing(null)} onSave={props.onSave} onReview={props.onReview} onIssue={props.onIssue} onExportPdf={props.onExportPdf} onExportCsv={props.onExportCsv} onPrint={props.onPrint} />;
 
   return <section className="panel document-center">
     <div className="panel-heading"><div><h2>单证中心</h2><p>从报价、PI 到履约单证，复用同一份加密业务快照</p></div><button className="button button-primary" disabled={!props.cases.length} onClick={() => setCreating(true)}>新建单证</button></div>
     {!props.cases.length && <div className="empty-callout">请先建立报价阶段的业务单，再生成报价、形式发票、合同及出货单证。</div>}
     {message && <div className="document-message">{message}</div>}
-    <div className="document-filters"><input placeholder="搜索单号、业务单或客户" value={query} onChange={(event) => setQuery(event.target.value)} /><select value={type} onChange={(event) => setType(event.target.value as typeof type)}><option value="all">全部类型</option>{documentTypes.map((item) => <option value={item} key={item}>{typeLabels[item]}</option>)}</select><select value={status} onChange={(event) => setStatus(event.target.value as typeof status)}><option value="all">全部状态</option><option value="draft">草稿</option><option value="issued">已签发</option><option value="voided">已作废</option></select><span>{filtered.length} 个版本</span></div>
-    <div className="document-history-list">{filtered.map((document) => <article className="document-history-card" key={document.id}><div className="document-type-mark">{prefixes[document.documentType]}</div><div className="document-history-main"><span className="eyebrow">{typeLabels[document.documentType]} · {document.businessCaseNumber}</span><h3>{document.number} <small>V{document.version}</small></h3><p>{document.customerName} · {document.issueDate} · 模板 {document.templateVersion}</p><div className="document-chips"><span className={`document-status ${document.status}`}>{statusLabels[document.status]}</span>{document.validationIssues.filter((item) => item.severity === "error").length > 0 && <span className="validation-chip">{document.validationIssues.filter((item) => item.severity === "error").length} 个错误</span>}{document.pdfSha256 && <span>PDF {document.pdfSha256.slice(0, 10)}…</span>}</div></div><div className="document-card-actions"><button onClick={() => setEditing(document)}>{document.status === "draft" ? "编辑" : "查看"}</button>{document.pdfPath && <button onClick={() => void props.onOpenPdf(document.id)}>打开 PDF</button>}{document.status === "issued" && canConvertDocument(document.documentType) && <button onClick={() => setConverting(document)}>转换单证</button>}{document.status === "issued" && <button onClick={() => void newVersion(document)}>创建新版本</button>}{document.status === "issued" && <button className="danger-link" onClick={() => void voidDocument(document)}>作废</button>}</div></article>)}</div>
+    <div className="document-filters"><input placeholder="搜索单号、业务单或客户" value={query} onChange={(event) => setQuery(event.target.value)} /><select value={type} onChange={(event) => setType(event.target.value as typeof type)}><option value="all">全部类型</option>{documentTypes.map((item) => <option value={item} key={item}>{typeLabels[item]}</option>)}</select><select value={status} onChange={(event) => setStatus(event.target.value as typeof status)}><option value="all">全部状态</option><option value="draft">草稿</option><option value="reviewed">已审核</option><option value="issued">已签发</option><option value="voided">已作废</option><option value="archived">已归档</option></select><span>{filtered.length} 个版本</span></div>
+    <div className="document-history-list">{filtered.map((document) => <article className="document-history-card" key={document.id}><div className="document-type-mark">{prefixes[document.documentType]}</div><div className="document-history-main"><span className="eyebrow">{typeLabels[document.documentType]} · {document.businessCaseNumber}</span><h3>{document.number} <small>V{document.version}</small></h3><p>{document.customerName} · {document.issueDate} · 模板 {document.templateVersion}</p><div className="document-chips"><span className={`document-status ${document.status}`}>{statusLabels[document.status]}</span>{document.validationIssues.filter((item) => item.severity === "error").length > 0 && <span className="validation-chip">{document.validationIssues.filter((item) => item.severity === "error").length} 个错误</span>}{document.pdfSha256 && <span>PDF {document.pdfSha256.slice(0, 10)}…</span>}</div></div><div className="document-card-actions"><button onClick={() => setEditing(document)}>{document.status === "draft" ? "编辑" : "查看"}</button>{document.pdfPath && <button onClick={() => void props.onOpenPdf(document.id)}>打开 PDF</button>}{document.status === "issued" && canConvertDocument(document.documentType) && <button onClick={() => setConverting(document)}>转换单证</button>}{document.status !== "draft" && document.status !== "archived" && <button onClick={() => void newVersion(document)}>创建新版本</button>}{document.status === "issued" && <button className="danger-link" onClick={() => void voidDocument(document)}>作废</button>}{document.status === "issued" && <button onClick={() => void archiveDocument(document)}>归档</button>}</div></article>)}</div>
     {!filtered.length && <div className="empty-table">{props.documents.length ? "没有符合筛选条件的单证" : "还没有历史单证，可从业务单生成第一份草稿"}</div>}
     {creating && <CreateDocumentModal documents={props.documents} cases={props.cases} onClose={() => setCreating(false)} onCreate={create} />}
     {converting && <ConvertDocumentModal source={converting} documents={props.documents} onClose={() => setConverting(null)} onConvert={convert} />}

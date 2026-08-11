@@ -426,8 +426,20 @@ export default function App() {
     return document;
   }
 
+  async function reviewDocument(id: string) {
+    const document = await documentApi.review(id);
+    await loadMasterData();
+    return document;
+  }
+
   async function voidDocument(id: string, reason: string) {
     const document = await documentApi.void(id, reason);
+    await loadMasterData();
+    return document;
+  }
+
+  async function archiveDocument(id: string) {
+    const document = await documentApi.archive(id);
     await loadMasterData();
     return document;
   }
@@ -479,7 +491,11 @@ export default function App() {
     ),
   );
   const filteredSuppliers = suppliers.filter((item) =>
-    [item.code, item.legalName].some((value) =>
+    [
+      item.code, item.legalName, item.address, item.contacts, item.currency,
+      item.paymentTerms, item.qualificationNotes,
+      ...item.productTerms.flatMap((term) => [term.productSku, term.productName]),
+    ].some((value) =>
       value.toLocaleLowerCase().includes(normalizedQuery),
     ),
   );
@@ -499,7 +515,7 @@ export default function App() {
           <span className="brand-mark">TD</span>
           <span>
             <strong>TradeDesk</strong>
-            <small>Local · 0.22.0</small>
+            <small>Local · 0.23.0</small>
           </span>
         </div>
 
@@ -746,11 +762,11 @@ export default function App() {
               {masterTab === "suppliers" && (
                 <table>
                   <thead>
-                    <tr><th>供应商编码</th><th>供应商</th><th>默认交期</th><th>准时率</th><th>状态</th><th>操作</th></tr>
+                    <tr><th>供应商编码</th><th>供应商</th><th>币种/付款</th><th>供应产品</th><th>交付表现</th><th>操作</th></tr>
                   </thead>
                   <tbody>
                     {filteredSuppliers.map((item) => (
-                      <tr key={item.id}><td>{item.code}</td><td>{item.legalName}</td><td>{item.leadTimeDays} 天</td><td>{item.onTimeRate}%</td><td><Status status="ready" /></td><td><div className="row-actions"><button onClick={() => openEditor(item)}>编辑</button><button onClick={() => archiveMaster("supplier", item)}>停用</button></div></td></tr>
+                      <tr key={item.id}><td>{item.code}</td><td>{item.legalName}<small>{item.contacts || item.address}</small></td><td>{item.currency}<small>{item.paymentTerms || "未设置付款条款"}</small></td><td>{item.productTerms.length} 项</td><td>{item.leadTimeDays} 天 · {item.onTimeRate}%</td><td><div className="row-actions"><button onClick={() => openEditor(item)}>编辑</button><button onClick={() => archiveMaster("supplier", item)}>停用</button></div></td></tr>
                     ))}
                   </tbody>
                 </table>
@@ -795,8 +811,10 @@ export default function App() {
             onCreate={createDocument}
             onConvert={convertDocument}
             onSave={saveDocument}
+            onReview={reviewDocument}
             onIssue={issueDocument}
             onVoid={voidDocument}
+            onArchive={archiveDocument}
             onNewVersion={createDocumentVersion}
             onExportPdf={exportDocumentPdf}
             onExportCsv={exportDocumentCsv}
@@ -825,7 +843,7 @@ export default function App() {
           <DataSecurityCenter recoveryReady={workspace.recoveryReady} onRecoveryKey={setRecoveryKeyNotice} />
         )}
       </main>
-      {editorOpen && (masterTab === "products" || masterTab === "customers" || masterTab === "suppliers") && <MasterEditor tab={masterTab} record={editingRecord} saving={saving} onClose={() => setEditorOpen(false)} onSave={saveMaster} />}
+      {editorOpen && (masterTab === "products" || masterTab === "customers" || masterTab === "suppliers") && <MasterEditor tab={masterTab} record={editingRecord} products={products} saving={saving} onClose={() => setEditorOpen(false)} onSave={saveMaster} />}
       {recoveryKeyNotice && <RecoveryKeyNotice recoveryKey={recoveryKeyNotice} onClose={() => setRecoveryKeyNotice("")} />}
     </div>
   );

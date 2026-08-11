@@ -17,6 +17,7 @@ export type MasterInput = ProductInput | CustomerInput | SupplierInput;
 interface MasterEditorProps {
   tab: MasterTab;
   record: MasterRecord | null;
+  products: Product[];
   saving: boolean;
   onClose: () => void;
   onSave: (input: MasterInput) => Promise<void>;
@@ -46,12 +47,18 @@ function initialValues(tab: MasterTab, record: MasterRecord | null): Record<stri
   const item = record as Supplier | null;
   return {
     id: item?.id ?? "", code: item?.code ?? "", legalName: item?.legalName ?? "",
+    address: item?.address ?? "", contacts: item?.contacts ?? "",
+    bankDetails: item?.bankDetails ?? "", currency: item?.currency ?? "CNY",
+    paymentTerms: item?.paymentTerms ?? "", qualificationNotes: item?.qualificationNotes ?? "",
     leadTimeDays: String(item?.leadTimeDays ?? 0), onTimeRate: String(item?.onTimeRate ?? 0),
   };
 }
 
-export function MasterEditor({ tab, record, saving, onClose, onSave }: MasterEditorProps) {
+export function MasterEditor({ tab, record, products, saving, onClose, onSave }: MasterEditorProps) {
   const [values, setValues] = useState(() => initialValues(tab, record));
+  const [supplierTerms, setSupplierTerms] = useState(() =>
+    tab === "suppliers" ? structuredClone((record as Supplier | null)?.productTerms ?? []) : [],
+  );
   const [error, setError] = useState("");
   const set = (key: string, value: string) => setValues((current) => ({ ...current, [key]: value }));
 
@@ -75,9 +82,17 @@ export function MasterEditor({ tab, record, saving, onClose, onSave }: MasterEdi
           weaknesses: values.weaknesses, contacts: values.contacts,
         });
       } else {
+        const selectedProducts = supplierTerms.map((term) => term.productId).filter(Boolean);
+        if (new Set(selectedProducts).size !== selectedProducts.length) {
+          setError("同一供应商不能重复添加同一个产品。");
+          return;
+        }
         await onSave({
           id: values.id || undefined, code: values.code, legalName: values.legalName,
+          address: values.address, contacts: values.contacts, bankDetails: values.bankDetails,
+          currency: values.currency, paymentTerms: values.paymentTerms,
           leadTimeDays: Number(values.leadTimeDays), onTimeRate: Number(values.onTimeRate),
+          qualificationNotes: values.qualificationNotes, productTerms: supplierTerms,
         });
       }
     } catch (reason) {
@@ -87,7 +102,7 @@ export function MasterEditor({ tab, record, saving, onClose, onSave }: MasterEdi
 
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
-      <section className={`modal-card ${tab === "customers" ? "customer-editor" : ""}`} role="dialog" aria-modal="true" aria-labelledby="editor-title" onMouseDown={(event) => event.stopPropagation()}>
+      <section className={`modal-card ${tab === "customers" || tab === "suppliers" ? "customer-editor" : ""}`} role="dialog" aria-modal="true" aria-labelledby="editor-title" onMouseDown={(event) => event.stopPropagation()}>
         <div className="panel-heading">
           <div><span className="eyebrow">主数据</span><h2 id="editor-title">{record ? "编辑" : "新建"}{tab === "products" ? "产品" : tab === "customers" ? "客户" : "供应商"}</h2></div>
           <button className="icon-button" onClick={onClose} aria-label="关闭">×</button>
@@ -127,10 +142,34 @@ export function MasterEditor({ tab, record, saving, onClose, onSave }: MasterEdi
             <label className="field-wide">联系人<textarea rows={5} value={values.contacts} onChange={(event) => set("contacts", event.target.value)} placeholder={"姓名｜职务｜邮箱｜电话｜WhatsApp/微信\n例如：Jane Smith｜采购经理｜jane@example.com｜+1 206 555 0100｜WhatsApp 同号"} /></label>
           </>}
           {tab === "suppliers" && <>
+            <div className="editor-section-heading field-wide"><h3>基本信息</h3><p>采购单和供应商评估会复用以下资料</p></div>
             <label>供应商编码 *<input required value={values.code} onChange={(event) => set("code", event.target.value)} autoFocus /></label>
             <label>供应商法定名称 *<input required value={values.legalName} onChange={(event) => set("legalName", event.target.value)} /></label>
+            <label>默认币种 *<CurrencySelect value={values.currency} onChange={(value) => set("currency", value)} /></label>
+            <label>默认付款条款<input value={values.paymentTerms} onChange={(event) => set("paymentTerms", event.target.value)} placeholder="例如：30% 预付，70% 发货前" /></label>
             <label>默认交期（天）<input type="number" min="0" value={values.leadTimeDays} onChange={(event) => set("leadTimeDays", event.target.value)} /></label>
             <label>准时率（%）<input type="number" min="0" max="100" value={values.onTimeRate} onChange={(event) => set("onTimeRate", event.target.value)} /></label>
+            <label className="field-wide">地址<textarea rows={2} value={values.address} onChange={(event) => set("address", event.target.value)} /></label>
+            <label className="field-wide">联系人<textarea rows={3} value={values.contacts} onChange={(event) => set("contacts", event.target.value)} placeholder="姓名｜职务｜电话｜邮箱" /></label>
+            <label className="field-wide">银行资料<textarea rows={3} value={values.bankDetails} onChange={(event) => set("bankDetails", event.target.value)} placeholder="开户名、银行、账号、SWIFT 等；属于敏感资料" /></label>
+            <label className="field-wide">资质、质量与评估备注<textarea rows={3} value={values.qualificationNotes} onChange={(event) => set("qualificationNotes", event.target.value)} /></label>
+
+            <div className="editor-section-heading field-wide"><h3>供应产品与采购条件</h3><p>维护每个产品的采购价、MOQ 和交期，便于后续采购复用</p></div>
+            <div className="field-wide supplier-product-terms">
+              {supplierTerms.map((term, index) => <div className="supplier-product-term" key={term.id}>
+                <label>产品 *<select required value={term.productId} onChange={(event) => {
+                  const product = products.find((item) => item.id === event.target.value);
+                  setSupplierTerms((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, productId: product?.id ?? "", productSku: product?.sku ?? "", productName: product?.nameEn || product?.nameZh || "" } : item));
+                }}><option value="">请选择产品</option>{products.map((product) => <option value={product.id} key={product.id}>{product.sku} · {product.nameEn || product.nameZh}</option>)}</select></label>
+                <label>币种 *<CurrencySelect value={term.currency} onChange={(value) => setSupplierTerms((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, currency: value } : item))} /></label>
+                <label>采购单价 *<input required type="number" min="0.01" step="0.01" value={(term.unitPriceMinor / 100).toFixed(2)} onChange={(event) => setSupplierTerms((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, unitPriceMinor: Math.round(Number(event.target.value) * 100) } : item))} /></label>
+                <label>MOQ *<input required type="number" min="0.001" step="0.001" value={term.moq} onChange={(event) => setSupplierTerms((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, moq: Number(event.target.value) } : item))} /></label>
+                <label>交期（天）<input type="number" min="0" value={term.leadTimeDays} onChange={(event) => setSupplierTerms((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, leadTimeDays: Number(event.target.value) } : item))} /></label>
+                <button type="button" className="danger-link supplier-term-remove" onClick={() => setSupplierTerms((current) => current.filter((_, itemIndex) => itemIndex !== index))}>移除</button>
+              </div>)}
+              <button type="button" className="button button-secondary" disabled={!products.length} onClick={() => setSupplierTerms((current) => [...current, { id: crypto.randomUUID(), productId: "", productSku: "", productName: "", currency: values.currency || "CNY", unitPriceMinor: 0, moq: 1, leadTimeDays: Number(values.leadTimeDays) || 0 }])}>添加供应产品</button>
+              {!products.length && <small>请先录入产品，再维护供应商采购条件。</small>}
+            </div>
           </>}
           {error && <div className="form-error field-wide" role="alert">{error}</div>}
           <div className="modal-actions field-wide"><button type="button" className="button button-secondary" onClick={onClose}>取消</button><button className="button button-primary" disabled={saving}>{saving ? "保存中…" : "保存"}</button></div>

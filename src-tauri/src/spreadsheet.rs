@@ -7,12 +7,13 @@ use serde::Serialize;
 use crate::domain::{
     ConfigComponent, ConfigComponentInput, ConfigurableProduct, ConfigurableProductInput,
     ConfigurableProductLineInput, Customer, CustomerInput, Product, ProductInput, Supplier,
-    SupplierInput,
+    SupplierInput, SupplierProductTermInput,
 };
 
 const SHEET_PRODUCTS: &str = "产品";
 const SHEET_CUSTOMERS: &str = "客户";
 const SHEET_SUPPLIERS: &str = "供应商";
+const SHEET_SUPPLIER_PRODUCTS: &str = "供应商产品";
 const SHEET_COMPONENTS: &str = "组件库";
 const SHEET_CONFIGURATIONS: &str = "自选配置";
 const SHEET_CONFIGURATION_LINES: &str = "配置明细";
@@ -219,18 +220,58 @@ pub fn export_master_workbook(
         &[
             "供应商编号 *",
             "公司全称 *",
+            "地址",
+            "联系人",
+            "银行资料",
+            "默认币种 *",
+            "付款条款",
             "默认交期（天）",
             "准时率（0-100）",
+            "资质/质量/评估备注",
         ],
-        &[18.0, 30.0, 18.0, 18.0],
+        &[18.0, 30.0, 30.0, 28.0, 32.0, 14.0, 24.0, 18.0, 18.0, 32.0],
     )?;
     if !template_only {
         for (index, item) in suppliers.iter().enumerate() {
             let row = index as u32 + 1;
             write_text(sheet, row, 0, &item.code)?;
             write_text(sheet, row, 1, &item.legal_name)?;
-            write_number(sheet, row, 2, item.lead_time_days as f64)?;
-            write_number(sheet, row, 3, item.on_time_rate as f64)?;
+            write_text(sheet, row, 2, &item.address)?;
+            write_text(sheet, row, 3, &item.contacts)?;
+            write_text(sheet, row, 4, &item.bank_details)?;
+            write_text(sheet, row, 5, &item.currency)?;
+            write_text(sheet, row, 6, &item.payment_terms)?;
+            write_number(sheet, row, 7, item.lead_time_days as f64)?;
+            write_number(sheet, row, 8, item.on_time_rate as f64)?;
+            write_text(sheet, row, 9, &item.qualification_notes)?;
+        }
+    }
+
+    let sheet = setup_sheet(
+        &mut workbook,
+        SHEET_SUPPLIER_PRODUCTS,
+        &[
+            "供应商编号 *",
+            "产品 SKU *",
+            "币种 *",
+            "采购单价 *",
+            "MOQ *",
+            "交期（天）",
+        ],
+        &[18.0, 20.0, 14.0, 18.0, 14.0, 18.0],
+    )?;
+    if !template_only {
+        let mut row = 1_u32;
+        for supplier in suppliers {
+            for term in &supplier.product_terms {
+                write_text(sheet, row, 0, &supplier.code)?;
+                write_text(sheet, row, 1, &term.product_sku)?;
+                write_text(sheet, row, 2, &term.currency)?;
+                write_number(sheet, row, 3, term.unit_price_minor as f64 / 100.0)?;
+                write_number(sheet, row, 4, term.moq)?;
+                write_number(sheet, row, 5, term.lead_time_days as f64)?;
+                row += 1;
+            }
         }
     }
 
@@ -442,8 +483,21 @@ pub fn parse_master_workbook(bytes: &[u8]) -> Result<MasterImportData, String> {
             continue;
         }
         let row_no = index + 2;
-        let lead_time_days = number(row, 2, SHEET_SUPPLIERS, row_no, Some(0.0))? as i64;
-        let on_time_rate = number(row, 3, SHEET_SUPPLIERS, row_no, Some(100.0))? as i64;
+        let expanded = row.len() >= 10;
+        let lead_time_days = number(
+            row,
+            if expanded { 7 } else { 2 },
+            SHEET_SUPPLIERS,
+            row_no,
+            Some(0.0),
+        )? as i64;
+        let on_time_rate = number(
+            row,
+            if expanded { 8 } else { 3 },
+            SHEET_SUPPLIERS,
+            row_no,
+            Some(100.0),
+        )? as i64;
         if lead_time_days < 0 || !(0..=100).contains(&on_time_rate) {
             return Err(format!(
                 "{SHEET_SUPPLIERS} 第 {row_no} 行：交期或准时率超出范围"
@@ -453,9 +507,72 @@ pub fn parse_master_workbook(bytes: &[u8]) -> Result<MasterImportData, String> {
             id: None,
             code: required(text(row, 0), SHEET_SUPPLIERS, row_no, "供应商编号")?,
             legal_name: required(text(row, 1), SHEET_SUPPLIERS, row_no, "公司全称")?,
+            address: if expanded {
+                text(row, 2)
+            } else {
+                String::new()
+            },
+            contacts: if expanded {
+                text(row, 3)
+            } else {
+                String::new()
+            },
+            bank_details: if expanded {
+                text(row, 4)
+            } else {
+                String::new()
+            },
+            currency: if expanded {
+                required(text(row, 5), SHEET_SUPPLIERS, row_no, "默认币种")?.to_uppercase()
+            } else {
+                "CNY".to_owned()
+            },
+            payment_terms: if expanded {
+                text(row, 6)
+            } else {
+                String::new()
+            },
             lead_time_days,
             on_time_rate,
+            qualification_notes: if expanded {
+                text(row, 9)
+            } else {
+                String::new()
+            },
+            product_terms: Vec::new(),
         });
+    }
+
+    if let Ok(range) = workbook.worksheet_range(SHEET_SUPPLIER_PRODUCTS) {
+        for (index, row) in range.rows().skip(1).enumerate() {
+            if row.iter().all(|cell| cell.to_string().trim().is_empty()) {
+                continue;
+            }
+            let row_no = index + 2;
+            let supplier_code =
+                required(text(row, 0), SHEET_SUPPLIER_PRODUCTS, row_no, "供应商编号")?;
+            let product_sku = required(text(row, 1), SHEET_SUPPLIER_PRODUCTS, row_no, "产品 SKU")?;
+            let price = number(row, 3, SHEET_SUPPLIER_PRODUCTS, row_no, None)?;
+            let moq = number(row, 4, SHEET_SUPPLIER_PRODUCTS, row_no, Some(1.0))?;
+            let lead_time_days = number(row, 5, SHEET_SUPPLIER_PRODUCTS, row_no, Some(0.0))? as i64;
+            if price <= 0.0 || moq <= 0.0 || lead_time_days < 0 {
+                return Err(format!(
+                    "{SHEET_SUPPLIER_PRODUCTS} 第 {row_no} 行：采购价和 MOQ 必须大于零，交期不能为负数"
+                ));
+            }
+            let supplier = data.suppliers.iter_mut().find(|item| item.code.eq_ignore_ascii_case(&supplier_code))
+            .ok_or_else(|| format!("{SHEET_SUPPLIER_PRODUCTS} 第 {row_no} 行：供应商编号“{supplier_code}”未在供应商工作表中定义"))?;
+            supplier.product_terms.push(SupplierProductTermInput {
+                id: None,
+                product_id: String::new(),
+                product_sku,
+                currency: required(text(row, 2), SHEET_SUPPLIER_PRODUCTS, row_no, "币种")?
+                    .to_uppercase(),
+                unit_price_minor: (price * 100.0).round() as i64,
+                moq,
+                lead_time_days,
+            });
+        }
     }
 
     let range = workbook
@@ -660,8 +777,24 @@ mod tests {
             id: "s1".into(),
             code: "S-1".into(),
             legal_name: "Supplier Ltd.".into(),
+            address: "Factory address".into(),
+            contacts: "Buyer".into(),
+            bank_details: String::new(),
+            currency: "CNY".into(),
+            payment_terms: "30% deposit".into(),
             lead_time_days: 30,
             on_time_rate: 95,
+            qualification_notes: "ISO 9001".into(),
+            product_terms: vec![crate::domain::SupplierProductTerm {
+                id: "spt1".into(),
+                product_id: "p1".into(),
+                product_sku: "SKU-1".into(),
+                product_name: "Product".into(),
+                currency: "CNY".into(),
+                unit_price_minor: 88_800,
+                moq: 2.0,
+                lead_time_days: 25,
+            }],
             active: true,
         }];
         let components = vec![ConfigComponent {
@@ -717,6 +850,8 @@ mod tests {
         let parsed = parse_master_workbook(&bytes).unwrap();
         assert_eq!(parsed.products[0].sku, "SKU-1");
         assert_eq!(parsed.customers[0].shipping_address, "Shipping");
+        assert_eq!(parsed.suppliers[0].product_terms.len(), 1);
+        assert_eq!(parsed.suppliers[0].product_terms[0].product_sku, "SKU-1");
         assert_eq!(parsed.components[0].unit_price_minor, 123_456);
         assert_eq!(parsed.configurations[0].lines[0].component_code, "CC-1");
         let _ = std::fs::remove_file(path);

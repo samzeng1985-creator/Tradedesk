@@ -90,9 +90,11 @@ export const documentApi = {
     invoke<TradeDocument>("convert_document", { input }),
   save: (input: SaveDocumentInput) =>
     invoke<TradeDocument>("save_document", { input }),
+  review: (id: string) => invoke<TradeDocument>("review_document", { id }),
   issue: (id: string) => invoke<TradeDocument>("issue_document", { id }),
   void: (id: string, reason: string) =>
     invoke<TradeDocument>("void_document", { id, reason }),
+  archive: (id: string) => invoke<TradeDocument>("archive_document", { id }),
   newVersion: (id: string) =>
     invoke<TradeDocument>("create_document_version", { id }),
   exportPdf: (id: string, companyId: string, signingAssetId: string) =>

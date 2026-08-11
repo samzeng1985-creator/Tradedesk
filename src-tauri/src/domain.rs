@@ -194,16 +194,20 @@ impl DocumentType {
 #[serde(rename_all = "snake_case")]
 pub enum DocumentStatus {
     Draft,
+    Reviewed,
     Issued,
     Voided,
+    Archived,
 }
 
 impl DocumentStatus {
     pub fn from_db(value: &str) -> Option<Self> {
         match value {
             "draft" => Some(Self::Draft),
+            "reviewed" => Some(Self::Reviewed),
             "issued" => Some(Self::Issued),
             "voided" => Some(Self::Voided),
+            "archived" => Some(Self::Archived),
             _ => None,
         }
     }
@@ -627,9 +631,43 @@ pub struct Supplier {
     pub id: String,
     pub code: String,
     pub legal_name: String,
+    pub address: String,
+    pub contacts: String,
+    pub bank_details: String,
+    pub currency: String,
+    pub payment_terms: String,
     pub lead_time_days: i64,
     pub on_time_rate: i64,
+    pub qualification_notes: String,
+    pub product_terms: Vec<SupplierProductTerm>,
     pub active: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SupplierProductTerm {
+    pub id: String,
+    pub product_id: String,
+    pub product_sku: String,
+    pub product_name: String,
+    pub currency: String,
+    pub unit_price_minor: i64,
+    pub moq: f64,
+    pub lead_time_days: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SupplierProductTermInput {
+    pub id: Option<String>,
+    #[serde(default)]
+    pub product_id: String,
+    #[serde(default)]
+    pub product_sku: String,
+    pub currency: String,
+    pub unit_price_minor: i64,
+    pub moq: f64,
+    pub lead_time_days: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -638,8 +676,26 @@ pub struct SupplierInput {
     pub id: Option<String>,
     pub code: String,
     pub legal_name: String,
+    #[serde(default)]
+    pub address: String,
+    #[serde(default)]
+    pub contacts: String,
+    #[serde(default)]
+    pub bank_details: String,
+    #[serde(default = "default_currency")]
+    pub currency: String,
+    #[serde(default)]
+    pub payment_terms: String,
     pub lead_time_days: i64,
     pub on_time_rate: i64,
+    #[serde(default)]
+    pub qualification_notes: String,
+    #[serde(default)]
+    pub product_terms: Vec<SupplierProductTermInput>,
+}
+
+fn default_currency() -> String {
+    "CNY".to_owned()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

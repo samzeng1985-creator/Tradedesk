@@ -830,12 +830,22 @@ fn issue_document(id: String, state: State<'_, AppState>) -> Result<TradeDocumen
 }
 
 #[tauri::command]
+fn review_document(id: String, state: State<'_, AppState>) -> Result<TradeDocument, String> {
+    with_database(state, |database| database.review_document(&id))
+}
+
+#[tauri::command]
 fn void_document(
     id: String,
     reason: String,
     state: State<'_, AppState>,
 ) -> Result<TradeDocument, String> {
     with_database(state, |database| database.void_document(&id, &reason))
+}
+
+#[tauri::command]
+fn archive_document(id: String, state: State<'_, AppState>) -> Result<TradeDocument, String> {
+    with_database(state, |database| database.archive_document(&id))
 }
 
 #[tauri::command]
@@ -1021,8 +1031,10 @@ pub fn run() {
             create_document,
             convert_document,
             save_document,
+            review_document,
             issue_document,
             void_document,
+            archive_document,
             create_document_version,
             export_document_pdf,
             export_document_csv,

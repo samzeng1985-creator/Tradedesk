@@ -148,6 +148,11 @@ tbody tr:hover { background: #fafbfc; }
 .modal-backdrop { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; padding: 24px; background: rgba(15, 23, 42, .48); }
 .modal-card { width: min(680px, 100%); max-height: calc(100vh - 48px); overflow-y: auto; background: white; border-radius: 14px; padding: 24px; box-shadow: 0 24px 70px rgba(15, 23, 42, .25); }
 .customer-editor { width: min(920px, 100%); }
+.supplier-product-terms { display: grid; gap: 10px; }
+.supplier-product-term { display: grid; grid-template-columns: minmax(180px, 1.8fr) 120px 130px 100px 110px auto; gap: 10px; align-items: end; padding: 12px; border: 1px solid #e2e8f0; border-radius: 10px; background: #f8fafc; }
+.supplier-product-term label { min-width: 0; }
+.supplier-term-remove { align-self: center; padding: 8px; }
+@media (max-width: 900px) { .supplier-product-term { grid-template-columns: 1fr 1fr; } }
 .modal-card .panel-heading { align-items: flex-start; }
 .modal-card h2 { margin: 5px 0 0; }
 .icon-button { border: 0; background: #f1f5f9; color: #475569; width: 34px; height: 34px; border-radius: 8px; font-size: 22px; line-height: 1; }
@@ -312,8 +317,10 @@ tbody tr:hover { background: #fafbfc; }
 .document-chips { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 9px; }
 .document-chips > span { padding: 4px 7px; color: #64748b; background: #f1f5f9; border-radius: 999px; font-size: 10px; font-weight: 700; }
 .document-status.draft { color: #52525b; background: #e4e4e7; }
+.document-status.reviewed { color: #5b21b6; background: #ede9fe; }
 .document-status.issued { color: #166534; background: #dcfce7; }
 .document-status.voided { color: #991b1b; background: #fee2e2; }
+.document-status.archived { color: #334155; background: #e2e8f0; }
 .document-chips .validation-chip { color: #991b1b; background: #fee2e2; }
 .document-card-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; max-width: 300px; }
 .document-card-actions button { border: 0; background: transparent; color: #6d28d9; padding: 4px; font-size: 12px; font-weight: 650; }

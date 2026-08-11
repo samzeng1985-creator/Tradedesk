@@ -16,10 +16,11 @@ use crate::domain::{
     PaymentStatus, PipelineStage, Product, ProductInput, ProductionMilestone,
     ProductionMilestoneInput, PurchaseOrder, PurchaseOrderInput, PurchaseOrderLine,
     PurchaseOrderUpdateInput, PurchaseStatus, SaveDocumentInput, ShipmentBatch, ShipmentBatchInput,
-    ShipmentLine, ShipmentStatus, Supplier, SupplierInput, TradeDocument, WorkspaceSummary,
+    ShipmentLine, ShipmentStatus, Supplier, SupplierInput, SupplierProductTerm, TradeDocument,
+    WorkspaceSummary,
 };
 
-const SCHEMA_VERSION: i64 = 14;
+const SCHEMA_VERSION: i64 = 15;
 
 const MILESTONE_STAGES: [(&str, &str); 6] = [
     ("raw_material", "原料准备"),
@@ -276,6 +277,26 @@ impl EncryptedDatabase {
             "on_time_rate",
             "INTEGER NOT NULL DEFAULT 0",
         )?;
+        for column in [
+            "address",
+            "contacts",
+            "bank_details",
+            "payment_terms",
+            "qualification_notes",
+        ] {
+            ensure_column(
+                &transaction,
+                "suppliers",
+                column,
+                "TEXT NOT NULL DEFAULT ''",
+            )?;
+        }
+        ensure_column(
+            &transaction,
+            "suppliers",
+            "currency",
+            "TEXT NOT NULL DEFAULT 'CNY'",
+        )?;
         ensure_column(
             &transaction,
             "trade_cases",
@@ -409,6 +430,19 @@ impl EncryptedDatabase {
                 ON documents(trade_case_id, updated_at DESC);
              CREATE INDEX IF NOT EXISTS idx_documents_number
                 ON documents(document_type, number, version DESC);
+
+             CREATE TABLE IF NOT EXISTS supplier_product_terms (
+                id TEXT PRIMARY KEY,
+                supplier_id TEXT NOT NULL REFERENCES suppliers(id) ON DELETE CASCADE,
+                product_id TEXT NOT NULL REFERENCES products(id),
+                currency TEXT NOT NULL DEFAULT 'CNY',
+                unit_price_minor INTEGER NOT NULL,
+                moq REAL NOT NULL DEFAULT 1,
+                lead_time_days INTEGER NOT NULL DEFAULT 0,
+                UNIQUE(supplier_id, product_id)
+             );
+             CREATE INDEX IF NOT EXISTS idx_supplier_product_terms_supplier
+                ON supplier_product_terms(supplier_id);
 
              CREATE TABLE IF NOT EXISTS partners (
                 id TEXT PRIMARY KEY,
@@ -1229,44 +1263,146 @@ impl EncryptedDatabase {
 
     pub fn list_suppliers(&self) -> rusqlite::Result<Vec<Supplier>> {
         let mut statement = self.connection.prepare(
-            "SELECT id, code, legal_name, lead_time_days, on_time_rate, active
+            "SELECT id, code, legal_name, address, contacts, bank_details, currency,
+                    payment_terms, lead_time_days, on_time_rate, qualification_notes, active
              FROM suppliers WHERE active = 1 ORDER BY code COLLATE NOCASE",
         )?;
-        statement
+        let mut suppliers = statement
             .query_map([], |row| {
                 Ok(Supplier {
                     id: row.get(0)?,
                     code: row.get(1)?,
                     legal_name: row.get(2)?,
-                    lead_time_days: row.get(3)?,
-                    on_time_rate: row.get(4)?,
-                    active: row.get::<_, i64>(5)? != 0,
+                    address: row.get(3)?,
+                    contacts: row.get(4)?,
+                    bank_details: row.get(5)?,
+                    currency: row.get(6)?,
+                    payment_terms: row.get(7)?,
+                    lead_time_days: row.get(8)?,
+                    on_time_rate: row.get(9)?,
+                    qualification_notes: row.get(10)?,
+                    product_terms: Vec::new(),
+                    active: row.get::<_, i64>(11)? != 0,
                 })
             })?
-            .collect()
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        drop(statement);
+        for supplier in &mut suppliers {
+            supplier.product_terms = self.supplier_product_terms(&supplier.id)?;
+        }
+        Ok(suppliers)
     }
 
     pub fn save_supplier(&self, input: SupplierInput) -> rusqlite::Result<Supplier> {
         require_text(&input.code)?;
         require_text(&input.legal_name)?;
+        require_text(&input.currency)?;
         if input.lead_time_days < 0 || !(0..=100).contains(&input.on_time_rate) {
             return Err(rusqlite::Error::InvalidQuery);
         }
         let id = input.id.unwrap_or_else(|| Uuid::new_v4().to_string());
-        self.connection.execute(
-            "INSERT INTO suppliers(id, code, legal_name, lead_time_days, on_time_rate, active)
-             VALUES(?1, ?2, ?3, ?4, ?5, 1)
+        let transaction = self.connection.unchecked_transaction()?;
+        transaction.execute(
+            "INSERT INTO suppliers(
+                id, code, legal_name, address, contacts, bank_details, currency, payment_terms,
+                lead_time_days, on_time_rate, qualification_notes, active
+             ) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 1)
              ON CONFLICT(id) DO UPDATE SET code = excluded.code, legal_name = excluded.legal_name,
-                lead_time_days = excluded.lead_time_days, on_time_rate = excluded.on_time_rate, active = 1",
-            params![id, input.code.trim(), input.legal_name.trim(), input.lead_time_days, input.on_time_rate],
+                address = excluded.address, contacts = excluded.contacts,
+                bank_details = excluded.bank_details, currency = excluded.currency,
+                payment_terms = excluded.payment_terms, lead_time_days = excluded.lead_time_days,
+                on_time_rate = excluded.on_time_rate,
+                qualification_notes = excluded.qualification_notes, active = 1",
+            params![
+                id,
+                input.code.trim(),
+                input.legal_name.trim(),
+                input.address.trim(),
+                input.contacts.trim(),
+                input.bank_details.trim(),
+                input.currency.trim().to_uppercase(),
+                input.payment_terms.trim(),
+                input.lead_time_days,
+                input.on_time_rate,
+                input.qualification_notes.trim()
+            ],
         )?;
-        self.audit("supplier", &id, "save")?;
-        self.connection.query_row(
-            "SELECT id, code, legal_name, lead_time_days, on_time_rate, active FROM suppliers WHERE id = ?1",
+        transaction.execute(
+            "DELETE FROM supplier_product_terms WHERE supplier_id = ?1",
             params![id],
-            |row| Ok(Supplier { id: row.get(0)?, code: row.get(1)?, legal_name: row.get(2)?,
-                lead_time_days: row.get(3)?, on_time_rate: row.get(4)?, active: row.get::<_, i64>(5)? != 0 }),
-        )
+        )?;
+        for term in input.product_terms {
+            require_text(&term.currency)?;
+            if term.unit_price_minor <= 0
+                || !term.moq.is_finite()
+                || term.moq <= 0.0
+                || term.lead_time_days < 0
+            {
+                return Err(rusqlite::Error::InvalidQuery);
+            }
+            let product_id = if term.product_id.trim().is_empty() {
+                transaction.query_row(
+                    "SELECT id FROM products WHERE sku = ?1 COLLATE NOCASE AND active = 1",
+                    params![term.product_sku.trim()],
+                    |row| row.get::<_, String>(0),
+                )?
+            } else {
+                transaction.query_row(
+                    "SELECT id FROM products WHERE id = ?1 AND active = 1",
+                    params![term.product_id.trim()],
+                    |row| row.get::<_, String>(0),
+                )?
+            };
+            transaction.execute(
+                "INSERT INTO supplier_product_terms(
+                    id, supplier_id, product_id, currency, unit_price_minor, moq, lead_time_days
+                 ) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![
+                    term.id.unwrap_or_else(|| Uuid::new_v4().to_string()),
+                    id,
+                    product_id,
+                    term.currency.trim().to_uppercase(),
+                    term.unit_price_minor,
+                    term.moq,
+                    term.lead_time_days
+                ],
+            )?;
+        }
+        transaction.commit()?;
+        self.audit("supplier", &id, "save")?;
+        self.list_suppliers()?
+            .into_iter()
+            .find(|item| item.id == id)
+            .ok_or(rusqlite::Error::QueryReturnedNoRows)
+    }
+
+    fn supplier_product_terms(
+        &self,
+        supplier_id: &str,
+    ) -> rusqlite::Result<Vec<SupplierProductTerm>> {
+        let mut statement = self.connection.prepare(
+            "SELECT terms.id, products.id, products.sku,
+                    CASE WHEN trim(products.name_en) <> '' THEN products.name_en ELSE products.name_zh END,
+                    terms.currency, terms.unit_price_minor, terms.moq, terms.lead_time_days
+             FROM supplier_product_terms terms
+             JOIN products ON products.id = terms.product_id
+             WHERE terms.supplier_id = ?1
+             ORDER BY products.sku COLLATE NOCASE",
+        )?;
+        statement
+            .query_map(params![supplier_id], |row| {
+                Ok(SupplierProductTerm {
+                    id: row.get(0)?,
+                    product_id: row.get(1)?,
+                    product_sku: row.get(2)?,
+                    product_name: row.get(3)?,
+                    currency: row.get(4)?,
+                    unit_price_minor: row.get(5)?,
+                    moq: row.get(6)?,
+                    lead_time_days: row.get(7)?,
+                })
+            })?
+            .collect()
     }
 
     pub fn archive(&self, entity: &str, id: &str) -> rusqlite::Result<()> {
@@ -3306,9 +3442,28 @@ impl EncryptedDatabase {
         self.get_document(&input.id)
     }
 
-    pub fn issue_document(&self, id: &str) -> rusqlite::Result<TradeDocument> {
+    pub fn review_document(&self, id: &str) -> rusqlite::Result<TradeDocument> {
         let document = self.get_document(id)?;
         if document.status != DocumentStatus::Draft
+            || crate::document::has_blocking_errors(&document)
+        {
+            return Err(rusqlite::Error::InvalidQuery);
+        }
+        let changed = self.connection.execute(
+            "UPDATE documents SET status = 'reviewed', updated_at = CURRENT_TIMESTAMP
+             WHERE id = ?1 AND status = 'draft'",
+            params![id],
+        )?;
+        if changed == 0 {
+            return Err(rusqlite::Error::InvalidQuery);
+        }
+        self.audit("document", id, "review")?;
+        self.get_document(id)
+    }
+
+    pub fn issue_document(&self, id: &str) -> rusqlite::Result<TradeDocument> {
+        let document = self.get_document(id)?;
+        if document.status != DocumentStatus::Reviewed
             || crate::document::has_blocking_errors(&document)
         {
             return Err(rusqlite::Error::InvalidQuery);
@@ -3338,7 +3493,7 @@ impl EncryptedDatabase {
         let transaction = self.connection.unchecked_transaction()?;
         transaction.execute(
             "UPDATE documents SET status = 'issued', updated_at = CURRENT_TIMESTAMP
-             WHERE id = ?1 AND status = 'draft'",
+             WHERE id = ?1 AND status = 'reviewed'",
             params![id],
         )?;
         match document.document_type {
@@ -3388,6 +3543,19 @@ impl EncryptedDatabase {
             return Err(rusqlite::Error::InvalidQuery);
         }
         self.audit("document", id, "void")?;
+        self.get_document(id)
+    }
+
+    pub fn archive_document(&self, id: &str) -> rusqlite::Result<TradeDocument> {
+        let changed = self.connection.execute(
+            "UPDATE documents SET status = 'archived', updated_at = CURRENT_TIMESTAMP
+             WHERE id = ?1 AND status = 'issued'",
+            params![id],
+        )?;
+        if changed == 0 {
+            return Err(rusqlite::Error::InvalidQuery);
+        }
+        self.audit("document", id, "archive")?;
         self.get_document(id)
     }
 
@@ -4108,10 +4276,27 @@ mod tests {
                     id: None,
                     code: "SUP-1".into(),
                     legal_name: "Example Factory".into(),
+                    address: "Factory road".into(),
+                    contacts: "Alice | Sales".into(),
+                    bank_details: "Bank account".into(),
+                    currency: "CNY".into(),
+                    payment_terms: "30% deposit".into(),
                     lead_time_days: 20,
                     on_time_rate: 95,
+                    qualification_notes: "ISO 9001".into(),
+                    product_terms: vec![crate::domain::SupplierProductTermInput {
+                        id: None,
+                        product_id: product.id.clone(),
+                        product_sku: product.sku.clone(),
+                        currency: "CNY".into(),
+                        unit_price_minor: 1_200,
+                        moq: 5.0,
+                        lead_time_days: 18,
+                    }],
                 })
                 .unwrap();
+            assert_eq!(supplier.product_terms.len(), 1);
+            assert_eq!(supplier.product_terms[0].product_sku, "SKU-1");
             let business_case = database
                 .save_business_case(BusinessCaseInput {
                     id: None,
@@ -4164,6 +4349,7 @@ mod tests {
                     payload: quote_payload,
                 })
                 .unwrap();
+            database.review_document(&quote.id).unwrap();
             let issued_quote = database.issue_document(&quote.id).unwrap();
             let proforma = database
                 .convert_document(ConvertDocumentInput {
@@ -4176,6 +4362,7 @@ mod tests {
                 .unwrap();
             assert_eq!(proforma.payload.discount_minor, 100);
             assert_eq!(proforma.payload.seller_address, "Shenzhen, China");
+            database.review_document(&proforma.id).unwrap();
             let issued_proforma = database.issue_document(&proforma.id).unwrap();
             assert_eq!(
                 database.get_business_case(&business_case.id).unwrap().stage,
@@ -4502,6 +4689,7 @@ mod tests {
                     .iter()
                     .all(|issue| { issue.severity != crate::domain::ValidationSeverity::Error })
             );
+            database.review_document(&saved.id).unwrap();
             let issued = database.issue_document(&saved.id).unwrap();
             let bill_draft = database
                 .convert_document(ConvertDocumentInput {
@@ -4859,6 +5047,9 @@ mod tests {
                 .void_document(&issued.id, "Replaced by corrected version")
                 .unwrap();
             assert_eq!(voided.status, DocumentStatus::Voided);
+            assert!(database.archive_document(&voided.id).is_err());
+            let archived = database.archive_document(&issued_proforma.id).unwrap();
+            assert_eq!(archived.status, DocumentStatus::Archived);
             assert_eq!(database.summary().unwrap().products, 1);
             assert_eq!(database.summary().unwrap().active_cases, 1);
             assert_eq!(database.summary().unwrap().purchase_orders, 1);
@@ -4898,7 +5089,7 @@ mod tests {
         }));
         assert!(documents.iter().any(|document| {
             document.document_type == DocumentType::ProformaInvoice
-                && document.status == DocumentStatus::Issued
+                && document.status == DocumentStatus::Archived
         }));
         assert!(documents.iter().any(|document| {
             document.document_type == DocumentType::BillOfLading
@@ -4973,7 +5164,7 @@ mod tests {
                     |row| row.get::<_, String>(0),
                 )
                 .unwrap(),
-            "14"
+            "15"
         );
         drop(database);
         let _ = std::fs::remove_file(&path);
@@ -5028,7 +5219,7 @@ mod tests {
                     |row| row.get::<_, String>(0),
                 )
                 .unwrap(),
-            "14"
+            "15"
         );
         drop(database);
         let _ = std::fs::remove_file(&path);
