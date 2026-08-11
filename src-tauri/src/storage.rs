@@ -2366,7 +2366,9 @@ impl EncryptedDatabase {
             | DocumentType::ShipperInstruction
             | DocumentType::CustomsDeclaration
             | DocumentType::BillOfLading
-            | DocumentType::InsurancePolicy => &shipping_address,
+            | DocumentType::InsurancePolicy
+            | DocumentType::CertificateOfOrigin
+            | DocumentType::InspectionCertificate => &shipping_address,
             DocumentType::CommercialInvoice | DocumentType::ProformaInvoice => &billing_address,
             _ => &customer_address,
         };
@@ -2425,7 +2427,7 @@ impl EncryptedDatabase {
         let insured_value_minor =
             (sales_total_minor as f64 * (1.0 + insurance_markup_percent / 100.0)).round() as i64;
         let payload = DocumentPayload {
-            seller: company_name,
+            seller: company_name.clone(),
             seller_address: String::new(),
             buyer: business_case.customer_name.clone(),
             buyer_address: buyer_address.clone(),
@@ -2471,6 +2473,16 @@ impl EncryptedDatabase {
             premium_minor: 0,
             insurance_coverage: "Institute Cargo Clauses (A)".to_owned(),
             claims_payable_at: destination_country.clone(),
+            certificate_number: String::new(),
+            certificate_type: "General Certificate of Origin".to_owned(),
+            certification_authority: String::new(),
+            manufacturer: company_name,
+            manufacturer_address: String::new(),
+            batch_number: String::new(),
+            inspection_standard: String::new(),
+            inspection_date: input.issue_date.trim().to_owned(),
+            inspection_place: String::new(),
+            inspection_result: "Conforms to the stated inspection standard.".to_owned(),
             lines,
         };
         let payload_json = serde_json::to_string(&payload).map_err(json_error)?;
@@ -2521,6 +2533,8 @@ impl EncryptedDatabase {
                         | DocumentType::CustomsDeclaration
                         | DocumentType::BillOfLading
                         | DocumentType::InsurancePolicy
+                        | DocumentType::CertificateOfOrigin
+                        | DocumentType::InspectionCertificate
                 ) | (
                     DocumentType::PackingList,
                     DocumentType::ShippingMarks
@@ -2528,10 +2542,23 @@ impl EncryptedDatabase {
                         | DocumentType::CustomsDeclaration
                         | DocumentType::BillOfLading
                         | DocumentType::InsurancePolicy
+                        | DocumentType::CertificateOfOrigin
+                        | DocumentType::InspectionCertificate
                 ) | (
                     DocumentType::ShipperInstruction,
-                    DocumentType::BillOfLading | DocumentType::InsurancePolicy
-                ) | (DocumentType::BillOfLading, DocumentType::InsurancePolicy)
+                    DocumentType::BillOfLading
+                        | DocumentType::InsurancePolicy
+                        | DocumentType::CertificateOfOrigin
+                        | DocumentType::InspectionCertificate
+                ) | (
+                    DocumentType::BillOfLading,
+                    DocumentType::InsurancePolicy
+                        | DocumentType::CertificateOfOrigin
+                        | DocumentType::InspectionCertificate
+                ) | (
+                    DocumentType::CustomsDeclaration,
+                    DocumentType::CertificateOfOrigin | DocumentType::InspectionCertificate
+                )
             )
         {
             return Err(rusqlite::Error::InvalidQuery);
@@ -2583,6 +2610,21 @@ impl EncryptedDatabase {
                 payload
                     .claims_payable_at
                     .clone_from(&payload.destination_country);
+            }
+        }
+        if input.target_document_type == DocumentType::CertificateOfOrigin
+            && payload.certificate_type.trim().is_empty()
+        {
+            payload.certificate_type = "General Certificate of Origin".to_owned();
+        }
+        if input.target_document_type == DocumentType::InspectionCertificate {
+            if payload.manufacturer.trim().is_empty() {
+                payload.manufacturer.clone_from(&payload.seller);
+            }
+            payload.inspection_date = input.issue_date.trim().to_owned();
+            if payload.inspection_result.trim().is_empty() {
+                payload.inspection_result =
+                    "Conforms to the stated inspection standard.".to_owned();
             }
         }
         let payload_json = serde_json::to_string(&payload).map_err(json_error)?;
@@ -2735,7 +2777,9 @@ impl EncryptedDatabase {
             | DocumentType::ShipperInstruction
             | DocumentType::CustomsDeclaration
             | DocumentType::BillOfLading
-            | DocumentType::InsurancePolicy => {
+            | DocumentType::InsurancePolicy
+            | DocumentType::CertificateOfOrigin
+            | DocumentType::InspectionCertificate => {
                 transaction.execute(
                     "UPDATE trade_cases SET stage = 'documents' WHERE id = ?1",
                     params![document.business_case_id],
@@ -3755,6 +3799,30 @@ mod tests {
                 insurance_draft.payload.insurance_coverage,
                 "Institute Cargo Clauses (A)"
             );
+            let origin_draft = database
+                .convert_document(ConvertDocumentInput {
+                    source_document_id: issued.id.clone(),
+                    target_document_type: DocumentType::CertificateOfOrigin,
+                    number: "COO-20260811-0001".into(),
+                    language: "zh_en".into(),
+                    issue_date: "2026-08-11".into(),
+                })
+                .unwrap();
+            assert_eq!(
+                origin_draft.payload.certificate_type,
+                "General Certificate of Origin"
+            );
+            let inspection_draft = database
+                .convert_document(ConvertDocumentInput {
+                    source_document_id: issued.id.clone(),
+                    target_document_type: DocumentType::InspectionCertificate,
+                    number: "IC-20260811-0001".into(),
+                    language: "zh_en".into(),
+                    issue_date: "2026-08-11".into(),
+                })
+                .unwrap();
+            assert_eq!(inspection_draft.payload.manufacturer, issued.payload.seller);
+            assert_eq!(inspection_draft.payload.inspection_date, "2026-08-11");
             assert_eq!(issued.status, DocumentStatus::Issued);
             if let Some(typst) = crate::document::find_typst(std::path::Path::new("")) {
                 let render_root =
@@ -3799,6 +3867,8 @@ mod tests {
                     DocumentType::CustomsDeclaration,
                     DocumentType::BillOfLading,
                     DocumentType::InsurancePolicy,
+                    DocumentType::CertificateOfOrigin,
+                    DocumentType::InspectionCertificate,
                 ] {
                     let mut template_document = issued.clone();
                     template_document.document_type = document_type;
@@ -3895,6 +3965,30 @@ mod tests {
             ] {
                 assert!(bill_issues.iter().any(|issue| issue.code == code));
             }
+            let mut origin_validation = issued.clone();
+            origin_validation.id = "origin-validation".into();
+            origin_validation.document_type = DocumentType::CertificateOfOrigin;
+            origin_validation.payload.origin_country = "Vietnam".into();
+            let origin_issues =
+                crate::document::cross_validate(&origin_validation, std::slice::from_ref(&issued));
+            assert!(
+                origin_issues
+                    .iter()
+                    .any(|issue| issue.code == "cross_document_origin_mismatch")
+            );
+            let mut inspection_validation = packing_validation.clone();
+            inspection_validation.id = "inspection-validation".into();
+            inspection_validation.document_type = DocumentType::InspectionCertificate;
+            inspection_validation.payload.lines[0].net_weight_kg += 2.0;
+            let inspection_issues = crate::document::cross_validate(
+                &inspection_validation,
+                std::slice::from_ref(&packing_validation),
+            );
+            assert!(
+                inspection_issues
+                    .iter()
+                    .any(|issue| issue.code == "cross_document_weight_mismatch")
+            );
             assert!(
                 database
                     .save_document(SaveDocumentInput {
@@ -3916,7 +4010,7 @@ mod tests {
             assert_eq!(database.summary().unwrap().products, 1);
             assert_eq!(database.summary().unwrap().active_cases, 1);
             assert_eq!(database.summary().unwrap().purchase_orders, 1);
-            assert_eq!(database.summary().unwrap().documents, 5);
+            assert_eq!(database.summary().unwrap().documents, 7);
         }
         let reopened =
             EncryptedDatabase::open(&path, Zeroizing::new("test-password".to_owned())).unwrap();
@@ -3938,7 +4032,7 @@ mod tests {
             PaymentStatus::Partial
         );
         let documents = reopened.list_documents().unwrap();
-        assert_eq!(documents.len(), 6);
+        assert_eq!(documents.len(), 8);
         assert!(documents.iter().any(|document| {
             document.document_type == DocumentType::CommercialInvoice && document.version == 2
         }));
@@ -3956,6 +4050,14 @@ mod tests {
         }));
         assert!(documents.iter().any(|document| {
             document.document_type == DocumentType::InsurancePolicy
+                && document.status == DocumentStatus::Draft
+        }));
+        assert!(documents.iter().any(|document| {
+            document.document_type == DocumentType::CertificateOfOrigin
+                && document.status == DocumentStatus::Draft
+        }));
+        assert!(documents.iter().any(|document| {
+            document.document_type == DocumentType::InspectionCertificate
                 && document.status == DocumentStatus::Draft
         }));
         drop(reopened);

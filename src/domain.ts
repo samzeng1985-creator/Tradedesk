@@ -447,7 +447,9 @@ export type DocumentType =
   | "shipper_instruction"
   | "customs_declaration"
   | "bill_of_lading"
-  | "insurance_policy";
+  | "insurance_policy"
+  | "certificate_of_origin"
+  | "inspection_certificate";
 export type DocumentStatus = "draft" | "issued" | "voided";
 export type ValidationSeverity = "error" | "warning";
 
@@ -517,6 +519,16 @@ export interface DocumentPayload {
   premiumMinor: number;
   insuranceCoverage: string;
   claimsPayableAt: string;
+  certificateNumber: string;
+  certificateType: string;
+  certificationAuthority: string;
+  manufacturer: string;
+  manufacturerAddress: string;
+  batchNumber: string;
+  inspectionStandard: string;
+  inspectionDate: string;
+  inspectionPlace: string;
+  inspectionResult: string;
   lines: DocumentLineSnapshot[];
 }
 

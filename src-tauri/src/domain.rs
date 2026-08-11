@@ -143,6 +143,8 @@ pub enum DocumentType {
     CustomsDeclaration,
     BillOfLading,
     InsurancePolicy,
+    CertificateOfOrigin,
+    InspectionCertificate,
 }
 
 impl DocumentType {
@@ -158,6 +160,8 @@ impl DocumentType {
             Self::CustomsDeclaration => "customs_declaration",
             Self::BillOfLading => "bill_of_lading",
             Self::InsurancePolicy => "insurance_policy",
+            Self::CertificateOfOrigin => "certificate_of_origin",
+            Self::InspectionCertificate => "inspection_certificate",
         }
     }
 
@@ -173,6 +177,8 @@ impl DocumentType {
             "customs_declaration" => Some(Self::CustomsDeclaration),
             "bill_of_lading" => Some(Self::BillOfLading),
             "insurance_policy" => Some(Self::InsurancePolicy),
+            "certificate_of_origin" => Some(Self::CertificateOfOrigin),
+            "inspection_certificate" => Some(Self::InspectionCertificate),
             _ => None,
         }
     }
@@ -302,6 +308,26 @@ pub struct DocumentPayload {
     pub insurance_coverage: String,
     #[serde(default)]
     pub claims_payable_at: String,
+    #[serde(default)]
+    pub certificate_number: String,
+    #[serde(default)]
+    pub certificate_type: String,
+    #[serde(default)]
+    pub certification_authority: String,
+    #[serde(default)]
+    pub manufacturer: String,
+    #[serde(default)]
+    pub manufacturer_address: String,
+    #[serde(default)]
+    pub batch_number: String,
+    #[serde(default)]
+    pub inspection_standard: String,
+    #[serde(default)]
+    pub inspection_date: String,
+    #[serde(default)]
+    pub inspection_place: String,
+    #[serde(default)]
+    pub inspection_result: String,
     pub lines: Vec<DocumentLineSnapshot>,
 }
 

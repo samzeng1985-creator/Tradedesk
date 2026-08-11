@@ -27,6 +27,10 @@ const CUSTOMS_DECLARATION_TEMPLATE: &str =
     include_str!("../../templates/base/customs-declaration.typ");
 const BILL_OF_LADING_TEMPLATE: &str = include_str!("../../templates/base/bill-of-lading.typ");
 const INSURANCE_POLICY_TEMPLATE: &str = include_str!("../../templates/base/insurance-policy.typ");
+const CERTIFICATE_OF_ORIGIN_TEMPLATE: &str =
+    include_str!("../../templates/base/certificate-of-origin.typ");
+const INSPECTION_CERTIFICATE_TEMPLATE: &str =
+    include_str!("../../templates/base/inspection-certificate.typ");
 const CONFIGURATION_SHEET_TEMPLATE: &str =
     include_str!("../../templates/base/configuration-sheet.typ");
 
@@ -218,6 +222,7 @@ pub fn validate(document: &TradeDocument) -> Vec<DocumentValidationIssue> {
             | DocumentType::ShipperInstruction
             | DocumentType::CustomsDeclaration
             | DocumentType::BillOfLading
+            | DocumentType::InspectionCertificate
     );
     for (index, line) in document.payload.lines.iter().enumerate() {
         if line.description.trim().is_empty() || line.quantity <= 0.0 || !line.quantity.is_finite()
@@ -259,6 +264,8 @@ pub fn validate(document: &TradeDocument) -> Vec<DocumentValidationIssue> {
             | DocumentType::CustomsDeclaration
             | DocumentType::BillOfLading
             | DocumentType::InsurancePolicy
+            | DocumentType::CertificateOfOrigin
+            | DocumentType::InspectionCertificate
     ) && document.payload.transport_mode.trim().is_empty()
     {
         error("transport_mode_required", "运输方式不能为空");
@@ -268,6 +275,8 @@ pub fn validate(document: &TradeDocument) -> Vec<DocumentValidationIssue> {
         DocumentType::ShipperInstruction
             | DocumentType::BillOfLading
             | DocumentType::InsurancePolicy
+            | DocumentType::CertificateOfOrigin
+            | DocumentType::InspectionCertificate
     ) && (document.payload.port_of_loading.trim().is_empty()
         || document.payload.port_of_discharge.trim().is_empty())
     {
@@ -307,6 +316,58 @@ pub fn validate(document: &TradeDocument) -> Vec<DocumentValidationIssue> {
             error("insured_value_too_low", "CIF/CIP 保险金额不能低于货值");
         }
     }
+    if document.document_type == DocumentType::CertificateOfOrigin {
+        if document.payload.origin_country.trim().is_empty() {
+            error("origin_country_required", "原产地证明必须填写原产国");
+        }
+        if document.payload.certificate_type.trim().is_empty() {
+            error("certificate_type_required", "原产地证明必须选择证书类型");
+        }
+        if document.payload.certification_authority.trim().is_empty() {
+            error(
+                "certification_authority_required",
+                "原产地证明必须填写签证机构",
+            );
+        }
+    }
+    if document.document_type == DocumentType::InspectionCertificate {
+        for (code, value, message) in [
+            (
+                "inspection_authority_required",
+                document.payload.certification_authority.as_str(),
+                "检验证书必须填写检验机构",
+            ),
+            (
+                "manufacturer_required",
+                document.payload.manufacturer.as_str(),
+                "检验证书必须填写制造商",
+            ),
+            (
+                "batch_number_required",
+                document.payload.batch_number.as_str(),
+                "检验证书必须填写批次号",
+            ),
+            (
+                "inspection_standard_required",
+                document.payload.inspection_standard.as_str(),
+                "检验证书必须填写检验标准",
+            ),
+            (
+                "inspection_date_required",
+                document.payload.inspection_date.as_str(),
+                "检验证书必须填写检验日期",
+            ),
+            (
+                "inspection_result_required",
+                document.payload.inspection_result.as_str(),
+                "检验证书必须填写检验结果",
+            ),
+        ] {
+            if value.trim().is_empty() {
+                error(code, message);
+            }
+        }
+    }
     if !matches!(
         document.document_type,
         DocumentType::PackingList | DocumentType::ShippingMarks
@@ -315,11 +376,13 @@ pub fn validate(document: &TradeDocument) -> Vec<DocumentValidationIssue> {
             if line.hs_code.trim().is_empty() {
                 if matches!(
                     document.document_type,
-                    DocumentType::CustomsDeclaration | DocumentType::InsurancePolicy
+                    DocumentType::CustomsDeclaration
+                        | DocumentType::InsurancePolicy
+                        | DocumentType::CertificateOfOrigin
                 ) {
                     error(
                         "hs_code_missing",
-                        &format!("报关或保险资料第 {} 行必须填写 HS 编码", index + 1),
+                        &format!("报关、保险或原产地资料第 {} 行必须填写 HS 编码", index + 1),
                     );
                 } else {
                     hs_warnings.push(DocumentValidationIssue {
@@ -375,6 +438,9 @@ pub fn cross_validate(
             if let Some(item) = peer(DocumentType::InsurancePolicy) {
                 pairs.push((item, false, false, true, false));
             }
+            if let Some(item) = peer(DocumentType::CertificateOfOrigin) {
+                pairs.push((item, false, false, true, false));
+            }
         }
         DocumentType::PackingList => {
             if let Some(item) = peer(DocumentType::CommercialInvoice) {
@@ -392,6 +458,9 @@ pub fn cross_validate(
             if let Some(item) = peer(DocumentType::BillOfLading) {
                 pairs.push((item, true, false, false, true));
             }
+            if let Some(item) = peer(DocumentType::InspectionCertificate) {
+                pairs.push((item, true, false, false, false));
+            }
         }
         DocumentType::CustomsDeclaration => {
             if let Some(item) = peer(DocumentType::CommercialInvoice) {
@@ -399,6 +468,9 @@ pub fn cross_validate(
             }
             if let Some(item) = peer(DocumentType::PackingList) {
                 pairs.push((item, true, false, false, false));
+            }
+            if let Some(item) = peer(DocumentType::CertificateOfOrigin) {
+                pairs.push((item, false, false, true, false));
             }
         }
         DocumentType::ShipperInstruction | DocumentType::ShippingMarks => {
@@ -424,6 +496,12 @@ pub fn cross_validate(
             if let Some(item) = peer(DocumentType::ShipperInstruction) {
                 pairs.push((item, true, false, false, true));
             }
+            if let Some(item) = peer(DocumentType::CertificateOfOrigin) {
+                pairs.push((item, false, false, false, true));
+            }
+            if let Some(item) = peer(DocumentType::InspectionCertificate) {
+                pairs.push((item, true, false, false, true));
+            }
         }
         DocumentType::InsurancePolicy => {
             if let Some(item) = peer(DocumentType::CommercialInvoice) {
@@ -431,6 +509,25 @@ pub fn cross_validate(
             }
             if let Some(item) = peer(DocumentType::BillOfLading) {
                 pairs.push((item, false, false, false, true));
+            }
+        }
+        DocumentType::CertificateOfOrigin => {
+            if let Some(item) = peer(DocumentType::CommercialInvoice) {
+                pairs.push((item, false, false, true, false));
+            }
+            if let Some(item) = peer(DocumentType::CustomsDeclaration) {
+                pairs.push((item, false, false, true, false));
+            }
+            if let Some(item) = peer(DocumentType::BillOfLading) {
+                pairs.push((item, false, false, false, true));
+            }
+        }
+        DocumentType::InspectionCertificate => {
+            if let Some(item) = peer(DocumentType::PackingList) {
+                pairs.push((item, true, false, false, false));
+            }
+            if let Some(item) = peer(DocumentType::BillOfLading) {
+                pairs.push((item, true, false, false, true));
             }
         }
         _ => {}
@@ -601,6 +698,31 @@ fn compare_document_pair(
             });
         }
     }
+    let origin_pair = (document.document_type == DocumentType::CertificateOfOrigin
+        && matches!(
+            other.document_type,
+            DocumentType::CommercialInvoice | DocumentType::CustomsDeclaration
+        ))
+        || (other.document_type == DocumentType::CertificateOfOrigin
+            && matches!(
+                document.document_type,
+                DocumentType::CommercialInvoice | DocumentType::CustomsDeclaration
+            ));
+    if origin_pair
+        && !document.payload.origin_country.trim().is_empty()
+        && !other.payload.origin_country.trim().is_empty()
+        && !document
+            .payload
+            .origin_country
+            .trim()
+            .eq_ignore_ascii_case(other.payload.origin_country.trim())
+    {
+        issues.push(DocumentValidationIssue {
+            severity: ValidationSeverity::Error,
+            code: "cross_document_origin_mismatch".to_owned(),
+            message: format!("与单证 {} 的原产国不一致", other.number),
+        });
+    }
 }
 
 pub fn export_pdf(
@@ -650,7 +772,7 @@ pub fn export_csv(document: &TradeDocument, output_dir: &Path) -> Result<PathBuf
     fs::create_dir_all(output_dir).map_err(|error| format!("无法创建单证导出目录：{error}"))?;
     let output_path = output_dir.join(format!("{}.csv", export_stem(document)));
     let mut rows = vec![
-        "document_type,document_number,business_case,issue_date,currency,transport_mode,vessel_voyage,booking_reference,freight_terms,bill_of_lading_type,bill_of_lading_number,carrier,notify_party,place_of_receipt,place_of_delivery,container_numbers,seal_numbers,shipping_marks,insurance_company,policy_number,insured_value,insurance_markup_percent,premium_rate_percent,premium,insurance_coverage,claims_payable_at,customs_supervision_code,customs_declaration_elements".to_owned(),
+        "document_type,document_number,business_case,issue_date,currency,transport_mode,vessel_voyage,booking_reference,freight_terms,bill_of_lading_type,bill_of_lading_number,carrier,notify_party,place_of_receipt,place_of_delivery,container_numbers,seal_numbers,shipping_marks,insurance_company,policy_number,insured_value,insurance_markup_percent,premium_rate_percent,premium,insurance_coverage,claims_payable_at,customs_supervision_code,customs_declaration_elements,certificate_number,certificate_type,certification_authority,manufacturer,manufacturer_address,batch_number,inspection_standard,inspection_date,inspection_place,inspection_result".to_owned(),
         [
             csv(document.document_type.as_str()),
             csv(&document.number),
@@ -680,6 +802,16 @@ pub fn export_csv(document: &TradeDocument, output_dir: &Path) -> Result<PathBuf
             csv(&document.payload.claims_payable_at),
             csv(&document.payload.customs_supervision_code),
             csv(&document.payload.customs_declaration_elements),
+            csv(&document.payload.certificate_number),
+            csv(&document.payload.certificate_type),
+            csv(&document.payload.certification_authority),
+            csv(&document.payload.manufacturer),
+            csv(&document.payload.manufacturer_address),
+            csv(&document.payload.batch_number),
+            csv(&document.payload.inspection_standard),
+            csv(&document.payload.inspection_date),
+            csv(&document.payload.inspection_place),
+            csv(&document.payload.inspection_result),
         ]
         .join(","),
         String::new(),
@@ -1048,6 +1180,8 @@ fn template(document: &TradeDocument) -> &'static str {
         DocumentType::CustomsDeclaration => CUSTOMS_DECLARATION_TEMPLATE,
         DocumentType::BillOfLading => BILL_OF_LADING_TEMPLATE,
         DocumentType::InsurancePolicy => INSURANCE_POLICY_TEMPLATE,
+        DocumentType::CertificateOfOrigin => CERTIFICATE_OF_ORIGIN_TEMPLATE,
+        DocumentType::InspectionCertificate => INSPECTION_CERTIFICATE_TEMPLATE,
     }
 }
 
@@ -1063,6 +1197,8 @@ fn export_stem(document: &TradeDocument) -> String {
         DocumentType::CustomsDeclaration => "CustomsDeclaration",
         DocumentType::BillOfLading => "BillOfLading",
         DocumentType::InsurancePolicy => "InsuranceApplication",
+        DocumentType::CertificateOfOrigin => "CertificateOfOriginApplication",
+        DocumentType::InspectionCertificate => "InspectionCertificateApplication",
     };
     let raw = format!(
         "{}_{}_{}_V{}_{}",
