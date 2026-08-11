@@ -23,7 +23,7 @@ from pypdf import PdfReader
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run TradeDesk 0.26 release QA")
     parser.add_argument("--repo", type=Path, default=Path(__file__).resolve().parents[1])
-    parser.add_argument("--output-root", type=Path, default=Path("output/release-qa/0.26.0"))
+    parser.add_argument("--output-root", type=Path)
     parser.add_argument(
         "--manifest",
         type=Path,
@@ -192,13 +192,18 @@ def write_contact_sheet(render_root: Path, output_path: Path, file_names: list[s
 def main() -> int:
     args = parse_args()
     repo = args.repo.resolve()
-    output_root = args.output_root
+    package_version = json.loads((repo / "package.json").read_text(encoding="utf-8"))["version"]
+    output_root = args.output_root or Path("output/release-qa") / package_version
     if not output_root.is_absolute():
         output_root = (repo / output_root).resolve()
     manifest_path = args.manifest
     if not manifest_path.is_absolute():
         manifest_path = (repo / manifest_path).resolve()
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if manifest["release"] != package_version:
+        raise RuntimeError(
+            f"QA manifest release {manifest['release']} does not match package {package_version}"
+        )
 
     run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     run_root = output_root / run_id

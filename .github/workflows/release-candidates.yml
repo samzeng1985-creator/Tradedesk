@@ -49,8 +49,9 @@ jobs:
             src-tauri/target/release/bundle/nsis/*.exe
             src-tauri/target/release/bundle/nsis/SHA256SUMS.txt
             src-tauri/target/release/bundle/nsis/installer-smoke-report.json
-            output/release-qa/0.26.0/**
+            output/release-qa/**
           if-no-files-found: error
+          retention-days: 14
 
   macos-dmg:
     name: macOS ${{ matrix.architecture }}
@@ -83,12 +84,13 @@ jobs:
       - run: python3 scripts/run-release-qa.py
       - name: Record macOS platform
         run: |
-          mkdir -p output/release-qa/0.26.0
+          qa_dir="output/release-qa/$(node -p "require('./package.json').version")"
+          mkdir -p "$qa_dir"
           {
             sw_vers
             printf 'Architecture: '
             uname -m
-          } > output/release-qa/0.26.0/platform-${{ matrix.architecture }}.txt
+          } > "$qa_dir/platform-${{ matrix.architecture }}.txt"
       - run: pnpm tauri build --bundles app,dmg --ci
       - run: bash scripts/verify-macos-bundle.sh
       - name: Write macOS checksums
@@ -99,5 +101,6 @@ jobs:
           path: |
             src-tauri/target/release/bundle/dmg/*.dmg
             src-tauri/target/release/bundle/dmg/SHA256SUMS.txt
-            output/release-qa/0.26.0/**
+            output/release-qa/**
           if-no-files-found: error
+          retention-days: 14
