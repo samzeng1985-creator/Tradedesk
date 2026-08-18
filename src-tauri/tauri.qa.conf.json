@@ -1,0 +1,8 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "TradeDesk RC2 QA",
+  "identifier": "cn.treedeep.tradedesk.rc2qa",
+  "bundle": {
+    "active": false
+  }
+}

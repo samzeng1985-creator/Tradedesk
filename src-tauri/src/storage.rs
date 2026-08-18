@@ -921,6 +921,31 @@ impl EncryptedDatabase {
             .ok_or(rusqlite::Error::QueryReturnedNoRows)
     }
 
+    pub fn save_component_option_translations(
+        &self,
+        inputs: Vec<ComponentOptionTranslationInput>,
+    ) -> rusqlite::Result<Vec<ComponentOption>> {
+        let transaction = self.connection.unchecked_transaction()?;
+        for input in inputs {
+            require_text(&input.option_id)?;
+            validate_configuration_language(&input.language)?;
+            require_text(&input.value)?;
+            transaction.execute(
+                "INSERT INTO component_option_translations(option_id, language, value)
+                 VALUES(?1, ?2, ?3)
+                 ON CONFLICT(option_id, language) DO UPDATE SET value = excluded.value",
+                params![input.option_id, input.language, input.value.trim()],
+            )?;
+            transaction.execute(
+                "INSERT INTO audit_events(entity_type, entity_id, action, payload_json)
+                 VALUES('component_option', ?1, 'translate', '{}')",
+                params![input.option_id],
+            )?;
+        }
+        transaction.commit()?;
+        self.list_component_options()
+    }
+
     pub fn save_config_component(
         &self,
         input: ConfigComponentInput,
@@ -5622,7 +5647,7 @@ mod tests {
             .unwrap();
         assert_eq!(missing.len(), 3);
 
-        for (kind, source, translated) in [
+        let translations = [
             ("category", "动力系统", "Power System"),
             ("name", "天然气发动机", "Natural Gas Engine"),
             (
@@ -5630,21 +5655,32 @@ mod tests {
                 "天然气发电机组",
                 "Natural Gas Generator Set",
             ),
-        ] {
+        ]
+        .into_iter()
+        .map(|(kind, source, translated)| {
             let option = database
                 .list_component_options()
                 .unwrap()
                 .into_iter()
                 .find(|option| option.kind == kind && option.value == source)
                 .unwrap();
-            database
-                .save_component_option_translation(ComponentOptionTranslationInput {
-                    option_id: option.id,
-                    language: "en".into(),
-                    value: translated.into(),
-                })
-                .unwrap();
-        }
+            ComponentOptionTranslationInput {
+                option_id: option.id,
+                language: "en".into(),
+                value: translated.into(),
+            }
+        })
+        .collect();
+        let saved = database
+            .save_component_option_translations(translations)
+            .unwrap();
+        assert!(
+            saved
+                .iter()
+                .filter(|option| option.translations.contains_key("en"))
+                .count()
+                >= 3
+        );
 
         let (localized, missing) = database
             .configuration_for_export(&configuration.id, "en")

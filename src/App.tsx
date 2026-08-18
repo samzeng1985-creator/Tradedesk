@@ -270,7 +270,7 @@ export default function App() {
       const bytes = Array.from(new Uint8Array(await file.arrayBuffer()));
       const result = await masterApi.importWorkbook(bytes);
       await loadMasterData();
-      setMasterTransferMessage(`导入完成：产品 ${result.products}、客户 ${result.customers}、供应商 ${result.suppliers}、组件 ${result.components}、自选配置 ${result.configurations}`);
+      setMasterTransferMessage(`导入完成：产品 ${result.products}、客户 ${result.customers}、供应商 ${result.suppliers}、组件 ${result.components}、词库 ${result.options}（译文 ${result.translations}）、自选配置 ${result.configurations}`);
     } catch (reason) { setMasterTransferMessage(String(reason)); } finally { setMasterTransferBusy(false); }
   }
 
@@ -300,8 +300,8 @@ export default function App() {
     await loadMasterData();
   }
 
-  async function saveComponentOptionTranslation(input: ComponentOptionTranslationInput) {
-    await masterApi.saveComponentOptionTranslation(input);
+  async function saveComponentOptionTranslations(inputs: ComponentOptionTranslationInput[]) {
+    await masterApi.saveComponentOptionTranslations(inputs);
     await loadMasterData();
   }
 
@@ -495,7 +495,7 @@ export default function App() {
           <span className="brand-mark">TD</span>
           <span>
             <strong>TradeDesk</strong>
-            <small>Local · 0.27.0 RC1</small>
+            <small>Local · 0.28.0 RC2</small>
           </span>
         </div>
 
@@ -753,7 +753,7 @@ export default function App() {
               )}
             </div>}
             {masterTab === "configurable" && companyRegistry && <ConfigurableProductLibrary companyRegistry={companyRegistry} configurations={configurableProducts} components={configComponents} options={componentOptions} onSave={saveConfigurableProduct} onArchive={(id) => archiveConfigMaster("configurable_product", id)} onExportPdf={exportConfigurationPdf} onExportCsv={exportConfigurationCsv} onPrint={printConfiguration} />}
-            {masterTab === "components" && <ComponentLibrary components={configComponents} options={componentOptions} onSave={saveConfigComponent} onArchive={(id) => archiveConfigMaster("config_component", id)} onSaveOption={saveComponentOption} onSaveOptionTranslation={saveComponentOptionTranslation} onArchiveOption={archiveComponentOption} />}
+            {masterTab === "components" && <ComponentLibrary components={configComponents} options={componentOptions} onSave={saveConfigComponent} onArchive={(id) => archiveConfigMaster("config_component", id)} onSaveOption={saveComponentOption} onSaveOptionTranslations={saveComponentOptionTranslations} onArchiveOption={archiveComponentOption} />}
           </section>
         )}
 

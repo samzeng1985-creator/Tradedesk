@@ -171,7 +171,9 @@ tbody tr:hover { background: #fafbfc; }
 .remembered-suggestions button:hover { color: #5b21b6; background: #f5f3ff; }
 .option-manager { width: min(700px, 100%); }
 .option-language, .export-language { display: flex; align-items: center; gap: 8px; color: #64748b; font-size: 11px; font-weight: 650; }
-.option-language { margin-top: 16px; }
+.option-language-toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 14px; margin-top: 16px; }
+.option-language { min-width: 0; }
+.option-language-toolbar .button { margin-left: auto; }
 .option-language select, .export-language select { border: 1px solid #cfd7e3; border-radius: 8px; padding: 8px 9px; color: #334155; background: white; }
 .option-kind-tabs { display: flex; flex-wrap: wrap; gap: 7px; margin: 18px 0 12px; }
 .option-kind-tabs button { border: 1px solid #d8dee7; border-radius: 999px; padding: 7px 12px; color: #64748b; background: white; font-size: 12px; font-weight: 650; }
@@ -179,11 +181,12 @@ tbody tr:hover { background: #fafbfc; }
 .option-add-form { display: grid; grid-template-columns: 1fr auto; gap: 9px; }
 .option-add-form input, .option-search { width: 100%; border: 1px solid #cfd7e3; border-radius: 8px; padding: 9px 10px; }
 .option-search { margin-top: 10px; }
+.option-save-message { margin-top: 10px; color: #166534; font-size: 12px; }
 .option-list { max-height: 330px; overflow-y: auto; margin-top: 12px; border: 1px solid #e2e8f0; border-radius: 9px; }
 .option-list > div { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 9px 11px; border-top: 1px solid #edf0f4; }
 .option-list > div:first-child { border-top: 0; }
 .option-translation-list { max-height: 390px; }
-.option-translation-row { display: grid !important; grid-template-columns: minmax(125px, .8fr) minmax(230px, 1.5fr) auto auto; align-items: center; }
+.option-translation-row { display: grid !important; grid-template-columns: minmax(125px, .8fr) minmax(230px, 1.5fr) auto; align-items: center; }
 .option-translation-row > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 650; }
 .option-translation-row input { width: 100%; border: 1px solid #cfd7e3; border-radius: 7px; padding: 8px 9px; }
 .configuration-actions { min-width: 185px; }
@@ -425,8 +428,10 @@ tbody tr:hover { background: #fafbfc; }
 .master-transfer-toolbar span { margin-top: 4px; color: #64748b; font-size: 11px; }
 .configuration-output-toolbar { align-items: flex-end; }
 .configuration-output-toolbar .toolbar-buttons { flex-wrap: wrap; }
-.purchase-output-toolbar { align-items: flex-end; }
-.purchase-output-toolbar .toolbar-buttons { flex-wrap: wrap; justify-content: flex-end; }
+.purchase-output-toolbar { align-items: flex-end; flex-wrap: wrap; }
+.purchase-output-toolbar .toolbar-buttons { flex: 0 1 auto; flex-wrap: wrap; justify-content: flex-end; }
+.purchase-output-toolbar .export-language { flex: 0 0 auto; max-width: none; white-space: nowrap; }
+.purchase-output-toolbar .record-count { white-space: nowrap; }
 
 .recovery-backdrop { z-index: 200; }
 .recovery-card { max-width: 620px; }

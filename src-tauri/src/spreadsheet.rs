@@ -1,13 +1,17 @@
-use std::{collections::HashSet, io::Cursor, path::Path};
+use std::{
+    collections::{BTreeMap, HashSet},
+    io::Cursor,
+    path::Path,
+};
 
 use calamine::{Data, Reader, Xlsx};
 use rust_xlsxwriter::{Color, Format, FormatAlign, FormatBorder, Workbook, Worksheet};
 use serde::Serialize;
 
 use crate::domain::{
-    ConfigComponent, ConfigComponentInput, ConfigurableProduct, ConfigurableProductInput,
-    ConfigurableProductLineInput, Customer, CustomerInput, Product, ProductInput, Supplier,
-    SupplierInput, SupplierProductTermInput,
+    ComponentOption, ConfigComponent, ConfigComponentInput, ConfigurableProduct,
+    ConfigurableProductInput, ConfigurableProductLineInput, Customer, CustomerInput, Product,
+    ProductInput, Supplier, SupplierInput, SupplierProductTermInput,
 };
 
 const SHEET_PRODUCTS: &str = "产品";
@@ -15,6 +19,7 @@ const SHEET_CUSTOMERS: &str = "客户";
 const SHEET_SUPPLIERS: &str = "供应商";
 const SHEET_SUPPLIER_PRODUCTS: &str = "供应商产品";
 const SHEET_COMPONENTS: &str = "组件库";
+const SHEET_GLOSSARY: &str = "词库";
 const SHEET_CONFIGURATIONS: &str = "自选配置";
 const SHEET_CONFIGURATION_LINES: &str = "配置明细";
 
@@ -37,12 +42,20 @@ pub struct ConfigurationLineImport {
     pub unit_price_minor: i64,
 }
 
+#[derive(Debug)]
+pub struct ComponentOptionImport {
+    pub kind: String,
+    pub value: String,
+    pub translations: BTreeMap<String, String>,
+}
+
 #[derive(Debug, Default)]
 pub struct MasterImportData {
     pub products: Vec<ProductInput>,
     pub customers: Vec<CustomerInput>,
     pub suppliers: Vec<SupplierInput>,
     pub components: Vec<ConfigComponentInput>,
+    pub options: Vec<ComponentOptionImport>,
     pub configurations: Vec<ConfigurationImport>,
 }
 
@@ -53,7 +66,46 @@ pub struct MasterImportResult {
     pub customers: usize,
     pub suppliers: usize,
     pub components: usize,
+    pub options: usize,
+    pub translations: usize,
     pub configurations: usize,
+}
+
+const GLOSSARY_LANGUAGES: [(&str, &str); 6] = [
+    ("en", "英语 (en)"),
+    ("ru", "俄语 (ru)"),
+    ("fr", "法语 (fr)"),
+    ("es", "西班牙语 (es)"),
+    ("pt", "葡萄牙语 (pt)"),
+    ("ar", "阿拉伯语 (ar)"),
+];
+
+fn option_kind_label(kind: &str) -> &str {
+    match kind {
+        "category" => "组件类别",
+        "name" => "品名",
+        "brand" => "品牌",
+        "specification" => "规格/材质",
+        "unit" => "单位",
+        "notes" => "组件备注",
+        "product_name" => "配置产品名",
+        "configuration_notes" => "配置说明",
+        _ => kind,
+    }
+}
+
+fn parse_option_kind(value: &str) -> Option<&'static str> {
+    match value.trim() {
+        "category" | "组件类别" => Some("category"),
+        "name" | "品名" => Some("name"),
+        "brand" | "品牌" => Some("brand"),
+        "specification" | "规格/材质" | "型号/规格/材质" => Some("specification"),
+        "unit" | "单位" => Some("unit"),
+        "notes" | "组件备注" | "备注" => Some("notes"),
+        "product_name" | "配置产品名" | "产品名称" => Some("product_name"),
+        "configuration_notes" | "配置说明" | "报价说明" => Some("configuration_notes"),
+        _ => None,
+    }
 }
 
 fn header_format() -> Format {
@@ -115,6 +167,7 @@ pub fn export_master_workbook(
     customers: &[Customer],
     suppliers: &[Supplier],
     components: &[ConfigComponent],
+    options: &[ComponentOption],
     configurations: &[ConfigurableProduct],
 ) -> Result<(), String> {
     let mut workbook = Workbook::new();
@@ -133,10 +186,46 @@ pub fn export_master_workbook(
         ("更新规则", "系统按 SKU、客户编号、供应商编号、组件编号、配置编号匹配；相同编号会更新，新增编号会创建。"),
         ("金额", "组件和配置明细中的单价按元填写，例如 1234.56；系统内部自动转换为分。"),
         ("自选配置", "先填写组件库，再填写自选配置和配置明细；配置明细通过配置编号、组件编号建立关联。"),
+        ("多语词库", "词库工作表可维护组件类别、品名、品牌、规格、单位、备注、配置产品名和配置说明，并一次导入六种语言译文；空白译文不会覆盖系统中已有内容。"),
         ("数据安全", "导入前会校验全部工作表。若发现必填项、数字范围或关联错误，不会开始写入。"),
     ].iter().enumerate() {
         write_text(instructions, row as u32, 0, *title)?;
         write_text(instructions, row as u32, 1, *note)?;
+    }
+
+    let sheet = setup_sheet(
+        &mut workbook,
+        SHEET_GLOSSARY,
+        &[
+            "词条类型 *",
+            "中文基础词 *",
+            "英语 (en)",
+            "俄语 (ru)",
+            "法语 (fr)",
+            "西班牙语 (es)",
+            "葡萄牙语 (pt)",
+            "阿拉伯语 (ar)",
+        ],
+        &[18.0, 28.0, 28.0, 28.0, 28.0, 28.0, 28.0, 28.0],
+    )?;
+    if !template_only {
+        for (index, option) in options.iter().enumerate() {
+            let row = index as u32 + 1;
+            write_text(sheet, row, 0, option_kind_label(&option.kind))?;
+            write_text(sheet, row, 1, &option.value)?;
+            for (language_index, (language, _)) in GLOSSARY_LANGUAGES.iter().enumerate() {
+                write_text(
+                    sheet,
+                    row,
+                    language_index as u16 + 2,
+                    option
+                        .translations
+                        .get(*language)
+                        .map(String::as_str)
+                        .unwrap_or(""),
+                )?;
+            }
+        }
     }
 
     let sheet = setup_sheet(
@@ -449,6 +538,41 @@ pub fn parse_master_workbook(bytes: &[u8]) -> Result<MasterImportData, String> {
         });
     }
 
+    if let Ok(range) = workbook.worksheet_range(SHEET_GLOSSARY) {
+        for (index, row) in range.rows().skip(1).enumerate() {
+            if row.iter().all(|cell| cell.to_string().trim().is_empty()) {
+                continue;
+            }
+            let row_no = index + 2;
+            let raw_kind = required(text(row, 0), SHEET_GLOSSARY, row_no, "词条类型")?;
+            let kind = parse_option_kind(&raw_kind)
+                .ok_or_else(|| {
+                    format!("{SHEET_GLOSSARY} 第 {row_no} 行：不支持的词条类型“{raw_kind}”")
+                })?
+                .to_owned();
+            let value = required(text(row, 1), SHEET_GLOSSARY, row_no, "中文基础词")?;
+            let translations = GLOSSARY_LANGUAGES
+                .iter()
+                .enumerate()
+                .filter_map(|(language_index, (language, _))| {
+                    let value = text(row, language_index + 2);
+                    (!value.is_empty()).then(|| ((*language).to_owned(), value))
+                })
+                .collect();
+            data.options.push(ComponentOptionImport {
+                kind,
+                value,
+                translations,
+            });
+        }
+        unique(
+            data.options
+                .iter()
+                .map(|item| format!("{}:{}", item.kind, item.value)),
+            SHEET_GLOSSARY,
+        )?;
+    }
+
     let range = workbook
         .worksheet_range(SHEET_CUSTOMERS)
         .map_err(|_| format!("缺少工作表：{SHEET_CUSTOMERS}"))?;
@@ -738,7 +862,7 @@ mod tests {
         let Ok(output) = std::env::var("TRADEDESK_TEMPLATE_OUTPUT") else {
             return;
         };
-        export_master_workbook(Path::new(&output), true, &[], &[], &[], &[], &[]).unwrap();
+        export_master_workbook(Path::new(&output), true, &[], &[], &[], &[], &[], &[]).unwrap();
     }
 
     #[test]
@@ -811,6 +935,20 @@ mod tests {
             notes: String::new(),
             active: true,
         }];
+        let options = vec![ComponentOption {
+            id: "option1".into(),
+            kind: "category".into(),
+            value: "发动机".into(),
+            active: true,
+            translations: BTreeMap::from([
+                ("en".into(), "Engine".into()),
+                ("ru".into(), "Двигатель".into()),
+                ("fr".into(), "Moteur".into()),
+                ("es".into(), "Motor".into()),
+                ("pt".into(), "Motor".into()),
+                ("ar".into(), "محرك".into()),
+            ]),
+        }];
         let configurations = vec![ConfigurableProduct {
             id: "cfg1".into(),
             code: "CFG-1".into(),
@@ -843,6 +981,7 @@ mod tests {
             &customers,
             &suppliers,
             &components,
+            &options,
             &configurations,
         )
         .unwrap();
@@ -853,6 +992,9 @@ mod tests {
         assert_eq!(parsed.suppliers[0].product_terms.len(), 1);
         assert_eq!(parsed.suppliers[0].product_terms[0].product_sku, "SKU-1");
         assert_eq!(parsed.components[0].unit_price_minor, 123_456);
+        assert_eq!(parsed.options[0].kind, "category");
+        assert_eq!(parsed.options[0].translations["ru"], "Двигатель");
+        assert_eq!(parsed.options[0].translations.len(), 6);
         assert_eq!(parsed.configurations[0].lines[0].component_code, "CC-1");
         let _ = std::fs::remove_file(path);
     }

@@ -233,6 +233,8 @@ export interface MasterImportResult {
   customers: number;
   suppliers: number;
   components: number;
+  options: number;
+  translations: number;
   configurations: number;
 }
 

@@ -363,6 +363,16 @@ fn save_component_option_translation(
 }
 
 #[tauri::command]
+fn save_component_option_translations(
+    inputs: Vec<ComponentOptionTranslationInput>,
+    state: State<'_, AppState>,
+) -> Result<Vec<ComponentOption>, String> {
+    with_database(state, |database| {
+        database.save_component_option_translations(inputs)
+    })
+}
+
+#[tauri::command]
 fn list_configurable_products(
     state: State<'_, AppState>,
 ) -> Result<Vec<ConfigurableProduct>, String> {
@@ -483,13 +493,14 @@ fn archive_master(entity: String, id: String, state: State<'_, AppState>) -> Res
 
 #[tauri::command]
 fn export_master_data(template_only: bool, state: State<'_, AppState>) -> Result<String, String> {
-    let (products, customers, suppliers, components, configurations) =
+    let (products, customers, suppliers, components, options, configurations) =
         with_database(state.clone(), |database| {
             Ok((
                 database.list_products()?,
                 database.list_customers()?,
                 database.list_suppliers()?,
                 database.list_config_components()?,
+                database.list_component_options()?,
                 database.list_configurable_products()?,
             ))
         })?;
@@ -508,6 +519,7 @@ fn export_master_data(template_only: bool, state: State<'_, AppState>) -> Result
         &customers,
         &suppliers,
         &components,
+        &options,
         &configurations,
     )?;
     Ok(path.to_string_lossy().into_owned())
@@ -572,8 +584,15 @@ fn import_master_data(
         customers: data.customers.len(),
         suppliers: data.suppliers.len(),
         components: data.components.len(),
+        options: data.options.len(),
+        translations: data
+            .options
+            .iter()
+            .map(|option| option.translations.len())
+            .sum(),
         configurations: data.configurations.len(),
     };
+    let options = std::mem::take(&mut data.options);
     with_database(state.clone(), |database| {
         for item in data.products {
             database.save_product(item)?;
@@ -586,6 +605,24 @@ fn import_master_data(
         }
         for item in data.components {
             database.save_config_component(item)?;
+        }
+        let mut option_translations = Vec::new();
+        for option in options {
+            let saved = database.save_component_option(ComponentOptionInput {
+                id: None,
+                kind: option.kind,
+                value: option.value,
+            })?;
+            option_translations.extend(option.translations.into_iter().map(|(language, value)| {
+                ComponentOptionTranslationInput {
+                    option_id: saved.id.clone(),
+                    language,
+                    value,
+                }
+            }));
+        }
+        if !option_translations.is_empty() {
+            database.save_component_option_translations(option_translations)?;
         }
         Ok(())
     })?;
@@ -994,6 +1031,7 @@ pub fn run() {
             list_component_options,
             save_component_option,
             save_component_option_translation,
+            save_component_option_translations,
             list_configurable_products,
             save_configurable_product,
             export_configuration_pdf,

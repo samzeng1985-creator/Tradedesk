@@ -120,6 +120,7 @@ export const masterApi = {
   listComponentOptions: () => invoke<ComponentOption[]>("list_component_options"),
   saveComponentOption: (input: ComponentOptionInput) => invoke<ComponentOption>("save_component_option", { input }),
   saveComponentOptionTranslation: (input: ComponentOptionTranslationInput) => invoke<ComponentOption>("save_component_option_translation", { input }),
+  saveComponentOptionTranslations: (inputs: ComponentOptionTranslationInput[]) => invoke<ComponentOption[]>("save_component_option_translations", { inputs }),
   listConfigurableProducts: () => invoke<ConfigurableProduct[]>("list_configurable_products"),
   saveConfigurableProduct: (input: ConfigurableProductInput) => invoke<ConfigurableProduct>("save_configurable_product", { input }),
   exportConfigurationPdf: (id: string, language: ConfigurationLanguage, companyId: string, signingAssetId: string) => invoke<DocumentExportResult>("export_configuration_pdf", { id, language, companyId, signingAssetId }),

@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "release": "0.27.0-rc.1",
+  "release": "0.28.0-rc.2",
   "defaults": {
     "minPages": 1,
     "maxPages": 5,

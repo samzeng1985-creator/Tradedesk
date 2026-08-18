@@ -22,7 +22,7 @@ interface ComponentLibraryProps {
   onSave: (input: ConfigComponentInput) => Promise<void>;
   onArchive: (id: string) => Promise<void>;
   onSaveOption: (input: ComponentOptionInput) => Promise<void>;
-  onSaveOptionTranslation: (input: ComponentOptionTranslationInput) => Promise<void>;
+  onSaveOptionTranslations: (inputs: ComponentOptionTranslationInput[]) => Promise<void>;
   onArchiveOption: (id: string) => Promise<void>;
 }
 
@@ -49,31 +49,19 @@ export const configurationLanguageLabels: Record<ConfigurationLanguage, string> 
 function OptionTranslationRow({
   option,
   language,
-  onSave,
+  value,
+  onChange,
   onArchive,
 }: {
   option: ComponentOption;
   language: ConfigurationLanguage;
-  onSave: (input: ComponentOptionTranslationInput) => Promise<void>;
+  value: string;
+  onChange: (value: string) => void;
   onArchive: (option: ComponentOption) => Promise<void>;
 }) {
-  const [value, setValue] = useState(option.translations[language] ?? "");
-  const [busy, setBusy] = useState(false);
-
-  async function save() {
-    if (!value.trim()) return;
-    setBusy(true);
-    try {
-      await onSave({ optionId: option.id, language, value });
-    } finally {
-      setBusy(false);
-    }
-  }
-
   return <div className="option-translation-row">
     <span title={option.value}>{option.value}</span>
-    <input value={value} onChange={(event) => setValue(event.target.value)} placeholder={`${configurationLanguageLabels[language]}译文`} dir={language === "ar" ? "rtl" : "ltr"} />
-    <button type="button" className="text-button" disabled={busy || !value.trim()} onClick={() => void save()}>{busy ? "保存中…" : "保存译文"}</button>
+    <input value={value} onChange={(event) => onChange(event.target.value)} placeholder={`${configurationLanguageLabels[language]}译文`} dir={language === "ar" ? "rtl" : "ltr"} />
     <button type="button" className="danger-link" onClick={() => void onArchive(option)}>停用</button>
   </div>;
 }
@@ -119,13 +107,13 @@ function ComponentOptionManager({
   options,
   onClose,
   onSave,
-  onSaveTranslation,
+  onSaveTranslations,
   onArchive,
 }: {
   options: ComponentOption[];
   onClose: () => void;
   onSave: (input: ComponentOptionInput) => Promise<void>;
-  onSaveTranslation: (input: ComponentOptionTranslationInput) => Promise<void>;
+  onSaveTranslations: (inputs: ComponentOptionTranslationInput[]) => Promise<void>;
   onArchive: (id: string) => Promise<void>;
 }) {
   const [kind, setKind] = useState<ComponentOptionKind>("category");
@@ -133,6 +121,9 @@ function ComponentOptionManager({
   const [value, setValue] = useState("");
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState(false);
+  const [translationBusy, setTranslationBusy] = useState(false);
+  const [translationDrafts, setTranslationDrafts] = useState<Record<string, string>>({});
+  const [translationMessage, setTranslationMessage] = useState("");
   const [error, setError] = useState("");
   const normalized = query.trim().toLocaleLowerCase();
   const filtered = options.filter((item) => item.kind === kind && item.value.toLocaleLowerCase().includes(normalized));
@@ -156,15 +147,56 @@ function ComponentOptionManager({
     await onArchive(option.id);
   }
 
+  function translationValue(option: ComponentOption) {
+    return translationDrafts[`${language}:${option.id}`] ?? option.translations[language] ?? "";
+  }
+
+  function updateTranslation(option: ComponentOption, nextValue: string) {
+    setTranslationDrafts((current) => ({ ...current, [`${language}:${option.id}`]: nextValue }));
+    setTranslationMessage("");
+  }
+
+  async function saveAllTranslations() {
+    const changes = options.flatMap((option) => {
+      const value = translationValue(option).trim();
+      if (!value || value === (option.translations[language] ?? "").trim()) return [];
+      return [{ optionId: option.id, language, value }];
+    });
+    if (!changes.length) {
+      setTranslationMessage("当前语种没有需要保存的译文修改。");
+      return;
+    }
+    setTranslationBusy(true);
+    setTranslationMessage("");
+    setError("");
+    try {
+      await onSaveTranslations(changes);
+      setTranslationDrafts((current) => {
+        const next = { ...current };
+        for (const change of changes) delete next[`${change.language}:${change.optionId}`];
+        return next;
+      });
+      setTranslationMessage(`已保存 ${changes.length} 条${configurationLanguageLabels[language]}译文。`);
+    } catch (reason) {
+      setError(String(reason));
+    } finally {
+      setTranslationBusy(false);
+    }
+  }
+
   return <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
     <section className="modal-card option-manager" role="dialog" aria-modal="true" onMouseDown={(event) => event.stopPropagation()}>
       <div className="panel-heading"><div><span className="eyebrow">多语录入词库</span><h2>组件与配置术语设置</h2><p>先选择输出语种，再为中文基础词录入经过确认的专业译文。</p></div><button className="icon-button" onClick={onClose} aria-label="关闭">×</button></div>
-      <label className="option-language">译文语种<select value={language} onChange={(event) => setLanguage(event.target.value as ConfigurationLanguage)}>{Object.entries(configurationLanguageLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>
+      <div className="option-language-toolbar">
+        <label className="option-language">译文语种<select value={language} onChange={(event) => { setLanguage(event.target.value as ConfigurationLanguage); setTranslationMessage(""); }}>{Object.entries(configurationLanguageLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>
+        <button type="button" className="button button-primary" disabled={translationBusy} onClick={() => void saveAllTranslations()}>{translationBusy ? "保存中…" : "保存全部译文"}</button>
+      </div>
       <div className="option-kind-tabs">{(Object.keys(optionLabels) as ComponentOptionKind[]).map((item) => <button type="button" className={kind === item ? "selected" : ""} key={item} onClick={() => { setKind(item); setQuery(""); }}>{optionLabels[item]} {options.filter((option) => option.kind === item).length}</button>)}</div>
       <form className="option-add-form" onSubmit={submit}><input required value={value} onChange={(event) => setValue(event.target.value)} placeholder={`新增${optionLabels[kind]}`} /><button className="button button-primary" disabled={busy}>{busy ? "保存中…" : "加入词库"}</button></form>
       <input className="option-search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder={`模糊搜索${optionLabels[kind]}`} />
       {error && <div className="form-error">{error}</div>}
-      <div className="option-list option-translation-list">{filtered.map((option) => <OptionTranslationRow key={`${option.id}-${language}-${option.translations[language] ?? ""}`} option={option} language={language} onSave={onSaveTranslation} onArchive={archive} />)}</div>
+      {translationMessage && <div className="option-save-message">{translationMessage}</div>}
+      <div className="option-list option-translation-list">{filtered.map((option) => <OptionTranslationRow key={`${option.id}-${language}`} option={option} language={language} value={translationValue(option)} onChange={(value) => updateTranslation(option, value)} onArchive={archive} />)}</div>
       {!filtered.length && <div className="empty-table">暂无符合条件的选项</div>}
     </section>
   </div>;
@@ -248,7 +280,7 @@ function ComponentEditor({
   );
 }
 
-export function ComponentLibrary({ components, options, onSave, onArchive, onSaveOption, onSaveOptionTranslation, onArchiveOption }: ComponentLibraryProps) {
+export function ComponentLibrary({ components, options, onSave, onArchive, onSaveOption, onSaveOptionTranslations, onArchiveOption }: ComponentLibraryProps) {
   const [query, setQuery] = useState("");
   const [editing, setEditing] = useState<ConfigComponent | "new" | null>(null);
   const [managingOptions, setManagingOptions] = useState(false);
@@ -264,7 +296,7 @@ export function ComponentLibrary({ components, options, onSave, onArchive, onSav
     <div className="table-wrap"><table><thead><tr><th>组件编号</th><th>类别</th><th>品名</th><th>型号/规格/材质</th><th>默认数量</th><th>单价</th><th>品牌</th><th>备注</th><th>操作</th></tr></thead><tbody>{filtered.map((item) => <tr key={item.id}><td>{item.code}</td><td>{item.category}</td><td><strong>{item.name}</strong></td><td>{item.specification || "—"}</td><td>{item.defaultQuantity} {item.unit}</td><td>{formatMoney(item.unitPriceMinor, item.currency)}</td><td>{item.brand || "—"}</td><td>{item.notes || "—"}</td><td><div className="row-actions"><button onClick={() => setEditing(item)}>编辑</button><button onClick={() => void archive(item)}>停用</button></div></td></tr>)}</tbody></table></div>
     {!filtered.length && <div className="empty-table">{components.length ? "没有符合条件的组件" : "还没有组件，请先录入可选组件和价格"}</div>}
     {editing && <ComponentEditor record={editing === "new" ? null : editing} options={options} onClose={() => setEditing(null)} onSave={onSave} />}
-    {managingOptions && <ComponentOptionManager options={options} onClose={() => setManagingOptions(false)} onSave={onSaveOption} onSaveTranslation={onSaveOptionTranslation} onArchive={onArchiveOption} />}
+    {managingOptions && <ComponentOptionManager options={options} onClose={() => setManagingOptions(false)} onSave={onSaveOption} onSaveTranslations={onSaveOptionTranslations} onArchive={onArchiveOption} />}
   </>;
 }
 
