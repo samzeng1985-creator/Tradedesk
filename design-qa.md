@@ -1,6 +1,6 @@
 # Design QA — TradeDesk 0.6.1 业务单操作列
 
-- source visual truth: `C:\Users\konst\AppData\Local\Temp\codex-clipboard-f1460a07-b6d4-4fe7-a779-19d052253a6e.png`
+- source visual truth: user-provided business-order screenshot (kept outside the repository)
 - implementation screenshot: `tmp/ui-qa/implementation.png`
 - combined comparison: `tmp/ui-qa/comparison.png`
 - viewport: 1904 × 1005 CSS px

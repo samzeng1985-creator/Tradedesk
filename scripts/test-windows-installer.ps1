@@ -55,7 +55,10 @@ function Invoke-SilentInstall {
 
 function Get-VersionFromInstallerName {
     param([Parameter(Mandatory)][string]$Installer)
-    $match = [regex]::Match((Split-Path $Installer -Leaf), '\d+\.\d+\.\d+')
+    $match = [regex]::Match(
+        (Split-Path $Installer -Leaf),
+        '\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:\.[0-9A-Za-z]+)*)?'
+    )
     if (-not $match.Success) { throw "Cannot determine version from installer filename: $Installer" }
     return $match.Value
 }
